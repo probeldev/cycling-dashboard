@@ -16,13 +16,17 @@
   {{ if not .W.Trainer }}
   <div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>
   <div class="stat"><div class="v">{{ trimFloat .W.AvgSpeedKmh }} км/ч</div><div class="k">ср. скорость</div></div>
+  {{ if .W.MaxSpeedKmh }}<div class="stat"><div class="v">{{ trimFloat .W.MaxSpeedKmh }} км/ч</div><div class="k">макс. скорость</div></div>{{ end }}
+  {{ if .W.AscentM }}<div class="stat"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор высоты</div></div>{{ end }}
   {{ end }}
   {{ if .W.HasPower }}
   <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">ср. мощность</div></div>
   <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс. мощность</div></div>
   {{ end }}
   {{ if .W.AvgCadence }}<div class="stat"><div class="v">{{ .W.AvgCadence }}</div><div class="k">ср. каденс</div></div>{{ end }}
+  {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс. каденс</div></div>{{ end }}
   {{ if .W.AvgHR }}<div class="stat"><div class="v">{{ .W.AvgHR }}</div><div class="k">ср. пульс</div></div>{{ end }}
+  {{ if .W.MaxHR }}<div class="stat"><div class="v">{{ .W.MaxHR }}</div><div class="k">макс. пульс</div></div>{{ end }}
   {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
 </div>
 
@@ -33,6 +37,10 @@
   {{ if .W.Override }}<span class="tag">вручную</span>{{ end }}
 </div>
 
+<div id="chartCtl" style="display:flex; gap:6px; flex-wrap:wrap; margin:6px 0">
+  <span id="metricBtns"></span>
+  <span style="margin-left:auto" id="axisBtns"></span>
+</div>
 <canvas id="chart"></canvas>
 
 <div class="dist-grid" id="distGrid">
@@ -42,7 +50,7 @@
   <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
 </div>
 
-<div id="map"></div>
+{{ if not .W.Trainer }}<div id="map"></div>{{ end }}
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -50,23 +58,91 @@
 <script>
 (async () => {
 const id = {{ .W.ID }};
+const isTrainer = {{ .W.Trainer }};
 const resp = await fetch(`/api/workout/${id}/samples`);
 const data = await resp.json();
 
-const hasPower = data.some(s => s.Power > 0);
-const ds = [];
-if (hasPower) ds.push({ label: "Мощность, Вт", data: data.map(s => s.Power), borderWidth: 1, pointRadius: 0, borderColor: "#d73a49" });
-if (ds.length) {
-  new Chart(document.getElementById("chart"), {
+const metrics = [
+  { key: "Power",     label: "Мощность, Вт",    color: "#d73a49", has: s => s.Power > 0 },
+  { key: "HR",        label: "Пульс, уд/мин",   color: "#cf222e", has: s => s.HR > 0 },
+  { key: "Cadence",   label: "Каденс, об/мин",  color: "#0969da", has: s => s.Cadence > 0 },
+  { key: "SpeedMs",   label: "Скорость, км/ч",  color: "#1a7f37", has: s => s.SpeedMs > 0, conv: v => v * 3.6 },
+  { key: "AltitudeM", label: "Высота, м",       color: "#8250df", has: s => s.HasAlt, skip: isTrainer, fill: true },
+].filter(m => !m.skip && data.some(m.has));
+
+const hasDist = data.some(s => s.HasDist && s.DistanceM > 0);
+let curMetric = metrics[0], curAxis = "time";
+let chart = null;
+
+// скользящее среднее ~10 сек: режем пилу нулей при свободном ходе
+const spacing = data.length > 1 ? (data[data.length-1].Offset - data[0].Offset) / (data.length - 1) : 1;
+const win = Math.max(1, Math.min(25, Math.round(10 / Math.max(spacing, 0.1))));
+function smooth(y) {
+  const half = Math.floor(win / 2), out = new Array(y.length);
+  for (let i = 0; i < y.length; i++) {
+    let sum = 0, n = 0;
+    for (let j = Math.max(0, i - half); j <= Math.min(y.length - 1, i + half); j++) {
+      if (y[j] != null) { sum += y[j]; n++; }
+    }
+    out[i] = n ? sum / n : null;
+  }
+  return out;
+}
+
+function btn(parent, text, active, onclick) {
+  const b = document.createElement("button");
+  b.textContent = text;
+  if (active) b.style.fontWeight = "700";
+  b.onclick = () => { onclick(); redraw(); };
+  parent.appendChild(b);
+  return b;
+}
+
+function redraw() {
+  document.querySelectorAll("#metricBtns button").forEach((b, i) => b.style.fontWeight = metrics[i] === curMetric ? "700" : "400");
+  document.querySelectorAll("#axisBtns button").forEach(b => b.style.fontWeight = b.dataset.axis === curAxis ? "700" : "400");
+  const x = curAxis === "km"
+    ? data.map(s => s.HasDist ? +(s.DistanceM / 1000).toFixed(2) : null)
+    : data.map(s => s.Offset);
+  const y = smooth(data.map(s => {
+    let v = s[curMetric.key];
+    if (curMetric.conv) v = curMetric.conv(v);
+    if (curMetric.key === "AltitudeM" && !s.HasAlt) return null;
+    // каденс 0 — это «не кручу», а не усилие: рисуем разрыв, а не провал
+    if (curMetric.key === "Cadence" && v === 0) return null;
+    return v;
+  }));
+  chart.data.labels = x;
+  chart.data.datasets = [{
+    label: curMetric.label, data: y, borderWidth: 1, pointRadius: 0,
+    borderColor: curMetric.color, fill: !!curMetric.fill,
+    backgroundColor: curMetric.color + "33", spanGaps: true,
+  }];
+  chart.options.scales.x.ticks.callback = curAxis === "km"
+    ? v => x[v] + " км"
+    : v => Math.round(x[v] / 60) + " мин";
+  chart.update();
+}
+
+if (metrics.length) {
+  metrics.forEach(m => btn(document.getElementById("metricBtns"), m.label.split(",")[0], m === curMetric, () => curMetric = m));
+  if (hasDist) {
+    btn(document.getElementById("axisBtns"), "время", true, () => curAxis = "time").dataset.axis = "time";
+    btn(document.getElementById("axisBtns"), "км", false, () => curAxis = "km").dataset.axis = "km";
+  }
+  chart = new Chart(document.getElementById("chart"), {
     type: "line",
-    data: { labels: data.map(s => s.Offset), datasets: ds },
+    data: { labels: [], datasets: [] },
     options: {
       animation: false,
-      scales: { x: { ticks: { callback: v => Math.round(v/60) + " мин" } }, y: { position: "left" } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => curMetric.label.split(",")[0] + ": " + Math.round(c.raw) } } },
+      scales: { x: { ticks: {} }, y: { position: "left" } },
     },
   });
+  redraw();
 } else {
   document.getElementById("chart").style.display = "none";
+  document.getElementById("chartCtl").style.display = "none";
 }
 
 const dist = await (await fetch(`/api/workout/${id}/dist`)).json();
@@ -92,14 +168,15 @@ document.querySelectorAll("#distGrid .dist").forEach(el => {
 });
 if (!Object.keys(dist).length) document.getElementById("distGrid").style.display = "none";
 
+const mapEl = document.getElementById("map");
 const track = data.filter(s => s.HasPos);
-if (track.length > 1) {
+if (mapEl && track.length > 1) {
   const map = L.map("map").setView([track[0].Lat, track[0].Lon], 13);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
   L.polyline(track.map(s => [s.Lat, s.Lon]), { color: "#58a6ff" }).addTo(map);
   map.fitBounds(L.latLngBounds(track.map(s => [s.Lat, s.Lon])).pad(0.05));
-} else {
-  document.getElementById("map").style.display = "none";
+} else if (mapEl) {
+  mapEl.style.display = "none";
 }
 })();
 </script>

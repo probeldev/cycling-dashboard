@@ -16,6 +16,7 @@ func main() {
 	dir := flag.String("dir", "tracks", "папка с .fit файлами")
 	dbPath := flag.String("db", "cycling.db", "путь к SQLite")
 	addr := flag.String("addr", "127.0.0.1:8080", "адрес сервера")
+	reimport := flag.Bool("reimport", false, "перечитать все .fit файлы заново (после изменений парсера)")
 	flag.Parse()
 
 	absDir, err := filepath.Abs(*dir)
@@ -29,7 +30,7 @@ func main() {
 	}
 	defer db.Close()
 
-	imported, skipped, err := importer.ImportDir(db, absDir)
+	imported, skipped, err := importer.ImportDir(db, absDir, *reimport)
 	if err != nil {
 		log.Fatal(err)
 	}

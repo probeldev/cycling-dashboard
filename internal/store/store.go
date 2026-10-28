@@ -19,6 +19,7 @@ type Workout struct {
 	Override   *bool
 
 	AvgSpeedKmh float64
+	MaxSpeedKmh float64
 	AvgCadence  int
 	MaxCadence  int
 	AvgPower    int
@@ -27,6 +28,8 @@ type Workout struct {
 	AvgHR       int
 	MaxHR       int
 	Calories    int
+	AscentM     int
+	DescentM    int
 	HasPower    bool
 }
 
@@ -83,6 +86,9 @@ CREATE TABLE IF NOT EXISTS workouts (
     avg_hr        INTEGER,
     max_hr        INTEGER,
     calories      INTEGER,
+    max_speed_ms  REAL,
+    total_ascent  INTEGER,
+    total_descent INTEGER,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_workouts_ym ON workouts(year, month, start_time);
@@ -95,18 +101,41 @@ CREATE TABLE IF NOT EXISTS samples (
     power       INTEGER,
     cadence     INTEGER,
     hr          INTEGER,
-    speed_ms    REAL
+    speed_ms    REAL,
+    altitude_m  REAL,
+    distance_m  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 `)
 	if err != nil {
 		return err
 	}
-	// миграция: колонка name для пользовательских названий треков
-	var hasName bool
-	rows, err := db.Query(`PRAGMA table_info(workouts)`)
+	// миграции: новые колонки в существующих базах
+	for _, m := range []struct{ table, column, ddl string }{
+		{"workouts", "name", `ALTER TABLE workouts ADD COLUMN name TEXT NOT NULL DEFAULT ''`},
+		{"workouts", "max_speed_ms", `ALTER TABLE workouts ADD COLUMN max_speed_ms REAL`},
+		{"workouts", "total_ascent", `ALTER TABLE workouts ADD COLUMN total_ascent INTEGER`},
+		{"workouts", "total_descent", `ALTER TABLE workouts ADD COLUMN total_descent INTEGER`},
+		{"samples", "altitude_m", `ALTER TABLE samples ADD COLUMN altitude_m REAL`},
+		{"samples", "distance_m", `ALTER TABLE samples ADD COLUMN distance_m REAL`},
+	} {
+		has, err := hasColumn(db, m.table, m.column)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := db.Exec(m.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -115,19 +144,13 @@ CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 		var notnull, pk int
 		var dflt sql.NullString
 		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
-			return err
+			return false, err
 		}
-		if name == "name" {
-			hasName = true
+		if name == column {
+			return true, rows.Err()
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if !hasName {
-		_, err = db.Exec(`ALTER TABLE workouts ADD COLUMN name TEXT NOT NULL DEFAULT ''`)
-	}
-	return err
+	return false, rows.Err()
 }
 
 // Changed возвращает true, если файла с таким хешем ещё нет или изменился.
@@ -156,31 +179,36 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	if w.DistanceKm > 0 {
 		dist = sql.NullInt64{Int64: int64(w.DistanceKm * 1000), Valid: true}
 	}
-	res, err := db.Exec(`INSERT INTO workouts
+	_, err := db.Exec(`INSERT INTO workouts
 	    (file_hash, file_path, file_mtime, start_time, year, month, has_gps, trainer,
-	     duration_sec, distance_m, avg_speed_ms, avg_cadence, max_cadence,
-	     avg_power, max_power, norm_power, avg_hr, max_hr, calories)
-	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
+	     avg_power, max_power, norm_power, avg_hr, max_hr, calories, total_ascent, total_descent)
+	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
-	      has_gps=excluded.has_gps, trainer=excluded.trainer,
+	      has_gps=excluded.has_gps,
+	      trainer=CASE WHEN trainer_override IS NOT NULL THEN trainer ELSE excluded.trainer END,
 	      duration_sec=excluded.duration_sec, distance_m=excluded.distance_m,
-	      avg_speed_ms=excluded.avg_speed_ms, avg_cadence=excluded.avg_cadence,
-	      max_cadence=excluded.max_cadence, avg_power=excluded.avg_power,
-	      max_power=excluded.max_power, norm_power=excluded.norm_power,
-	      avg_hr=excluded.avg_hr, max_hr=excluded.max_hr, calories=excluded.calories`,
+	      avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
+	      avg_cadence=excluded.avg_cadence, max_cadence=excluded.max_cadence,
+	      avg_power=excluded.avg_power, max_power=excluded.max_power,
+	      norm_power=excluded.norm_power, avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
+	      calories=excluded.calories,
+	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent`,
 		hash, path, mtime, w.StartTime.UTC().Format(time.RFC3339),
 		w.StartTime.Year(), int(w.StartTime.Month()), gps, tr,
 		int64(w.Duration.Seconds()), dist,
-		nullableFloat(w.AvgSpeedKmh/3.6), nullableInt(w.AvgCadence), nullableInt(w.MaxCadence),
+		nullableFloat(w.AvgSpeedKmh/3.6), nullableFloat(w.MaxSpeedKmh/3.6),
+		nullableInt(w.AvgCadence), nullableInt(w.MaxCadence),
 		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower),
-		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories))
+		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories),
+		nullableInt(w.AscentM), nullableInt(w.DescentM))
 	if err != nil {
 		return 0, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM workouts WHERE file_hash = ?`, hash).Scan(&id); err != nil {
 		return 0, err
 	}
 	if _, err := db.Exec(`DELETE FROM samples WHERE workout_id = ?`, id); err != nil {
@@ -213,14 +241,18 @@ func SetTrainerOverride(db *sql.DB, id int64, trainer bool) error {
 }
 
 type Sample struct {
-	Offset  int64
-	Lat     float64
-	Lon     float64
-	HasPos  bool
-	Power   int
-	Cadence int
-	HR      int
-	SpeedMs float64
+	Offset    int64
+	Lat       float64
+	Lon       float64
+	HasPos    bool
+	Power     int
+	Cadence   int
+	HR        int
+	SpeedMs   float64
+	AltitudeM float64
+	HasAlt    bool
+	DistanceM float64
+	HasDist   bool
 }
 
 func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
@@ -229,19 +261,26 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT INTO samples (workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms)
-		VALUES (?,?,?,?,?,?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT INTO samples (workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, s := range samples {
-		var lat, lon any
+		var lat, lon, alt, dist any
 		if s.HasPos {
 			lat, lon = s.Lat, s.Lon
 		}
+		if s.HasAlt {
+			alt = s.AltitudeM
+		}
+		if s.HasDist {
+			dist = s.DistanceM
+		}
 		if _, err := stmt.Exec(workoutID, s.Offset, lat, lon,
-			nullableInt(s.Power), nullableInt(s.Cadence), nullableInt(s.HR), nullableFloat(s.SpeedMs)); err != nil {
+			nullableInt(s.Power), nullableInt(s.Cadence), nullableInt(s.HR), nullableFloat(s.SpeedMs),
+			alt, dist); err != nil {
 			return err
 		}
 	}
@@ -380,16 +419,16 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var start string
 	var durSec int64
 	var dist sql.NullInt64
-	var spd sql.NullFloat64
-	var cad, mcad, ap, mp, np, hr, mhr, kcal sql.NullInt64
+	var spd, mspd sql.NullFloat64
+	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
 	err := db.QueryRow(`SELECT id, start_time, name, duration_sec, distance_m, has_gps, trainer,
-	    trainer_override, avg_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
-	    norm_power, avg_hr, max_hr, calories
+	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
+	    norm_power, avg_hr, max_hr, calories, total_ascent, total_descent
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &durSec, &dist, &gps, &tr, &ov,
-		&spd, &cad, &mcad, &ap, &mp, &np, &hr, &mhr, &kcal)
+		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &hr, &mhr, &kcal, &asc, &desc)
 	if err != nil {
 		return nil, err
 	}
@@ -411,6 +450,11 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	if spd.Valid {
 		w.AvgSpeedKmh = spd.Float64 * 3.6
 	}
+	if mspd.Valid {
+		w.MaxSpeedKmh = mspd.Float64 * 3.6
+	}
+	w.AscentM = int(asc.Int64)
+	w.DescentM = int(desc.Int64)
 	w.AvgCadence = int(cad.Int64)
 	w.MaxCadence = int(mcad.Int64)
 	w.AvgPower = int(ap.Int64)
@@ -423,15 +467,19 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	return &w, nil
 }
 
-// Samples возвращает сэмплы с прореживанием, чтобы в ответе было не больше maxN точек.
+// Samples возвращает сэмплы, уменьшая количество до ~maxN точек бакет-усреднением
+// (а не выборкой каждой N-й — иначе графики страдают от алиасинга).
+// При maxN >= количества сэмплов возвращает их как есть, по одной секунде.
 func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 	var total int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE workout_id = ?`, id).Scan(&total); err != nil {
 		return nil, err
 	}
-	stride := total/maxN + 1
-	rows, err := db.Query(`SELECT ts_offset, lat, lon, power, cadence, hr, speed_ms
-	    FROM samples WHERE workout_id = ? AND ts_offset % ? = 0 ORDER BY ts_offset`, id, stride)
+	bucket := total/maxN + 1
+	rows, err := db.Query(`SELECT MIN(ts_offset), AVG(lat), AVG(lon),
+	    CAST(AVG(power) AS INTEGER), CAST(AVG(cadence) AS INTEGER), CAST(AVG(hr) AS INTEGER),
+	    AVG(speed_ms), AVG(altitude_m), MAX(distance_m)
+	    FROM samples WHERE workout_id = ? GROUP BY ts_offset / ? ORDER BY 1`, id, bucket)
 	if err != nil {
 		return nil, err
 	}
@@ -439,9 +487,9 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 	var out []Sample
 	for rows.Next() {
 		var s Sample
-		var lat, lon, spd sql.NullFloat64
+		var lat, lon, spd, alt, dist sql.NullFloat64
 		var p, c, h sql.NullInt64
-		if err := rows.Scan(&s.Offset, &lat, &lon, &p, &c, &h, &spd); err != nil {
+		if err := rows.Scan(&s.Offset, &lat, &lon, &p, &c, &h, &spd, &alt, &dist); err != nil {
 			return nil, err
 		}
 		s.Lat = lat.Float64
@@ -451,6 +499,10 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 		s.Cadence = int(c.Int64)
 		s.HR = int(h.Int64)
 		s.SpeedMs = spd.Float64
+		s.AltitudeM = alt.Float64
+		s.HasAlt = alt.Valid
+		s.DistanceM = dist.Float64
+		s.HasDist = dist.Valid
 		out = append(out, s)
 	}
 	return out, rows.Err()

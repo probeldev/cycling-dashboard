@@ -18,7 +18,8 @@ import (
 	"cycling-dashboard/internal/store"
 )
 
-func ImportDir(db *sql.DB, dir string) (imported, skipped int, err error) {
+func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, err error) {
+	forceAll := len(force) > 0 && force[0]
 	err = fs.WalkDir(os.DirFS(dir), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -39,7 +40,7 @@ func ImportDir(db *sql.DB, dir string) (imported, skipped int, err error) {
 		if err != nil {
 			return err
 		}
-		if !changed {
+		if !changed && !forceAll {
 			skipped++
 			return nil
 		}
@@ -121,6 +122,13 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 	if s.AvgSpeed != math.MaxUint16 {
 		w.AvgSpeedKmh = float64(s.AvgSpeed) / 1000 * 3.6 // scale 1000, м/с → км/ч
 	}
+	if s.EnhancedMaxSpeed != math.MaxUint32 {
+		w.MaxSpeedKmh = float64(s.EnhancedMaxSpeed) / 1000 * 3.6
+	} else if s.MaxSpeed != math.MaxUint16 {
+		w.MaxSpeedKmh = float64(s.MaxSpeed) / 1000 * 3.6
+	}
+	w.AscentM = validUint16(s.TotalAscent)
+	w.DescentM = validUint16(s.TotalDescent)
 
 	// калории: если в файле нет — считаем из работы (кДж ≈ ккал)
 	if w.Calories == 0 && w.AvgPower > 0 && w.Duration > 0 {
@@ -141,10 +149,23 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 			Cadence: validUint8(r.Cadence),
 			HR:      validUint8(r.HeartRate),
 		}
-		if r.EnhancedSpeed != math.MaxUint32 {
+		// Cycplus пишет legacy-invalid 0xFFFF даже в enhanced-поля,
+		// где invalid по профилю 0xFFFFFFFF — фильтруем оба маркера
+		if r.EnhancedSpeed != math.MaxUint32 && r.EnhancedSpeed != math.MaxUint16 {
 			smp.SpeedMs = float64(r.EnhancedSpeed) / 1000 // scale 1000
 		} else if r.Speed != math.MaxUint16 {
 			smp.SpeedMs = float64(r.Speed) / 1000 // scale 1000
+		}
+		if r.EnhancedAltitude != math.MaxUint32 && r.EnhancedAltitude != math.MaxUint16 {
+			smp.AltitudeM = float64(r.EnhancedAltitude)/5 - 500 // scale 5, offset 500
+			smp.HasAlt = true
+		} else if r.Altitude != math.MaxUint16 {
+			smp.AltitudeM = float64(r.Altitude)/5 - 500
+			smp.HasAlt = true
+		}
+		if r.Distance != math.MaxUint32 {
+			smp.DistanceM = float64(r.Distance) / 100 // scale 100
+			smp.HasDist = true
 		}
 		if !r.PositionLat.Invalid() && !r.PositionLong.Invalid() {
 			smp.Lat = r.PositionLat.Degrees()
