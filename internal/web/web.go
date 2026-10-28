@@ -24,6 +24,13 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"sec2h":     func(sec int64) string { return trimFloat(float64(sec) / 3600) },
 	"date":      func(t time.Time) string { return t.Format("02.01.2006") },
 	"trimFloat": trimFloat,
+	"pizzas": func(kcal int) string {
+		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
+		if p < 0.3 {
+			return ""
+		}
+		return strconv.FormatFloat(p, 'f', 1, 64) + " пицц пепперони"
+	},
 	"datetime":  func(t time.Time) string { return t.Format("02.01.2006 15:04") },
 	"dur": func(d time.Duration) string {
 		h := int(d.Hours())

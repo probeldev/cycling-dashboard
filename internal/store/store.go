@@ -273,10 +273,11 @@ type Year struct {
 }
 
 type Month struct {
-	Month   time.Month
-	Outdoor Agg
-	Trainer Agg
-	Rides   []WorkoutRow
+	Month         time.Month
+	Outdoor       Agg
+	Trainer       Agg
+	TotalCalories int
+	Rides         []WorkoutRow
 }
 
 func ListTree(db *sql.DB) ([]Year, error) {
@@ -344,6 +345,7 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		magg.DistanceKm += r.DistanceKm
 		magg.Hours += hours
 		magg.Calories += r.Calories
+		m.TotalCalories += r.Calories
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

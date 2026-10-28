@@ -43,7 +43,7 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
   <div class="months">
   {{ range .Months }}
     <details class="month">
-      <summary>{{ monthName .Month }}: {{ if .Outdoor.Hours }}улица — {{ km .Outdoor.DistanceKm }} км, {{ hours .Outdoor.Hours }} ч{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }}; {{ end }}{{ if .Trainer.Hours }}станок — {{ hours .Trainer.Hours }} ч{{ end }}{{ if .Trainer.Calories }}, {{ .Trainer.Calories }} ккал{{ end }}</summary>
+      <summary>{{ monthName .Month }}: {{ if .Outdoor.Hours }}улица — {{ km .Outdoor.DistanceKm }} км, {{ hours .Outdoor.Hours }} ч{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }}; {{ end }}{{ if .Trainer.Hours }}станок — {{ hours .Trainer.Hours }} ч{{ end }}{{ if .TotalCalories }} · {{ .TotalCalories }} ккал{{ with pizzas .TotalCalories }} ≈ {{ . }}{{ end }}{{ end }}</summary>
       <div class="months">
       {{ range .Rides }}
         <div class="ride" data-search="{{ date .StartTime }} {{ .Name }}">
