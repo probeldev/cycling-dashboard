@@ -246,7 +246,9 @@ type Sample struct {
 	Lon       float64
 	HasPos    bool
 	Power     int
+	HasPwr    bool // false = датчик отвалился (нет поля), true = есть значение (в т.ч. честный 0)
 	Cadence   int
+	HasCad    bool
 	HR        int
 	SpeedMs   float64
 	AltitudeM float64
@@ -268,7 +270,7 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 	}
 	defer stmt.Close()
 	for _, s := range samples {
-		var lat, lon, alt, dist any
+		var lat, lon, alt, dist, pwr, cad any
 		if s.HasPos {
 			lat, lon = s.Lat, s.Lon
 		}
@@ -278,8 +280,15 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 		if s.HasDist {
 			dist = s.DistanceM
 		}
+		// power/каденс: NULL только при дропауте датчика, честный 0 храним как 0
+		if s.HasPwr {
+			pwr = s.Power
+		}
+		if s.HasCad {
+			cad = s.Cadence
+		}
 		if _, err := stmt.Exec(workoutID, s.Offset, lat, lon,
-			nullableInt(s.Power), nullableInt(s.Cadence), nullableInt(s.HR), nullableFloat(s.SpeedMs),
+			pwr, cad, nullableInt(s.HR), nullableFloat(s.SpeedMs),
 			alt, dist); err != nil {
 			return err
 		}
@@ -496,7 +505,9 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 		s.Lon = lon.Float64
 		s.HasPos = lat.Valid && lon.Valid
 		s.Power = int(p.Int64)
+		s.HasPwr = p.Valid
 		s.Cadence = int(c.Int64)
+		s.HasCad = c.Valid
 		s.HR = int(h.Int64)
 		s.SpeedMs = spd.Float64
 		s.AltitudeM = alt.Float64

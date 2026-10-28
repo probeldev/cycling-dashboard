@@ -130,10 +130,6 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 	w.AscentM = validUint16(s.TotalAscent)
 	w.DescentM = validUint16(s.TotalDescent)
 
-	// калории: если в файле нет — считаем из работы (кДж ≈ ккал)
-	if w.Calories == 0 && w.AvgPower > 0 && w.Duration > 0 {
-		w.Calories = int(w.AvgPower * int(w.Duration.Seconds()) / 1000)
-	}
 	w.HasPower = w.AvgPower > 0
 
 	samples := make([]store.Sample, 0, len(activity.Records))
@@ -145,9 +141,16 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 			start = r.Timestamp
 		}
 		smp := store.Sample{
-			Power:   validUint16(r.Power),
-			Cadence: validUint8(r.Cadence),
-			HR:      validUint8(r.HeartRate),
+			HR: validUint8(r.HeartRate),
+		}
+		// дропаут датчика (нет поля) отличаем от честного 0
+		smp.HasPwr = r.Power != math.MaxUint16
+		if smp.HasPwr {
+			smp.Power = int(r.Power)
+		}
+		smp.HasCad = r.Cadence != math.MaxUint8
+		if smp.HasCad {
+			smp.Cadence = int(r.Cadence)
 		}
 		// Cycplus пишет legacy-invalid 0xFFFF даже в enhanced-поля,
 		// где invalid по профилю 0xFFFFFFFF — фильтруем оба маркера
@@ -183,6 +186,25 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 		samples[i].Offset = int64(activity.Records[i].Timestamp.Sub(start).Seconds())
 	}
 
+	if w.HasPower {
+		// среднюю считаем сами по валидным сэмплам: устройство включает
+		// дропауты как нули и занижает avg
+		if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.Power, s.HasPwr }); ok {
+			w.AvgPower = avg
+		}
+		// NP: Cycplus не пишет — считаем сами (Когган: скользящее 30 с → x⁴ → avg → ⁴√)
+		if w.NormPower == 0 {
+			w.NormPower = normalizedPower(samples)
+		}
+		// калории: если в файле нет — считаем из работы (кДж ≈ ккал)
+		if w.Calories == 0 && w.AvgPower > 0 && w.Duration > 0 {
+			w.Calories = w.AvgPower * int(w.Duration.Seconds()) / 1000
+		}
+	}
+	if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); ok {
+		w.AvgCadence = avg
+	}
+
 	// станок: нет GPS, FIT помечен как indoor cycling, либо трек меньше 1 км —
 	// C2 пишет дрейфующие координаты даже на станке
 	indoor := s.SubSport == fit.SubSportIndoorCycling
@@ -192,6 +214,52 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 		w.DistanceKm = 0
 	}
 	return w, samples, nil
+}
+
+// avgValid — среднее по сэмплам с валидным значением (дропауты не участвуют).
+func avgValid(samples []store.Sample, get func(store.Sample) (int, bool)) (int, bool) {
+	sum, n := 0, 0
+	for _, s := range samples {
+		if v, ok := get(s); ok {
+			sum += v
+			n++
+		}
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return (sum + n/2) / n, true
+}
+
+// normalizedPower считает NP по посекундным сэмплам.
+// Дропауты датчика заполняем последним значением (fill-forward) —
+// иначе провалы связи занижают и avg, и NP.
+func normalizedPower(samples []store.Sample) int {
+	const window = 30 // секунд при записи 1 Гц
+	if len(samples) == 0 {
+		return 0
+	}
+	last := 0
+	for i := range samples {
+		if samples[i].HasPwr {
+			last = samples[i].Power
+		} else {
+			samples[i].Power = last
+		}
+	}
+	var roll float64
+	var sum4 float64
+	for i, s := range samples {
+		p := float64(s.Power)
+		roll += p
+		if i >= window {
+			roll -= float64(samples[i-window].Power)
+		}
+		avg := roll / float64(min(i+1, window))
+		avg2 := avg * avg
+		sum4 += avg2 * avg2
+	}
+	return int(math.Pow(sum4/float64(len(samples)), 0.25) + 0.5)
 }
 
 // trackSpan — диагональ bounding box трека в метрах.

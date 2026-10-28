@@ -22,6 +22,7 @@
   {{ if .W.HasPower }}
   <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">ср. мощность</div></div>
   <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс. мощность</div></div>
+  {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">норм. мощность</div></div>{{ end }}
   {{ end }}
   {{ if .W.AvgCadence }}<div class="stat"><div class="v">{{ .W.AvgCadence }}</div><div class="k">ср. каденс</div></div>{{ end }}
   {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс. каденс</div></div>{{ end }}
@@ -108,8 +109,10 @@ function redraw() {
     let v = s[curMetric.key];
     if (curMetric.conv) v = curMetric.conv(v);
     if (curMetric.key === "AltitudeM" && !s.HasAlt) return null;
-    // каденс 0 — это «не кручу», а не усилие: рисуем разрыв, а не провал
-    if (curMetric.key === "Cadence" && v === 0) return null;
+    // дропаут поверметра — разрыв, а не ложный ноль
+    if (curMetric.key === "Power" && !s.HasPwr) return null;
+    // каденс: дропаут или «не кручу» — разрыв, а не провал
+    if (curMetric.key === "Cadence" && (!s.HasCad || v === 0)) return null;
     return v;
   }));
   chart.data.labels = x;
