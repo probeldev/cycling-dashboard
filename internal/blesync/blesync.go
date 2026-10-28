@@ -272,6 +272,37 @@ func (s *Syncer) waitData(timeout time.Duration) ([]byte, bool) {
 	}
 }
 
+// drain выбрасывает накопившиеся в канале устаревшие нотификации.
+func (s *Syncer) drain() {
+	for {
+		select {
+		case <-s.notifications:
+		default:
+			return
+		}
+	}
+}
+
+// waitACK ждёт подтверждения запроса файла, пропуская посторонние нотификации.
+func (s *Syncer) waitACK(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		s.mu.Lock()
+		ok := s.replyOK
+		s.mu.Unlock()
+		if ok {
+			return true
+		}
+		remain := time.Until(deadline)
+		if remain <= 0 {
+			return false
+		}
+		if _, ok := s.waitData(remain); !ok {
+			return false
+		}
+	}
+}
+
 func (s *Syncer) requestReadPermission(writeCmd func([]byte)) bool {
 	writeCmd(cmdReadPermission)
 	_, ok := s.waitData(10 * time.Second)
@@ -287,13 +318,19 @@ func (s *Syncer) copyCopyOK(writeRx func([]byte)) {
 
 // copyCopyOKCombine: ждём ~5 чанков, просим следующую порцию.
 // Устройство шлёт данные пачками; после каждой пачки ждёт 0x06.
-func (s *Syncer) copyCopyOKCombine(writeRx func([]byte)) {
+// false — данные перестали приходить (таймаут), передачу надо прерывать.
+func (s *Syncer) copyCopyOKCombine(writeRx func([]byte)) bool {
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		s.mu.Lock()
 		n := s.count
+		combining := s.combine
 		s.mu.Unlock()
-		if n > 5 {
+		if n > 5 || !combining {
 			break
+		}
+		if time.Now().After(deadline) {
+			return false
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -305,6 +342,7 @@ func (s *Syncer) copyCopyOKCombine(writeRx func([]byte)) {
 	s.trigger = true
 	s.mu.Unlock()
 	writeRx(cmdCopyOK)
+	return true
 }
 
 func (s *Syncer) endOfTransfer(writeRx func([]byte)) {
@@ -336,9 +374,12 @@ func (s *Syncer) getFileList(writeCmd, writeRx func([]byte)) error {
 	writeRx(cmdCopy)
 
 	for s.isCombining() {
-		s.copyCopyOKCombine(writeRx)
+		if !s.copyCopyOKCombine(writeRx) {
+			return fmt.Errorf("передача filelist.txt зависла")
+		}
 	}
 	s.endOfTransfer(writeRx)
+	time.Sleep(2 * time.Second)
 
 	s.mu.Lock()
 	data := make([]byte, len(s.data))
@@ -356,6 +397,19 @@ func (s *Syncer) isCombining() bool {
 
 // syncFile качает один FIT-файл.
 func (s *Syncer) syncFile(writeCmd, writeRx func([]byte), name string) bool {
+	for attempt := 1; attempt <= 3; attempt++ {
+		if s.syncFileOnce(writeCmd, writeRx, name) {
+			return true
+		}
+		if attempt < 3 {
+			s.log("  повтор %d/3 через 2 с...", attempt+1)
+			time.Sleep(2 * time.Second)
+		}
+	}
+	return false
+}
+
+func (s *Syncer) syncFileOnce(writeCmd, writeRx func([]byte), name string) bool {
 	s.mu.Lock()
 	s.combine = false
 	s.replyOK = false
@@ -364,6 +418,7 @@ func (s *Syncer) syncFile(writeCmd, writeRx func([]byte), name string) bool {
 	s.count = 0
 	s.fileCheck = append([]byte{0x06}, []byte(name)...)
 	s.mu.Unlock()
+	s.drain()
 
 	if !s.requestReadPermission(writeCmd) {
 		s.log("  нет разрешения на чтение")
@@ -373,18 +428,15 @@ func (s *Syncer) syncFile(writeCmd, writeRx func([]byte), name string) bool {
 	req := append([]byte{0x05}, []byte(name)...)
 	req = append(req, 0x50)
 	writeCmd(req)
-	s.waitData(10 * time.Second)
 
-	s.mu.Lock()
-	ack := s.replyOK
-	s.mu.Unlock()
-	if !ack {
+	if !s.waitACK(10 * time.Second) {
 		s.log("  запрос не подтверждён устройством")
 		return false
 	}
 
-	writeRx(cmdCopy)
-	s.waitData(10 * time.Second)
+	// рукопожатие как в getFileList: 0x43 → первый ответ → 0x06, иначе
+	// устройство ждёт 0x06, а мы ждём данные — взаимная блокировка
+	s.copyCopyOK(writeRx)
 
 	s.mu.Lock()
 	s.data = nil
@@ -396,7 +448,10 @@ func (s *Syncer) syncFile(writeCmd, writeRx func([]byte), name string) bool {
 	// цикл приёма с защитой от зависания
 	iterations, stall, lastSize := 0, 0, 0
 	for s.isCombining() {
-		s.copyCopyOKCombine(writeRx)
+		if !s.copyCopyOKCombine(writeRx) {
+			s.log("  передача зависла: данные не приходят")
+			return false
+		}
 		iterations++
 		s.mu.Lock()
 		size := len(s.data)
@@ -409,11 +464,11 @@ func (s *Syncer) syncFile(writeCmd, writeRx func([]byte), name string) bool {
 		}
 		if iterations > 3000 {
 			s.log("  таймаут передачи (%d итераций)", iterations)
-			break
+			return false
 		}
 		if stall > 150 {
 			s.log("  передача зависла: прогресса нет %d итераций", stall)
-			break
+			return false
 		}
 	}
 	s.endOfTransfer(writeRx)
