@@ -1,0 +1,106 @@
+{{ template "head" . }}
+<h1>
+  <a href="/">←</a>
+  {{ datetime .W.StartTime }}
+  {{ if .W.Trainer }}<span class="tag">станок</span>{{ end }}
+</h1>
+
+<div style="margin:10px 0">
+  <input id="wname" type="text" value="{{ .W.Name }}" placeholder="Название тренировки"
+         style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:280px">
+  <button hx-post="/workout/{{ .W.ID }}/name" hx-vals="js:{name: document.getElementById('wname').value}" hx-swap="none">Сохранить</button>
+</div>
+
+<div class="stats">
+  <div class="stat"><div class="v">{{ dur .W.Duration }}</div><div class="k">время</div></div>
+  {{ if not .W.Trainer }}
+  <div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>
+  <div class="stat"><div class="v">{{ trimFloat .W.AvgSpeedKmh }} км/ч</div><div class="k">ср. скорость</div></div>
+  {{ end }}
+  {{ if .W.HasPower }}
+  <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">ср. мощность</div></div>
+  <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс. мощность</div></div>
+  {{ end }}
+  {{ if .W.AvgCadence }}<div class="stat"><div class="v">{{ .W.AvgCadence }}</div><div class="k">ср. каденс</div></div>{{ end }}
+  {{ if .W.AvgHR }}<div class="stat"><div class="v">{{ .W.AvgHR }}</div><div class="k">ср. пульс</div></div>{{ end }}
+  {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
+</div>
+
+<div style="margin-bottom:16px">
+  Тип тренировки:
+  <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"0"}' hx-swap="none">улица</button>
+  <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"1"}' hx-swap="none">станок</button>
+  {{ if .W.Override }}<span class="tag">вручную</span>{{ end }}
+</div>
+
+<canvas id="chart"></canvas>
+
+<div class="dist-grid" id="distGrid">
+  <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
+  <div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>
+  <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas></div>
+  <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
+</div>
+
+<div id="map"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script>
+(async () => {
+const id = {{ .W.ID }};
+const resp = await fetch(`/api/workout/${id}/samples`);
+const data = await resp.json();
+
+const hasPower = data.some(s => s.Power > 0);
+const ds = [];
+if (hasPower) ds.push({ label: "Мощность, Вт", data: data.map(s => s.Power), borderWidth: 1, pointRadius: 0, borderColor: "#d73a49" });
+if (ds.length) {
+  new Chart(document.getElementById("chart"), {
+    type: "line",
+    data: { labels: data.map(s => s.Offset), datasets: ds },
+    options: {
+      animation: false,
+      scales: { x: { ticks: { callback: v => Math.round(v/60) + " мин" } }, y: { position: "left" } },
+    },
+  });
+} else {
+  document.getElementById("chart").style.display = "none";
+}
+
+const dist = await (await fetch(`/api/workout/${id}/dist`)).json();
+const titles = { cadence: "Каденс, об/мин", speed: "Скорость, км/ч", power: "Мощность, Вт", hr: "Пульс, уд/мин" };
+document.querySelectorAll("#distGrid .dist").forEach(el => {
+  const kind = el.dataset.kind;
+  const entries = dist[kind];
+  if (!entries) { el.style.display = "none"; return; }
+  el.querySelector("h3").textContent = titles[kind] + " — время в диапазоне";
+  new Chart(el.querySelector("canvas"), {
+    type: "bar",
+    data: {
+      labels: entries.map(e => e.label),
+      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)), backgroundColor: "#0969da" }],
+    },
+    options: {
+      indexAxis: "y",
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + " мин" } } },
+      scales: { x: { title: { display: true, text: "минут" } } },
+    },
+  });
+});
+if (!Object.keys(dist).length) document.getElementById("distGrid").style.display = "none";
+
+const track = data.filter(s => s.HasPos);
+if (track.length > 1) {
+  const map = L.map("map").setView([track[0].Lat, track[0].Lon], 13);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+  L.polyline(track.map(s => [s.Lat, s.Lon]), { color: "#58a6ff" }).addTo(map);
+  map.fitBounds(L.latLngBounds(track.map(s => [s.Lat, s.Lon])).pad(0.05));
+} else {
+  document.getElementById("map").style.display = "none";
+}
+})();
+</script>
+{{ template "foot" . }}

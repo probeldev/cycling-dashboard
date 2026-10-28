@@ -1,0 +1,88 @@
+{{ template "head" . }}
+<h1>Тренировки</h1>
+
+<div style="display:flex; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap">
+  <button id="syncBtn" hx-post="/sync" hx-swap="none">Синхронизировать с велокомпом</button>
+  <span id="syncState" class="sub"></span>
+</div>
+<pre id="syncLog" style="display:none; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:13px; max-height:220px; overflow:auto; white-space:pre-wrap"></pre>
+
+<input id="search" type="text" placeholder="Поиск по имени или дате (напр. 05.2025)"
+       style="font:inherit; padding:8px 12px; border:1px solid var(--border); border-radius:6px; width:100%; margin-bottom:8px"
+       oninput="filterRides(this.value)">
+
+<script>
+let syncTimer = null;
+function pollSync() {
+  fetch("/sync/status").then(r => r.json()).then(st => {
+    const log = document.getElementById("syncLog");
+    const btn = document.getElementById("syncBtn");
+    const state = document.getElementById("syncState");
+    if (st.lines.length) {
+      log.style.display = "block";
+      log.textContent = st.lines.join("\n");
+      log.scrollTop = log.scrollHeight;
+    }
+    if (st.running) {
+      btn.disabled = true;
+      state.textContent = "синхронизация...";
+      syncTimer = setTimeout(pollSync, 1500);
+    } else {
+      btn.disabled = false;
+      state.textContent = "";
+      if (syncTimer) { syncTimer = null; location.reload(); }
+    }
+  });
+}
+document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSync);
+</script>
+
+{{ range .Years }}
+<details open class="year">
+  <summary>{{ .Year }} ({{ km .Outdoor.DistanceKm }} км)</summary>
+  <div class="months">
+  {{ range .Months }}
+    <details class="month">
+      <summary>{{ monthName .Month }}: {{ if .Outdoor.Hours }}улица — {{ km .Outdoor.DistanceKm }} км, {{ hours .Outdoor.Hours }} ч{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }}; {{ end }}{{ if .Trainer.Hours }}станок — {{ hours .Trainer.Hours }} ч{{ end }}{{ if .Trainer.Calories }}, {{ .Trainer.Calories }} ккал{{ end }}</summary>
+      <div class="months">
+      {{ range .Rides }}
+        <div class="ride" data-search="{{ date .StartTime }} {{ .Name }}">
+          <a href="/workout/{{ .ID }}">{{ date .StartTime }}</a>
+          {{ if .Name }}<span style="font-weight:600">{{ .Name }}</span>{{ end }}
+          {{ if .Trainer }}
+            <span>{{ sec2h .DurationSec }} ч</span><span class="tag">станок</span>
+          {{ else }}
+            <span>{{ km .DistanceKm }} км</span><span>{{ sec2h .DurationSec }} ч</span>
+          {{ end }}
+          {{ if .AvgPower }}<span class="sub">ср. {{ .AvgPower }} Вт</span>{{ end }}
+          {{ if .AvgCadence }}<span class="sub">кад. {{ .AvgCadence }}</span>{{ end }}
+          {{ if .Calories }}<span class="sub">{{ .Calories }} ккал</span>{{ end }}
+        </div>
+      {{ end }}
+      </div>
+    </details>
+  {{ end }}
+  </div>
+</details>
+{{ end }}
+
+<script>
+function filterRides(q) {
+  q = q.trim().toLowerCase();
+  document.querySelectorAll(".ride").forEach(r => {
+    r.style.display = !q || r.dataset.search.toLowerCase().includes(q) ? "" : "none";
+  });
+  // скрываем пустые месяцы и годы
+  document.querySelectorAll("details.month").forEach(m => {
+    const visible = [...m.querySelectorAll(".ride")].some(r => r.style.display !== "none");
+    m.style.display = visible ? "" : "none";
+    if (visible) m.open = true;
+  });
+  document.querySelectorAll("details.year").forEach(y => {
+    const visible = [...y.querySelectorAll("details.month")].some(m => m.style.display !== "none");
+    y.style.display = visible ? "" : "none";
+  });
+}
+</script>
+
+{{ template "foot" . }}

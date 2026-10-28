@@ -1,0 +1,13 @@
+# база SQLite
+*.db
+*.db-*
+
+# треки — личные данные, не для git
+tracks/
+
+# скомпилированный бинарник
+/cycling-dashboard
+
+# мусор
+.DS_Store
+*.log
