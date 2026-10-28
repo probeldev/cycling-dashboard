@@ -11,24 +11,43 @@
   <button hx-post="/workout/{{ .W.ID }}/name" hx-vals="js:{name: document.getElementById('wname').value}" hx-swap="none">Сохранить</button>
 </div>
 
-<div class="stats">
-  <div class="stat"><div class="v">{{ dur .W.Duration }}</div><div class="k">время</div></div>
-  {{ if not .W.Trainer }}
-  <div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>
-  <div class="stat"><div class="v">{{ trimFloat .W.AvgSpeedKmh }} км/ч</div><div class="k">ср. скорость</div></div>
-  {{ if .W.MaxSpeedKmh }}<div class="stat"><div class="v">{{ trimFloat .W.MaxSpeedKmh }} км/ч</div><div class="k">макс. скорость</div></div>{{ end }}
-  {{ if .W.AscentM }}<div class="stat"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор высоты</div></div>{{ end }}
-  {{ end }}
+<div class="stat-groups">
+  <h3>Общее</h3>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ dur .W.Duration }}</div><div class="k">время</div></div>
+    {{ if not .W.Trainer }}<div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>{{ end }}
+    {{ if and (not .W.Trainer) .W.AscentM }}<div class="stat"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор</div></div>{{ end }}
+    {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
+  </div>
   {{ if .W.HasPower }}
-  <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">ср. мощность</div></div>
-  <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс. мощность</div></div>
-  {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">норм. мощность</div></div>{{ end }}
+  <h3>Мощность</h3>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя</div></div>
+    <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс</div></div>
+    {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">NP</div></div>{{ end }}
+  </div>
   {{ end }}
-  {{ if .W.AvgCadence }}<div class="stat"><div class="v">{{ .W.AvgCadence }}</div><div class="k">ср. каденс</div></div>{{ end }}
-  {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс. каденс</div></div>{{ end }}
-  {{ if .W.AvgHR }}<div class="stat"><div class="v">{{ .W.AvgHR }}</div><div class="k">ср. пульс</div></div>{{ end }}
-  {{ if .W.MaxHR }}<div class="stat"><div class="v">{{ .W.MaxHR }}</div><div class="k">макс. пульс</div></div>{{ end }}
-  {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
+  {{ if not .W.Trainer }}
+  <h3>Скорость</h3>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ trimFloat .W.AvgSpeedKmh }}</div><div class="k">средняя, км/ч</div></div>
+    {{ if .W.MaxSpeedKmh }}<div class="stat"><div class="v">{{ trimFloat .W.MaxSpeedKmh }}</div><div class="k">макс, км/ч</div></div>{{ end }}
+  </div>
+  {{ end }}
+  {{ if .W.AvgCadence }}
+  <h3>Каденс</h3>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ .W.AvgCadence }}</div><div class="k">средний</div></div>
+    {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс</div></div>{{ end }}
+  </div>
+  {{ end }}
+  {{ if .W.AvgHR }}
+  <h3>Пульс</h3>
+  <div class="stats">
+    <div class="stat"><div class="v">{{ .W.AvgHR }}</div><div class="k">средний</div></div>
+    {{ if .W.MaxHR }}<div class="stat"><div class="v">{{ .W.MaxHR }}</div><div class="k">макс</div></div>{{ end }}
+  </div>
+  {{ end }}
 </div>
 
 <div style="margin-bottom:16px">
