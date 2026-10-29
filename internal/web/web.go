@@ -24,6 +24,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"sec2h":     func(sec int64) string { return trimFloat(float64(sec) / 3600) },
 	"date":      func(t time.Time) string { return t.Format("02.01.2006") },
 	"trimFloat": trimFloat,
+	"divf":      func(a int, b float64) float64 { return float64(a) / b },
 	"pizzas": func(kcal int) string {
 		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
 		if p < 0.3 {
@@ -63,6 +64,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r := chi.NewRouter()
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(static)))
 	sync.routes(r, syncDir, afterSync)
+	profileRoutes(r, db)
 
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
 		years, err := store.ListTree(db)
@@ -113,12 +115,17 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 
 	r.Get("/api/workout/{id}/dist", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		wo, err := store.GetWorkout(db, id)
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
 		samples, err := store.Samples(db, id, 100000)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, distributions(samples))
+		writeJSON(w, distributions(samples, wo.FTP))
 	})
 
 	return r, nil

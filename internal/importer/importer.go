@@ -49,6 +49,13 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", full, err)
 			return nil
 		}
+		// штампуем вес и FTP на дату тренировки — зоны считаются от них
+		if ftp, ok := store.ProfileAt(db, "ftp", w.StartTime); ok {
+			w.FTP = int(ftp)
+		}
+		if kg, ok := store.ProfileAt(db, "weight", w.StartTime); ok {
+			w.WeightKg = kg
+		}
 		id, err := store.InsertWorkout(db, w, hash, full, fi.ModTime().Unix())
 		if err != nil {
 			return err

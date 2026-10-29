@@ -25,6 +25,8 @@
     <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя</div></div>
     <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс</div></div>
     {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">NP</div></div>{{ end }}
+    {{ if .W.FTP }}<div class="stat"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату</div></div>{{ end }}
+    {{ if and .W.WeightKg .W.AvgPower }}<div class="stat"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг{{ if .W.WeightKg }} (вес {{ km .W.WeightKg }}){{ end }}</div></div>{{ end }}
   </div>
   {{ end }}
   {{ if not .W.Trainer }}
@@ -168,17 +170,20 @@ if (metrics.length) {
 }
 
 const dist = await (await fetch(`/api/workout/${id}/dist`)).json();
-const titles = { cadence: "Каденс, об/мин", speed: "Скорость, км/ч", power: "Мощность, Вт", hr: "Пульс, уд/мин" };
+const ftp = {{ .W.FTP }};
+const titles = { cadence: "Каденс, об/мин", speed: "Скорость, км/ч",
+  power: ftp ? `Зоны мощности (FTP ${ftp} Вт)` : "Мощность, Вт", hr: "Пульс, уд/мин" };
 document.querySelectorAll("#distGrid .dist").forEach(el => {
   const kind = el.dataset.kind;
   const entries = dist[kind];
   if (!entries) { el.style.display = "none"; return; }
-  el.querySelector("h3").textContent = titles[kind] + " — время в диапазоне";
+  el.querySelector("h3").textContent = titles[kind] + (kind === "power" && ftp ? " — время в зоне" : " — время в диапазоне");
   new Chart(el.querySelector("canvas"), {
     type: "bar",
     data: {
       labels: entries.map(e => e.label),
-      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)), backgroundColor: "#0969da" }],
+      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)),
+        backgroundColor: kind === "power" && ftp ? "#d73a49" : "#0969da" }],
     },
     options: {
       indexAxis: "y",

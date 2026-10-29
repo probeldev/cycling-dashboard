@@ -1,0 +1,48 @@
+{{ template "head" . }}
+<h1><a href="/">←</a> Профиль</h1>
+
+<div class="stats">
+  {{ if .HasWeight }}<div class="stat"><div class="v">{{ km .Weight }} кг</div><div class="k">вес</div></div>{{ end }}
+  {{ if .HasFTP }}<div class="stat"><div class="v">{{ .FTP }} Вт</div><div class="k">FTP</div></div>{{ end }}
+  {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divf .FTP .Weight) }}</div><div class="k">Вт/кг</div></div>{{ end }}
+</div>
+
+<h2>Добавить запись</h2>
+<div style="display:flex; gap:24px; flex-wrap:wrap; margin:10px 0">
+  <div>
+    <b>Вес, кг</b><br>
+    <input id="wval" type="number" step="0.1" min="1" placeholder="75.5"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
+    <input id="wdate" type="date" value="{{ .Today }}"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
+    <button hx-post="/profile/entry" hx-swap="none"
+            hx-vals="js:{kind:'weight', value: document.getElementById('wval').value, date: document.getElementById('wdate').value}">Сохранить</button>
+  </div>
+  <div>
+    <b>FTP, Вт</b><br>
+    <input id="fval" type="number" step="1" min="1" placeholder="250"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
+    <input id="fdate" type="date" value="{{ .Today }}"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
+    <button hx-post="/profile/entry" hx-swap="none"
+            hx-vals="js:{kind:'ftp', value: document.getElementById('fval').value, date: document.getElementById('fdate').value}">Сохранить</button>
+  </div>
+</div>
+<p class="sub" style="color:var(--dim); font-size:14px">Дата — с какого дня действует значение. Зоны тренировок считаются по истории на дату тренировки.</p>
+
+{{ if .History }}
+<h2>История</h2>
+<table>
+  <tr><th>Дата</th><th></th><th>Значение</th><th></th></tr>
+  {{ range .History }}
+  <tr>
+    <td>{{ date .RecordedAt }}</td>
+    <td>{{ if eq .Kind "weight" }}вес{{ else }}FTP{{ end }}</td>
+    <td>{{ if eq .Kind "weight" }}{{ km .Value }} кг{{ else }}{{ printf "%.0f" .Value }} Вт{{ end }}</td>
+    <td><button hx-post="/profile/entry/{{ .ID }}/delete" hx-swap="none">✕</button></td>
+  </tr>
+  {{ end }}
+</table>
+{{ end }}
+
+{{ template "foot" . }}

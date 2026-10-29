@@ -31,6 +31,11 @@ type Workout struct {
 	AscentM     int
 	DescentM    int
 	HasPower    bool
+
+	// штампы профиля на момент тренировки — зоны считаются от них,
+	// чтобы история не пересчитывалась при изменении FTP/веса
+	FTP      int
+	WeightKg float64
 }
 
 type MonthAgg struct {
@@ -106,6 +111,15 @@ CREATE TABLE IF NOT EXISTS samples (
     distance_m  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
+
+CREATE TABLE IF NOT EXISTS profile_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL, -- 'weight' (кг) или 'ftp' (Вт)
+    value       REAL NOT NULL,
+    recorded_at TEXT NOT NULL, -- с какой даты значение действует
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded_at);
 `)
 	if err != nil {
 		return err
@@ -118,6 +132,8 @@ CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 		{"workouts", "total_descent", `ALTER TABLE workouts ADD COLUMN total_descent INTEGER`},
 		{"samples", "altitude_m", `ALTER TABLE samples ADD COLUMN altitude_m REAL`},
 		{"samples", "distance_m", `ALTER TABLE samples ADD COLUMN distance_m REAL`},
+		{"workouts", "ftp_w", `ALTER TABLE workouts ADD COLUMN ftp_w INTEGER`},
+		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -129,7 +145,7 @@ CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 			}
 		}
 	}
-	return nil
+	return BackfillProfileStamps(db)
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -182,8 +198,9 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	_, err := db.Exec(`INSERT INTO workouts
 	    (file_hash, file_path, file_mtime, start_time, year, month, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
-	     avg_power, max_power, norm_power, avg_hr, max_hr, calories, total_ascent, total_descent)
-	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	     avg_power, max_power, norm_power, avg_hr, max_hr, calories, total_ascent, total_descent,
+	     ftp_w, weight_kg)
+	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
@@ -195,7 +212,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      avg_power=excluded.avg_power, max_power=excluded.max_power,
 	      norm_power=excluded.norm_power, avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
 	      calories=excluded.calories,
-	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent`,
+	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent,
+	      ftp_w=excluded.ftp_w, weight_kg=excluded.weight_kg`,
 		hash, path, mtime, w.StartTime.UTC().Format(time.RFC3339),
 		w.StartTime.Year(), int(w.StartTime.Month()), gps, tr,
 		int64(w.Duration.Seconds()), dist,
@@ -203,7 +221,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		nullableInt(w.AvgCadence), nullableInt(w.MaxCadence),
 		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower),
 		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories),
-		nullableInt(w.AscentM), nullableInt(w.DescentM))
+		nullableInt(w.AscentM), nullableInt(w.DescentM),
+		nullableInt(w.FTP), nullableFloat(w.WeightKg))
 	if err != nil {
 		return 0, err
 	}
@@ -294,6 +313,92 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ProfileEntry — запись истории веса или FTP.
+type ProfileEntry struct {
+	ID         int64
+	Kind       string // 'weight' или 'ftp'
+	Value      float64
+	RecordedAt time.Time
+}
+
+// AddProfileEntry добавляет запись истории и пересчитывает штампы тренировок.
+func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error {
+	if _, err := db.Exec(`INSERT INTO profile_history (kind, value, recorded_at) VALUES (?,?,?)`,
+		kind, value, at.UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return BackfillProfileStamps(db)
+}
+
+// DeleteProfileEntry удаляет запись истории и пересчитывает штампы тренировок.
+func DeleteProfileEntry(db *sql.DB, id int64) error {
+	if _, err := db.Exec(`DELETE FROM profile_history WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return BackfillProfileStamps(db)
+}
+
+// ProfileHistory возвращает всю историю, новые записи первыми.
+func ProfileHistory(db *sql.DB) ([]ProfileEntry, error) {
+	rows, err := db.Query(`SELECT id, kind, value, recorded_at FROM profile_history
+		ORDER BY recorded_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ProfileEntry
+	for rows.Next() {
+		var e ProfileEntry
+		var at string
+		if err := rows.Scan(&e.ID, &e.Kind, &e.Value, &at); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339, at)
+		if err != nil {
+			return nil, err
+		}
+		e.RecordedAt = t.Local()
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ProfileAt возвращает значение ('weight'/'ftp'), действовавшее на момент t:
+// последнее до t, а если такого нет — самое раннее известное.
+func ProfileAt(db *sql.DB, kind string, t time.Time) (float64, bool) {
+	ts := t.UTC().Format(time.RFC3339)
+	var v float64
+	err := db.QueryRow(`SELECT value FROM profile_history
+		WHERE kind = ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1`, kind, ts).Scan(&v)
+	if err == sql.ErrNoRows {
+		err = db.QueryRow(`SELECT value FROM profile_history
+			WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1`, kind).Scan(&v)
+	}
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// BackfillProfileStamps проставляет тренировкам вес и FTP по истории профиля
+// на дату каждой тренировки. Идемпотентен, вызывается после изменения истории.
+func BackfillProfileStamps(db *sql.DB) error {
+	for _, m := range []struct{ kind, column string }{
+		{"ftp", "ftp_w"},
+		{"weight", "weight_kg"},
+	} {
+		if _, err := db.Exec(`UPDATE workouts SET ` + m.column + ` = COALESCE(
+			(SELECT value FROM profile_history
+			 WHERE kind = ? AND recorded_at <= start_time
+			 ORDER BY recorded_at DESC LIMIT 1),
+			(SELECT value FROM profile_history
+			 WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1))`, m.kind, m.kind); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func SetName(db *sql.DB, id int64, name string) error {
@@ -429,15 +534,16 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var durSec int64
 	var dist sql.NullInt64
 	var spd, mspd sql.NullFloat64
-	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc sql.NullInt64
+	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc, ftp sql.NullInt64
+	var wkg sql.NullFloat64
 	var tr, gps int
 	var ov sql.NullInt64
 	err := db.QueryRow(`SELECT id, start_time, name, duration_sec, distance_m, has_gps, trainer,
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
-	    norm_power, avg_hr, max_hr, calories, total_ascent, total_descent
+	    norm_power, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &durSec, &dist, &gps, &tr, &ov,
-		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &hr, &mhr, &kcal, &asc, &desc)
+		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg)
 	if err != nil {
 		return nil, err
 	}
@@ -473,6 +579,8 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	w.MaxHR = int(mhr.Int64)
 	w.Calories = int(kcal.Int64)
 	w.HasPower = ap.Valid
+	w.FTP = int(ftp.Int64)
+	w.WeightKg = wkg.Float64
 	return &w, nil
 }
 

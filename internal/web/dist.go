@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+
 	"cycling-dashboard/internal/store"
 )
 
@@ -59,6 +61,29 @@ var distDefs = map[string][]bucket{
 	},
 }
 
+// powerZones — зоны Коггана в ваттах от FTP; последний бакет «и выше».
+var powerZones = []struct {
+	Name string
+	From float64 // доля FTP
+}{
+	{"Z1", 0}, {"Z2", 0.56}, {"Z3", 0.76}, {"Z4", 0.91},
+	{"Z5", 1.06}, {"Z6", 1.21}, {"Z7", 1.51},
+}
+
+func zoneBuckets(ftp int) []bucket {
+	out := make([]bucket, len(powerZones))
+	for i, z := range powerZones {
+		from := z.From * float64(ftp)
+		label := fmt.Sprintf("%s · %d+", z.Name, int(from+0.5))
+		if i+1 < len(powerZones) {
+			to := powerZones[i+1].From * float64(ftp)
+			label = fmt.Sprintf("%s · %d–%d", z.Name, int(from+0.5), int(to+0.5)-1)
+		}
+		out[i] = bucket{Label: label, From: from}
+	}
+	return out
+}
+
 func value(s store.Sample, kind string) float64 {
 	switch kind {
 	case "cadence":
@@ -75,9 +100,14 @@ func value(s store.Sample, kind string) float64 {
 
 // distributions считает время в каждом диапазоне. Время сэмпла — интервал
 // до следующего сэмпла, поэтому паузы не размазываются по бакетам.
-func distributions(samples []store.Sample) map[string][]distEntry {
+// Если задан FTP (штамп тренировки), мощность режется на зоны Коггана,
+// иначе — по фиксированным диапазонам.
+func distributions(samples []store.Sample, ftp int) map[string][]distEntry {
 	out := map[string][]distEntry{}
 	for kind, buckets := range distDefs {
+		if kind == "power" && ftp > 0 {
+			buckets = zoneBuckets(ftp)
+		}
 		secs := make([]int, len(buckets))
 		var hasData bool
 		for i, s := range samples {
