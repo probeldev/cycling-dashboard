@@ -39,6 +39,100 @@ go build -o cycling-dashboard ./cmd/server && ./cycling-dashboard
 
 Откроется `http://127.0.0.1:8080`.
 
+## API
+
+JSON-эндпоинты для программного доступа к данным тренировок (используются, в т.ч., AI-скиллом для разбора поездок). Базовый URL — `http://127.0.0.1:8080`.
+
+### `GET /api/workouts`
+
+Список всех тренировок от новых к старым. Элементы — полные объекты тренировки:
+
+```json
+[
+  {
+    "ID": 308,
+    "StartTime": "2026-10-29T20:48:57+03:00",
+    "Name": "Ramp Test",
+    "Duration": 3021000000000,
+    "DistanceKm": 0,
+    "HasGPS": true,
+    "Trainer": true,
+    "AvgSpeedKmh": 23.7,
+    "MaxSpeedKmh": 27.6,
+    "AvgCadence": 80,
+    "MaxCadence": 134,
+    "AvgPower": 96,
+    "MaxPower": 155,
+    "NormPower": 97,
+    "AvgHR": 0,
+    "MaxHR": 0,
+    "Calories": 290,
+    "AscentM": 0,
+    "DescentM": 1,
+    "HasPower": true,
+    "FTP": 156,
+    "WeightKg": 75
+  }
+]
+```
+
+- `Duration` — в **наносекундах** (Go `time.Duration`)
+- `FTP` / `WeightKg` — штампы профиля на момент тренировки (от них считаются зоны, чтобы история не пересчитывалась при обновлении профиля)
+- `AvgHR`/`MaxHR` = 0 — датчик пульса не был подключён
+
+### `GET /api/workouts/latest`
+
+Последняя по дате старта тренировка — тот же объект, что в списке. Удобна как health-check (`curl -sf …/api/workouts/latest`).
+
+### `GET /api/workout/{id}`
+
+Детали одной тренировки по ID (формат объекта — как выше). 404, если нет.
+
+### `GET /api/workout/{id}/dist`
+
+Распределение времени по бакетам, посчитанное по полным сэмплам. Ключи — только для метрик с данными:
+
+```json
+{
+  "power":   [{"label": "Z1 · 0–86",   "secs": 230}, {"label": "Z2 · 87–118", "secs": 2250}],
+  "cadence": [{"label": "70–80",       "secs": 582}, {"label": "80–90",       "secs": 2318}],
+  "speed":   [{"label": "0–10",        "secs": 45}],
+  "hr":      [{"label": "120–130",     "secs": 1200}]
+}
+```
+
+- `power` — зоны Коггана Z1–Z7 в ваттах от FTP-штампа тренировки (если FTP не задан — фиксированные диапазоны 0–50…400+ Вт)
+- `cadence` — бакеты по 10 об/мин (0–40 … 100+)
+- `speed` — бакеты по 10 км/ч
+- `hr` — бакеты по 10 уд/мин
+- `secs` — суммарное время в бакете
+
+### `GET /api/workout/{id}/samples`
+
+Сэмплы для графиков, усреднённые до ~500 точек (лимит захардкожен):
+
+```json
+[
+  {"Offset": 0, "Power": 95, "HasPwr": true, "Cadence": 78, "HasCad": true,
+   "HR": 132, "SpeedMs": 6.5, "Lat": 0, "Lon": 0, "HasPos": false, "AltitudeM": 0,
+   "HasAlt": false, "DistanceM": 0, "HasDist": false}
+]
+```
+
+- `Offset` — секунды от старта тренировки
+- флаги `HasPwr`/`HasCad`/`HasPos`/`HasAlt`/`HasDist` — были ли данные в сэмпле (нулевые значения без флага = «нет данных», а не 0)
+
+### Пример: разобрать последние тренировки
+
+```sh
+# id и даты всех тренировок
+curl -s http://127.0.0.1:8080/api/workouts | jq '.[] | {id: .ID, date: .StartTime, name: .Name}'
+
+# детали + зоны по мощности для конкретной
+curl -s http://127.0.0.1:8080/api/workout/308 | jq '{avg: .AvgPower, norm: .NormPower, ftp: .FTP}'
+curl -s http://127.0.0.1:8080/api/workout/308/dist | jq '.power'
+```
+
 ## Синхронизация с велокомпом
 
 1. Включи Cycplus C2, положи рядом с компьютером

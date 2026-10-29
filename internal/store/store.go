@@ -528,6 +528,37 @@ func avgPower(db *sql.DB, where string, args ...any) int {
 	return int(v.Int64)
 }
 
+// LatestWorkout возвращает последнюю по дате старта тренировку.
+func LatestWorkout(db *sql.DB) (*Workout, error) {
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM workouts ORDER BY start_time DESC LIMIT 1`).Scan(&id); err != nil {
+		return nil, err
+	}
+	return GetWorkout(db, id)
+}
+
+// ListWorkouts возвращает все тренировки от новых к старым.
+func ListWorkouts(db *sql.DB) ([]Workout, error) {
+	rows, err := db.Query(`SELECT id FROM workouts ORDER BY start_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Workout
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		w, err := GetWorkout(db, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, rows.Err()
+}
+
 func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var w Workout
 	var start string

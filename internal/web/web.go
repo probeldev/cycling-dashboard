@@ -103,6 +103,34 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		w.Header().Set("HX-Redirect", "/workout/"+strconv.FormatInt(id, 10))
 	})
 
+	r.Get("/api/workouts", func(w http.ResponseWriter, req *http.Request) {
+		list, err := store.ListWorkouts(db)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, list)
+	})
+
+	r.Get("/api/workouts/latest", func(w http.ResponseWriter, req *http.Request) {
+		wo, err := store.LatestWorkout(db)
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		writeJSON(w, wo)
+	})
+
+	r.Get("/api/workout/{id}", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		wo, err := store.GetWorkout(db, id)
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		writeJSON(w, wo)
+	})
+
 	r.Get("/api/workout/{id}/samples", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		samples, err := store.Samples(db, id, 500)
