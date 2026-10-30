@@ -59,9 +59,9 @@
   {{ if .W.Override }}<span class="tag">вручную</span>{{ end }}
 </div>
 
-<div id="chartCtl" style="display:flex; gap:6px; flex-wrap:wrap; margin:6px 0">
-  <span id="metricBtns"></span>
-  <span style="margin-left:auto" id="axisBtns"></span>
+<div id="chartCtl" class="chart-controls">
+  <span id="metricBtns" class="tabs"></span>
+  <span id="axisBtns" class="axis-toggles"></span>
 </div>
 <canvas id="chart"></canvas>
 
@@ -111,18 +111,19 @@ function smooth(y) {
   return out;
 }
 
-function btn(parent, text, active, onclick) {
+function btn(parent, text, active, onclick, cls) {
   const b = document.createElement("button");
   b.textContent = text;
-  if (active) b.style.fontWeight = "700";
+  b.className = cls;
+  if (active) b.classList.add("active");
   b.onclick = () => { onclick(); redraw(); };
   parent.appendChild(b);
   return b;
 }
 
 function redraw() {
-  document.querySelectorAll("#metricBtns button").forEach((b, i) => b.style.fontWeight = metrics[i] === curMetric ? "700" : "400");
-  document.querySelectorAll("#axisBtns button").forEach(b => b.style.fontWeight = b.dataset.axis === curAxis ? "700" : "400");
+  document.querySelectorAll("#metricBtns .tab").forEach((b, i) => b.classList.toggle("active", metrics[i] === curMetric));
+  document.querySelectorAll("#axisBtns .axis-btn").forEach(b => b.classList.toggle("active", b.dataset.axis === curAxis));
   const x = curAxis === "km"
     ? data.map(s => s.HasDist ? +(s.DistanceM / 1000).toFixed(2) : null)
     : data.map(s => s.Offset);
@@ -149,10 +150,10 @@ function redraw() {
 }
 
 if (metrics.length) {
-  metrics.forEach(m => btn(document.getElementById("metricBtns"), m.label.split(",")[0], m === curMetric, () => curMetric = m));
+  metrics.forEach(m => btn(document.getElementById("metricBtns"), m.label.split(",")[0], m === curMetric, () => curMetric = m, "tab"));
   if (hasDist) {
-    btn(document.getElementById("axisBtns"), "время", true, () => curAxis = "time").dataset.axis = "time";
-    btn(document.getElementById("axisBtns"), "км", false, () => curAxis = "km").dataset.axis = "km";
+    btn(document.getElementById("axisBtns"), "время", true, () => curAxis = "time", "axis-btn").dataset.axis = "time";
+    btn(document.getElementById("axisBtns"), "км", false, () => curAxis = "km", "axis-btn").dataset.axis = "km";
   }
   chart = new Chart(document.getElementById("chart"), {
     type: "line",
