@@ -193,6 +193,13 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 		samples[i].Offset = int64(activity.Records[i].Timestamp.Sub(start).Seconds())
 	}
 
+	for _, s := range samples {
+		if s.HasPwr && s.Power > 0 {
+			w.HasPower = true
+			break
+		}
+	}
+
 	if w.HasPower {
 		// среднюю считаем сами по валидным сэмплам: устройство включает
 		// дропауты как нули и занижает avg
@@ -210,6 +217,18 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 	}
 	if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); ok {
 		w.AvgCadence = avg
+	}
+	if max, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.Power, s.HasPwr }); ok && max > 0 {
+		w.MaxPower = max
+	}
+	if max, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); ok && max > 0 {
+		w.MaxCadence = max
+	}
+	if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.HR, s.HR > 0 }); ok {
+		w.AvgHR = avg
+	}
+	if max, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.HR, s.HR > 0 }); ok && max > 0 {
+		w.MaxHR = max
 	}
 
 	// станок: нет GPS, FIT помечен как indoor cycling, либо трек меньше 1 км —
@@ -236,6 +255,20 @@ func avgValid(samples []store.Sample, get func(store.Sample) (int, bool)) (int, 
 		return 0, false
 	}
 	return (sum + n/2) / n, true
+}
+
+// maxValid — максимум по сэмплам с валидным значением.
+func maxValid(samples []store.Sample, get func(store.Sample) (int, bool)) (int, bool) {
+	m, found := 0, false
+	for _, s := range samples {
+		if v, ok := get(s); ok {
+			if !found || v > m {
+				m = v
+				found = true
+			}
+		}
+	}
+	return m, found
 }
 
 // normalizedPower считает NP по посекундным сэмплам.
