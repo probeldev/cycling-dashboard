@@ -1,0 +1,127 @@
+package store
+
+import (
+	"time"
+)
+
+// Day — день таймлайна с PMC (Performance Management Chart).
+// CTL — «форма» (хроническая нагрузка, EWMA 42 дня), ATL — «усталость»
+// (7 дней), TSB — «свежесть» (CTL вчера минус ATL вчера, до нагрузки дня).
+type Day struct {
+	Date         time.Time `json:"date"` // локальная полночь
+	TSS          float64   `json:"tss"`
+	Hours        float64   `json:"hours"`
+	DistanceKm   float64   `json:"distanceKm"`
+	Rides        int       `json:"rides"`
+	TrainerRides int       `json:"trainerRides"`
+	OutdoorRides int       `json:"outdoorRides"`
+	CTL          float64   `json:"ctl"`
+	ATL          float64   `json:"atl"`
+	TSB          float64   `json:"tsb"`
+	Names        string    `json:"names,omitempty"` // названия тренировок дня для подсказок
+}
+
+// Timeline — дневной ряд [from, to] включительно.
+// CTL_t = CTL_{t-1} + (TSS_t − CTL_{t-1})/42, ATL_t = ATL_{t-1} + (TSS_t − ATL_{t-1})/7,
+// TSB_t = CTL_{t-1} − ATL_{t-1}. Старт с нулей; пустые дни идут с TSS=0 и
+// участвуют в EWMA, поэтому пропуски не разрывают кривую.
+// День тренировки — локальная дата start_time (в БД время хранится в UTC).
+func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
+	from, to = startOfDay(from), startOfDay(to)
+	if to.Before(from) {
+		return nil, nil
+	}
+
+	// запас по UTC с обеих сторон: локальная дата может отличаться от UTC
+	qFrom := from.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
+	qTo := to.AddDate(0, 0, 3).UTC().Format(time.RFC3339)
+	rows, err := db.Query(`SELECT start_time, duration_sec, COALESCE(distance_m, 0),
+	    trainer, COALESCE(tss, 0), COALESCE(name, '')
+	    FROM workouts WHERE start_time >= ? AND start_time < ?`, qFrom, qTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type agg struct {
+		tss, hours, dist float64
+		rides, trainer   int
+		names            []string
+	}
+	byDay := map[time.Time]*agg{}
+	for rows.Next() {
+		var start string
+		var dur int64
+		var dist, tss float64
+		var trainer bool
+		var name string
+		if err := rows.Scan(&start, &dur, &dist, &trainer, &tss, &name); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			return nil, err
+		}
+		lt := t.Local()
+		if lt.Before(from) || !lt.Before(to.AddDate(0, 0, 1)) {
+			continue
+		}
+		d := startOfDay(lt)
+		a := byDay[d]
+		if a == nil {
+			a = &agg{}
+			byDay[d] = a
+		}
+		a.tss += tss
+		a.hours += float64(dur) / 3600
+		a.dist += dist / 1000
+		a.rides++
+		if trainer {
+			a.trainer++
+		}
+		if name != "" {
+			a.names = append(a.names, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	days := make([]Day, 0, int(to.Sub(from).Hours()/24)+1)
+	var ctl, atl float64
+	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+		day := Day{Date: d}
+		if a := byDay[d]; a != nil {
+			day.TSS = a.tss
+			day.Hours = a.hours
+			day.DistanceKm = a.dist
+			day.Rides = a.rides
+			day.TrainerRides = a.trainer
+			day.OutdoorRides = a.rides - a.trainer
+			day.Names = joinNames(a.names)
+		}
+		// TSB — вчерашние CTL/ATL, до нагрузки текущего дня
+		day.TSB = ctl - atl
+		ctl += (day.TSS - ctl) / 42
+		atl += (day.TSS - atl) / 7
+		day.CTL = ctl
+		day.ATL = atl
+		days = append(days, day)
+	}
+	return days, nil
+}
+
+func startOfDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+}
+
+func joinNames(names []string) string {
+	out := ""
+	for i, n := range names {
+		if i > 0 {
+			out += ", "
+		}
+		out += n
+	}
+	return out
+}
