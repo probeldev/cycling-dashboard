@@ -75,6 +75,15 @@
   {{ if .W.Override }}<span class="tag">вручную</span>{{ end }}
 </div>
 
+<div style="margin-bottom:16px">
+  Велосипед:
+  <select id="bike" style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
+    <option value="">не указан</option>
+    {{ range .Bikes }}<option value="{{ .ID }}"{{ if eq .ID $.W.BikeID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+  </select>
+  <button hx-post="/workout/{{ .W.ID }}/bike" hx-vals="js:{bike_id: document.getElementById('bike').value}" hx-swap="none">Сохранить</button>
+</div>
+
 <div id="chartCtl" class="chart-controls">
   <span id="metricBtns" class="tabs"></span>
   <span id="axisBtns" class="axis-toggles"></span>

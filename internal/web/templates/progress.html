@@ -40,6 +40,16 @@
   <span>больше</span>
 </div>
 
+{{ if .Bikes }}
+<h2>Пробег по велосипедам</h2>
+<table>
+  <tr><th>Велосипед</th><th>Поездки</th><th>Км</th><th>Часы</th></tr>
+  {{ range .Bikes }}
+  <tr><td>{{ .Name }}</td><td>{{ .Rides }}</td><td>{{ km .KM }}</td><td>{{ trimFloat .Hours }}</td></tr>
+  {{ end }}
+</table>
+{{ end }}
+
 <h2>MMP · лучшее усилие</h2>
 <div class="tabs" id="mmpBtns">
   <button class="tab" data-n="30">30 дней</button>

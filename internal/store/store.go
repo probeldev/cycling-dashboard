@@ -52,6 +52,10 @@ type Workout struct {
 	WeightKg float64
 	FTPKind  string // источник FTP: trainer | outdoor (пусто — FTP нет)
 
+	// велосипед, назначенный пользователем; 0/"" — не указан
+	BikeID int64
+	Bike   string
+
 	// версия алгоритма, которым посчитан NormPower (0 — старый, до окна 30 с);
 	// по ней бэкфилл понимает, что тренировку надо пересчитать
 	NPVersion int
@@ -213,6 +217,14 @@ CREATE TABLE IF NOT EXISTS samples (
 );
 CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 
+CREATE TABLE IF NOT EXISTS bikes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    kind       TEXT NOT NULL DEFAULT '', -- road | fixed | mtb | gravel | other
+    active     INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS power_records (
     workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
     window_sec INTEGER NOT NULL,
@@ -252,6 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "ftp_kind", `ALTER TABLE workouts ADD COLUMN ftp_kind TEXT`},
 		{"workouts", "zones_version", `ALTER TABLE workouts ADD COLUMN zones_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "mmp_version", `ALTER TABLE workouts ADD COLUMN mmp_version INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "bike_id", `ALTER TABLE workouts ADD COLUMN bike_id INTEGER`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},
@@ -277,6 +290,12 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 				return err
 			}
 		}
+	}
+	// сид велосипедов пользователя: INSERT OR IGNORE — идемпотентно и не
+	// перетирает переименования/деактивацию
+	if _, err := db.Exec(`INSERT OR IGNORE INTO bikes (name, kind) VALUES
+	    ('Trek SL 1000', 'road'), ('Октопус', 'fixed'), ('Trek 820', 'mtb')`); err != nil {
+		return err
 	}
 	if err := cleanupOrphanSamples(db); err != nil {
 		return err
@@ -1119,6 +1138,8 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var wkg sql.NullFloat64
 	var ifv, tss, vi, work, temp sql.NullFloat64
 	var ftpKind sql.NullString
+	var bikeID sql.NullInt64
+	var bikeName string
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
@@ -1126,11 +1147,13 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
-	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version
+	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version, bike_id,
+	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), '')
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
 		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
-		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion)
+		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion,
+		&bikeID, &bikeName)
 	if err != nil {
 		return nil, err
 	}
@@ -1169,6 +1192,8 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.FTP = int(ftp.Int64)
 	w.FTPKind = ftpKind.String
 	w.WeightKg = wkg.Float64
+	w.BikeID = bikeID.Int64
+	w.Bike = bikeName
 	w.IF = ifv.Float64
 	w.TSS = tss.Float64
 	w.VI = vi.Float64

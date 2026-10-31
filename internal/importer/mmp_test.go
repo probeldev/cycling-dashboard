@@ -3,8 +3,8 @@ package importer
 import (
 	"math"
 	"os"
-	"sort"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/tormoder/fit"

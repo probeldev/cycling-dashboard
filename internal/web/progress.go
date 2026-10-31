@@ -45,7 +45,13 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			return
 		}
 		cp := fitCP(powerPoints(allRecords))
+		bikes, err := store.BikeStats(db)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		render(w, "progress.html", map[string]any{
+			"Bikes":     bikes,
 			"CP":        cpView(cp),
 			"Today":     today,
 			"WeekTSS":   weekTSS,

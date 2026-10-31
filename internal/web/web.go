@@ -98,7 +98,12 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		render(w, "workout.html", map[string]any{"W": wo, "MMP": mmpCards(mmp, prs)})
+		bikes, err := store.Bikes(db)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		render(w, "workout.html", map[string]any{"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes})
 	})
 
 	r.Post("/workout/{id}/trainer", func(w http.ResponseWriter, req *http.Request) {
@@ -124,6 +129,32 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		if err := tx.Commit(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("HX-Redirect", "/workout/"+strconv.FormatInt(id, 10))
+	})
+
+	r.Post("/workout/{id}/bike", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		if _, err := store.GetWorkout(db, id); err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		var bikeID *int64
+		if raw := req.FormValue("bike_id"); raw != "" {
+			v, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				http.Error(w, "bike_id: нужно целое число", http.StatusBadRequest)
+				return
+			}
+			if _, err := store.BikeByID(db, v); err != nil {
+				http.Error(w, "неизвестный велосипед", http.StatusBadRequest)
+				return
+			}
+			bikeID = &v
+		}
+		if err := store.SetWorkoutBike(db, id, bikeID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
