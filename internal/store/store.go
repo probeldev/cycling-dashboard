@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -59,6 +60,40 @@ type Workout struct {
 	AvgTemp           float64 // средняя температура, °C
 	HasTemp           bool    // была ли температура в записях
 	MetricsVersion    int     // версия расчёта метрик, 0 — не считались
+
+	// признаки «значение определено»: в JSON неизвестные метрики отдаются null,
+	// а не нулём (ноль IF/TSS/VI не бывает валидным, у работы — бывает)
+	HasIF   bool `json:"-"`
+	HasTSS  bool `json:"-"`
+	HasVI   bool `json:"-"`
+	HasWork bool `json:"-"`
+}
+
+// MarshalJSON отдаёт null для неизвестных метрик: ноль в IF/TSS/VI/WorkKJ —
+// это «данных нет», а не «нулевая нагрузка» (0 кДж при наличии данных — валидный
+// ноль, его различает HasWork).
+func (w Workout) MarshalJSON() ([]byte, error) {
+	type plain Workout // без метода, чтобы не было рекурсии
+	out := struct {
+		plain
+		IF     *float64 `json:"IF"`
+		TSS    *float64 `json:"TSS"`
+		VI     *float64 `json:"VI"`
+		WorkKJ *float64 `json:"WorkKJ"`
+	}{plain: plain(w)}
+	if w.HasIF {
+		out.IF = &out.plain.IF
+	}
+	if w.HasTSS {
+		out.TSS = &out.plain.TSS
+	}
+	if w.HasVI {
+		out.VI = &out.plain.VI
+	}
+	if w.HasWork {
+		out.WorkKJ = &out.plain.WorkKJ
+	}
+	return json.Marshal(out)
 }
 
 // GapsSec — время, где мощность недостоверна: нет данных или датчик молчит
@@ -318,7 +353,7 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 		nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 		nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
-		nullableMetric(w.WorkKJ, w.WorkKJ != 0 || w.HasPower),
+		nullableMetric(w.WorkKJ, w.HasWork),
 		nullableMetric(w.AvgTemp, w.HasTemp), w.MetricsVersion)
 	if err != nil {
 		return 0, err
@@ -655,7 +690,7 @@ func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
 			nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 			nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 			nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
-			nullableMetric(w.WorkKJ, w.WorkKJ != 0 || w.HasPower),
+			nullableMetric(w.WorkKJ, w.HasWork),
 			nullableMetric(w.AvgTemp, w.HasTemp), w.MetricsVersion, w.ID); err != nil {
 			return err
 		}
@@ -927,6 +962,9 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	w.IF = ifv.Float64
 	w.TSS = tss.Float64
 	w.VI = vi.Float64
+	w.HasIF = ifv.Valid
+	w.HasTSS = tss.Valid
+	w.HasVI = vi.Valid
 	w.AvgPowerActive = int(apa.Int64)
 	w.CoastingSec = int(coast.Int64)
 	w.NoPowerSec = int(nop.Int64)
@@ -934,6 +972,7 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	w.ElapsedSec = int(elapsed.Int64)
 	w.PauseSec = int(pause.Int64)
 	w.WorkKJ = work.Float64
+	w.HasWork = work.Valid
 	w.AvgTemp = temp.Float64
 	w.HasTemp = temp.Valid
 	return &w, nil

@@ -31,9 +31,9 @@
     {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">NP</div></div>{{ end }}
     {{ if .W.FTP }}<div class="stat"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату</div></div>{{ end }}
     {{ if .W.AvgPowerActive }}<div class="stat"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">в работе</div></div>{{ end }}
-    {{ if .W.IF }}<div class="stat"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF</div></div>{{ end }}
-    {{ if .W.TSS }}<div class="stat"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS</div></div>{{ end }}
-    {{ if .W.VI }}<div class="stat"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI</div></div>{{ end }}
+    {{ if .W.HasIF }}<div class="stat"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF</div></div>{{ end }}
+    {{ if .W.HasTSS }}<div class="stat"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS</div></div>{{ end }}
+    {{ if .W.HasVI }}<div class="stat"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI</div></div>{{ end }}
     {{ if and .W.WeightKg .W.AvgPower }}<div class="stat"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг{{ if .W.WeightKg }} (вес {{ km .W.WeightKg }}){{ end }}</div></div>{{ end }}
   </div>
   {{ end }}

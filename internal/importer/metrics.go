@@ -23,6 +23,7 @@ type sampleMetrics struct {
 	WorkKJ            float64 // Σ(power·dt)/1000
 	AvgTemp           float64 // средняя по записям с температурой
 	HasTemp           bool
+	HasPowerSample    bool // есть хоть одна запись с валидной мощностью
 }
 
 // sampleMetricsOf считает метрики по сэмплам. Время берём из ridedata.Timings —
@@ -31,7 +32,11 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 	times := ridedata.Timings(samples)
 	var sumActive, secsActive, coast, noPower, suspect, workJ, tempSum float64
 	var tempN int
+	var hasPower bool
 	for i, s := range samples {
+		if s.HasPwr {
+			hasPower = true
+		}
 		if s.HasTemp {
 			tempSum += s.TempC
 			tempN++
@@ -52,6 +57,7 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 		}
 	}
 	sm := sampleMetrics{
+		HasPowerSample:    hasPower,
 		CoastingSec:       int(math.Round(coast)),
 		NoPowerSec:        int(math.Round(noPower)),
 		SuspectDropoutSec: int(math.Round(suspect)),
@@ -74,6 +80,7 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 // знаменатели — NaN/Inf в базу и JSON не попадут.
 func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, workKJ float64) {
 	w.IF, w.TSS, w.VI = 0, 0, 0
+	w.HasIF, w.HasTSS, w.HasVI, w.HasWork = false, false, false, false
 	w.AvgPowerActive, w.CoastingSec, w.NoPowerSec, w.SuspectDropoutSec = 0, 0, 0, 0
 	w.ElapsedSec, w.PauseSec, w.WorkKJ = 0, 0, 0
 	w.AvgTemp, w.HasTemp = 0, false
@@ -89,6 +96,7 @@ func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, work
 	} else {
 		w.WorkKJ = sm.WorkKJ
 	}
+	w.HasWork = workKJ > 0 || sm.HasPowerSample
 	if sm.HasTemp {
 		w.AvgTemp = math.Round(sm.AvgTemp*10) / 10
 		w.HasTemp = true
@@ -102,13 +110,16 @@ func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, work
 	}
 	if w.NormPower > 0 && w.FTP > 0 {
 		w.IF = float64(w.NormPower) / float64(w.FTP)
+		w.HasIF = true
 		if secs := w.Duration.Seconds(); secs > 0 {
 			w.TSS = secs * float64(w.NormPower) * w.IF / (float64(w.FTP) * 3600) * 100
+			w.HasTSS = true
 		}
 	}
 	// VI не зависит от FTP: это разброс мощности относительно средней
 	if w.NormPower > 0 && w.AvgPower > 0 {
 		w.VI = float64(w.NormPower) / float64(w.AvgPower)
+		w.HasVI = true
 	}
 	w.MetricsVersion = metricsVersion
 }
