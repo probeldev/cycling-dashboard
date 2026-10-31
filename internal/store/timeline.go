@@ -20,8 +20,8 @@ type Day struct {
 	CTL          float64   `json:"ctl"`
 	ATL          float64   `json:"atl"`
 	TSB          float64   `json:"tsb"`
-	Names        string    `json:"names,omitempty"`     // названия тренировок дня для подсказок
-	TestNames    string    `json:"testNames,omitempty"` // названия тестовых тренировок: в подсказке «тест»
+	Names        string    `json:"names,omitempty"` // названия тренировок дня для подсказок
+	Tests        int       `json:"tests,omitempty"` // сколько из них помечено тестовыми (замер)
 }
 
 // Timeline — дневной ряд [from, to] включительно.
@@ -55,7 +55,8 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 	type agg struct {
 		tss, hours, dist float64
 		rides, trainer   int
-		names, testNames []string
+		tests            int
+		names            []string
 	}
 	byDay := map[time.Time]*agg{}
 	for rows.Next() {
@@ -94,7 +95,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 		if isTest {
 			// в PMC тест остаётся (нагрузка реальная) — в подсказке календаря
 			// только помечаем его, чтобы не путать с рабочей тренировкой
-			a.testNames = append(a.testNames, name)
+			a.tests++
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -113,7 +114,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 			day.TrainerRides = a.trainer
 			day.OutdoorRides = a.rides - a.trainer
 			day.Names = strings.Join(a.names, ", ")
-			day.TestNames = strings.Join(a.testNames, ", ")
+			day.Tests = a.tests
 		}
 		// TSB — вчерашние CTL/ATL, до нагрузки текущего дня
 		day.TSB = ctl - atl

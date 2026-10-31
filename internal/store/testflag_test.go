@@ -123,9 +123,10 @@ func TestRecordsExcludeTests(t *testing.T) {
 	}
 }
 
-// TestTimelineTestNames — тестовая тренировка остаётся в PMC (TSS, поездки),
-// но попадает в отдельное поле для пометки «тест» в календаре.
-func TestTimelineTestNames(t *testing.T) {
+// TestTimelineTestMarker — тестовая тренировка остаётся в PMC (TSS, поездки),
+// но считается в отдельном поле для пометки «тест» в календаре. Пометка не
+// зависит от названия: безымянный тест тоже виден.
+func TestTimelineTestMarker(t *testing.T) {
 	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	work, err := InsertWorkout(db, &Workout{
@@ -150,21 +151,30 @@ func TestTimelineTestNames(t *testing.T) {
 	if err := SetWorkoutTest(db, test, true); err != nil {
 		t.Fatal(err)
 	}
-
-	days, err := Timeline(db, dayOf(t, 1), dayOf(t, 2))
+	unnamed, err := InsertWorkout(db, &Workout{
+		StartTime: dayOf(t, 3), Duration: time.Hour, TSS: 20,
+	}, "hash-tl-test-unnamed", "/tmp/test2.fit", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(days) != 2 {
-		t.Fatalf("%d дней, хочу 2", len(days))
+	if err := SetWorkoutTest(db, unnamed, true); err != nil {
+		t.Fatal(err)
 	}
-	if days[0].TestNames != "" || days[1].TestNames != "Ramp Test" {
-		t.Errorf("testNames: %q / %q", days[0].TestNames, days[1].TestNames)
+
+	days, err := Timeline(db, dayOf(t, 1), dayOf(t, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 3 {
+		t.Fatalf("%d дней, хочу 3", len(days))
+	}
+	if days[0].Tests != 0 || days[1].Tests != 1 || days[2].Tests != 1 {
+		t.Errorf("tests: %d / %d / %d, хочу 0/1/1", days[0].Tests, days[1].Tests, days[2].Tests)
 	}
 	if days[1].Rides != 1 || days[1].TSS != 40 {
 		t.Errorf("тест выпал из PMC: %+v", days[1])
 	}
-	if days[1].Names != "Ramp Test" {
-		t.Errorf("names: %q, хочу название теста", days[1].Names)
+	if days[1].Names != "Ramp Test" || days[2].Names != "" {
+		t.Errorf("names: %q / %q", days[1].Names, days[2].Names)
 	}
 }
