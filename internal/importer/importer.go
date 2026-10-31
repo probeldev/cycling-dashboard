@@ -169,6 +169,19 @@ func fileHash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:32], nil
 }
 
+// sessionTotals — общее время и механическая работа из FIT-сессии.
+// Ноль означает, что поле не записано (invalid-маркер или нулевая работа).
+func sessionTotals(s *fit.SessionMsg) (elapsedSec int, workKJ float64) {
+	if s.TotalElapsedTime != math.MaxUint32 {
+		elapsedSec = int(s.TotalElapsedTime / 1000) // scale 1000, мс → с
+	}
+	// FIT total_work — в джоулях; в кДж
+	if s.TotalWork != math.MaxUint32 && s.TotalWork > 0 {
+		workKJ = float64(s.TotalWork) / 1000
+	}
+	return elapsedSec, workKJ
+}
+
 // readActivity — активность из FIT-файла. Отдельной функцией, чтобы subsport
 // можно было дочитать без полного разбора записей.
 func readActivity(path string) (*fit.ActivityFile, error) {
@@ -201,7 +214,6 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 
 	w := &store.Workout{
 		StartTime:  s.StartTime,
-		Duration:   time.Duration(s.TotalTimerTime/1000) * time.Second, // scale 1000
 		HasGPS:     false,
 		SubSport:   subSportName(s.SubSport),
 		AvgCadence: validUint8(s.AvgCadence),
@@ -214,7 +226,12 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 		MaxHR:      validUint8(s.MaxHeartRate),
 		Calories:   validUint16(s.TotalCalories),
 	}
-	if w.Duration == 0 {
+	// 0xFFFFFFFF в таймерах — invalid; без проверки duration стал бы ~49.7 дней
+	// и TSS взорвался бы
+	if s.TotalTimerTime != math.MaxUint32 {
+		w.Duration = time.Duration(s.TotalTimerTime/1000) * time.Second // scale 1000
+	}
+	if w.Duration == 0 && s.TotalElapsedTime != math.MaxUint32 {
 		w.Duration = time.Duration(s.TotalElapsedTime/1000) * time.Second
 	}
 	if s.TotalDistance != math.MaxUint32 {
@@ -230,13 +247,7 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 	}
 	w.AscentM = validUint16(s.TotalAscent)
 	w.DescentM = validUint16(s.TotalDescent)
-	if s.TotalElapsedTime != math.MaxUint32 {
-		w.ElapsedSec = int(s.TotalElapsedTime / 1000) // scale 1000
-	}
-	// FIT total_work: scale 1000 даёт джоули, в кДж — ещё /1000
-	if s.TotalWork != math.MaxUint32 {
-		w.WorkKJ = float64(s.TotalWork) / 1e6
-	}
+	w.ElapsedSec, w.WorkKJ = sessionTotals(s)
 
 	w.HasPower = w.AvgPower > 0
 

@@ -2,7 +2,9 @@ package importer
 
 import (
 	"database/sql"
+	"fmt"
 	"math"
+	"os"
 
 	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
@@ -118,15 +120,17 @@ func BackfillMetrics(db *sql.DB) (int, error) {
 		// elapsed и работу из сэмплов не восстановить — берём из сессии, если файл на месте
 		if w.ElapsedSec == 0 || w.WorkKJ == 0 {
 			if activity, err := readActivity(ref.Path); err == nil {
-				s := activity.Sessions[0]
-				if w.ElapsedSec == 0 && s.TotalElapsedTime != math.MaxUint32 {
-					w.ElapsedSec = int(s.TotalElapsedTime / 1000)
+				elapsed, work := sessionTotals(activity.Sessions[0])
+				if w.ElapsedSec == 0 {
+					w.ElapsedSec = elapsed
 				}
-				if w.WorkKJ == 0 && s.TotalWork != math.MaxUint32 {
-					w.WorkKJ = float64(s.TotalWork) / 1e6
+				if w.WorkKJ == 0 {
+					w.WorkKJ = work
 				}
+			} else if w.ElapsedSec == 0 {
+				// без FIT общее время и работа неизвестны — останутся NULL
+				fmt.Fprintf(os.Stderr, "бэкфилл метрик: сессия недоступна, elapsed/work будут NULL: %s\n", ref.Path)
 			}
-			// файла нет — не страшно, elapsed/work останутся NULL
 		}
 		samples, err := store.RawSamples(db, ref.ID)
 		if err != nil {

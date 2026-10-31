@@ -200,7 +200,8 @@ curl -s http://127.0.0.1:8080/api/workout/308/dist | jq '.power'
   - `tss = duration_sec × NP × IF / (ftp_w × 3600) × 100` (NULL без NP/FTP)
   - `vi = NP / avg_power` (NULL, если avg_power=0; от FTP не зависит)
   - `avg_power_active` — средняя только по `power > 0`; `coasting_sec` — время `power == 0`; `no_power_sec` — время без данных (`power IS NULL`); `suspect_dropout_sec` — `power == 0` при `cadence > 0` (похоже на отвал датчика)
-  - `elapsed_sec` — `TotalElapsedTime` из FIT-сессии; `pause_sec = elapsed_sec − duration_sec`, отрицательное — 0; `work_kj` — `TotalWork` (scale 1000 → джоули), а если устройство его не отдало — `Σ(power × Secs) / 1000`
+  - `elapsed_sec` — `TotalElapsedTime` из FIT-сессии; `pause_sec = elapsed_sec − duration_sec`, отрицательное — 0; `work_kj` — `TotalWork` из сессии (джоули → /1000), если он записан и больше нуля, иначе `Σ(power × Secs) / 1000`
+  - invalid-маркеры таймеров (`0xFFFFFFFF`) отсекаются: иначе `duration_sec` стал бы ~49.7 дней и TSS взорвался
   - `MetricsVersion` — версия формул; при старте строки со старой версией пересчитываются из сэмплов одной транзакцией, а `elapsed_sec`/`work_kj` дочитываются из FIT-сессии (если файл на месте, иначе остаются NULL). TSS считается от `duration_sec`, поэтому заполняется и у тренировок без сэмплов, если есть NP и FTP
   - при изменении FTP/веса (`BackfillProfileStamps`) или NP (`SetNormPowers`) у затронутых строк сбрасывается `MetricsVersion` — метрики пересчитываются сразу после правки профиля и при следующем старте
 - **Осиротевшие сэмплы** (`workout_id=0` от старого импорта, а также ссылки на удалённые тренировки) не видны ни одному запросу и чистятся идемпотентной миграцией при старте (`DELETE` + лог количества). Если таблица `workouts` пуста, чистка пропускается с предупреждением — иначе недосозданная база потеряла бы все сэмплы. На чистой базе удаляется 0 строк и строка в лог не пишется

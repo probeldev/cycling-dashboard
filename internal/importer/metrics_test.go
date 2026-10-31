@@ -1,10 +1,14 @@
 package importer
 
 import (
+	"encoding/binary"
 	"math"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tormoder/fit"
 
 	"cycling-dashboard/internal/store"
 )
@@ -146,4 +150,105 @@ func TestMetrics418Golden(t *testing.T) {
 		}
 	}
 	checkFinite(t, w.IF, w.TSS, w.VI, w.WorkKJ)
+}
+
+// writeSessionFIT — FIT с одной сессией и n записями по 200 Вт с шагом 1 с.
+// Поля сессии задаются явно: invalid-маркеры (0xFFFFFFFF) пишутся как есть.
+func writeSessionFIT(t *testing.T, path string, totalWork, timerMS, elapsedMS uint32, n int) {
+	t.Helper()
+	file, err := fit.NewFile(fit.FileTypeActivity, fit.NewHeader(fit.V20, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	act, err := file.Activity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 31, 10, 0, 0, 0, time.UTC)
+	sess := fit.NewSessionMsg()
+	sess.Sport = fit.SportCycling
+	sess.SubSport = fit.SubSportRoad
+	sess.StartTime = start
+	sess.Timestamp = start.Add(time.Duration(n) * time.Second)
+	sess.TotalElapsedTime = elapsedMS
+	sess.TotalTimerTime = timerMS
+	sess.TotalWork = totalWork
+	sess.Event = fit.EventSession
+	sess.EventType = fit.EventTypeStop
+	act.Sessions = append(act.Sessions, sess)
+	for i := 0; i < n; i++ {
+		r := fit.NewRecordMsg()
+		r.Timestamp = start.Add(time.Duration(i) * time.Second)
+		r.Power = 200
+		act.Records = append(act.Records, r)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := fit.Encode(f, file, binary.LittleEndian); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestImportTotalWork — TotalWork из сессии в джоулях: 12000 Дж → 12 кДж.
+func TestImportTotalWork(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionFIT(t, filepath.Join(dir, "work.fit"), 12000, 100000, 100000, 100)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(w.WorkKJ-12) > 1e-9 {
+		t.Errorf("WorkKJ = %v, хочу 12", w.WorkKJ)
+	}
+	if w.ElapsedSec != 100 {
+		t.Errorf("ElapsedSec = %d, хочу 100", w.ElapsedSec)
+	}
+}
+
+// TestImportTotalWorkFallback — TotalWork не записан: работа из сэмплов.
+func TestImportTotalWorkFallback(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionFIT(t, filepath.Join(dir, "nowork.fit"), math.MaxUint32, 100000, 100000, 100)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 100 записей × 200 Вт × 1 с = 20 кДж
+	if math.Abs(w.WorkKJ-20) > 1e-9 {
+		t.Errorf("WorkKJ = %v, хочу 20 (fallback по сэмплам)", w.WorkKJ)
+	}
+}
+
+// TestImportInvalidTimerTime — TotalTimerTime = 0xFFFFFFFF: длительность берётся
+// из elapsed, а не превращается в 49.7 дней.
+func TestImportInvalidTimerTime(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionFIT(t, filepath.Join(dir, "timer.fit"), math.MaxUint32, math.MaxUint32, 120000, 100)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Duration != 120*time.Second {
+		t.Errorf("Duration = %v, хочу 120 с (из elapsed)", w.Duration)
+	}
+	w.FTP = 200
+	applyMetrics(w, nil)
+	if w.TSS > 1000 {
+		t.Errorf("TSS = %v — похоже, duration взорвался", w.TSS)
+	}
 }
