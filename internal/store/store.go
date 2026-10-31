@@ -302,6 +302,24 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 			}
 		}
 	}
+	// rpe добавлен ALTER'ом, поэтому CHECK на колонку без пересоздания таблицы
+	// не навесить. Триггеры держат тот же инвариант и для прямого SQL, а не
+	// только для веб-валидации.
+	if _, err := db.Exec(`
+CREATE TRIGGER IF NOT EXISTS workouts_rpe_insert
+BEFORE INSERT ON workouts
+WHEN NEW.rpe IS NOT NULL AND (NEW.rpe < 1 OR NEW.rpe > 10)
+BEGIN
+    SELECT RAISE(ABORT, 'rpe must be between 1 and 10');
+END;
+CREATE TRIGGER IF NOT EXISTS workouts_rpe_update
+BEFORE UPDATE OF rpe ON workouts
+WHEN NEW.rpe IS NOT NULL AND (NEW.rpe < 1 OR NEW.rpe > 10)
+BEGIN
+    SELECT RAISE(ABORT, 'rpe must be between 1 and 10');
+END;`); err != nil {
+		return err
+	}
 	// сид велосипедов пользователя: INSERT OR IGNORE — идемпотентно и не
 	// перетирает переименования/деактивацию
 	if _, err := db.Exec(`INSERT OR IGNORE INTO bikes (name, kind) VALUES
