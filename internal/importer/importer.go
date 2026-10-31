@@ -298,31 +298,47 @@ func maxValidFloat(samples []store.Sample, get func(store.Sample) (float64, bool
 	return m, found
 }
 
-// normalizedPower считает NP по посекундным сэмплам.
+const (
+	npWindowSec = 30 // скользящее окно Коггана, секунд
+	npPauseSec  = 5  // разрыв между сэмплами больше — авто-пауза, окно через неё не тянем
+)
+
+// normalizedPower считает NP по Коггану: скользящее среднее мощности,
+// четвёртая степень, среднее по тренировке, корень четвёртой степени.
+// Окно — 30 СЕКУНД по ts_offset, а не 30 сэмплов: при записи не 1 Гц
+// (и после пауз) окно в сэмплах плывёт. Сэмплы должны идти по возрастанию Offset.
 // Дропауты датчика заполняем последним значением (fill-forward) —
 // иначе провалы связи занижают и avg, и NP.
 func normalizedPower(samples []store.Sample) int {
-	const window = 30 // секунд при записи 1 Гц
 	if len(samples) == 0 {
 		return 0
 	}
+	// fill-forward в отдельный срез: входные сэмплы менять нельзя,
+	// они ещё пойдут в базу, где дропаут обязан остаться NULL
+	pwr := make([]int, len(samples))
 	last := 0
-	for i := range samples {
-		if samples[i].HasPwr {
-			last = samples[i].Power
-		} else {
-			samples[i].Power = last
-		}
-	}
-	var roll float64
-	var sum4 float64
 	for i, s := range samples {
-		p := float64(s.Power)
-		roll += p
-		if i >= window {
-			roll -= float64(samples[i-window].Power)
+		if s.HasPwr {
+			last = s.Power
 		}
-		avg := roll / float64(min(i+1, window))
+		pwr[i] = last
+	}
+
+	var sum4, roll float64
+	var n    int // сэмплов в окне
+	start := 0   // первый сэмпл окна
+	for i := range samples {
+		if i > 0 && samples[i].Offset-samples[i-1].Offset > npPauseSec {
+			start, roll, n = i, 0, 0 // авто-пауза: данные до неё в окно не тянем
+		}
+		for start < i && samples[i].Offset-samples[start].Offset >= npWindowSec {
+			roll -= float64(pwr[start])
+			start++
+			n--
+		}
+		roll += float64(pwr[i])
+		n++
+		avg := roll / float64(n)
 		avg2 := avg * avg
 		sum4 += avg2 * avg2
 	}
