@@ -76,6 +76,42 @@ func TestBikesSeedAndAssign(t *testing.T) {
 	}
 }
 
+// TestBikesIncludeInactive — деактивированный велосипед остаётся в списке,
+// иначе деталка потеряет уже назначенную раму при сохранении.
+func TestBikesIncludeInactive(t *testing.T) {
+	db := openTestDB(t)
+	bikes, err := Bikes(db)
+	if err != nil || len(bikes) == 0 {
+		t.Fatalf("велосипеды: %v, %v", bikes, err)
+	}
+	id := bikes[0].ID
+	if _, err := db.Exec(`UPDATE bikes SET active = 0 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	all, err := Bikes(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != len(bikes) {
+		t.Fatalf("%d велосипедов, хочу %d (включая неактивный)", len(all), len(bikes))
+	}
+	found := false
+	for _, b := range all {
+		if b.ID == id {
+			found = true
+			if b.Active {
+				t.Errorf("велосипед %d должен быть неактивным", id)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("деактивированный велосипед %d пропал из списка", id)
+	}
+	if all[0].ID == id {
+		t.Errorf("неактивный велосипед должен быть после активных")
+	}
+}
+
 // TestBikeStats — километры/часы/поездки по велосипедам.
 func TestBikeStats(t *testing.T) {
 	db := openTestDB(t)

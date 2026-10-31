@@ -9,9 +9,11 @@ type Bike struct {
 	Active bool   `json:"active"`
 }
 
-// Bikes — активные велосипеды по имени.
+// Bikes — все велосипеды, активные первыми. Деактивированные тоже нужны:
+// селект на деталке сохраняет уже назначенную раму, иначе сохранение
+// сбросило бы bike_id. BikeStats и GetWorkout по той же причине видят все.
 func Bikes(db DBTX) ([]Bike, error) {
-	rows, err := db.Query(`SELECT id, name, kind, active FROM bikes WHERE active = 1 ORDER BY name`)
+	rows, err := db.Query(`SELECT id, name, kind, active FROM bikes ORDER BY active DESC, name`)
 	if err != nil {
 		return nil, err
 	}

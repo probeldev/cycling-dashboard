@@ -84,6 +84,49 @@ func TestWorkoutBike(t *testing.T) {
 	}
 }
 
+// TestWorkoutPageInactiveBike — деактивированная, но назначенная рама остаётся
+// в селекте выбранной: иначе «Сохранить» сбросит bike_id.
+func TestWorkoutPageInactiveBike(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bikes, err := store.Bikes(db)
+	if err != nil || len(bikes) < 2 {
+		t.Fatalf("велосипеды: %v, %v", bikes, err)
+	}
+	bike := bikes[1].ID
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour,
+	}, "hash-bike-inactive", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetWorkoutBike(db, id, &bike); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE bikes SET active = 0 WHERE id = ?`, bike); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, bikes[1].Name) {
+		t.Errorf("назначенного неактивного велосипеда %q нет в селекте", bikes[1].Name)
+	}
+	if !strings.Contains(body, fmt.Sprintf(`value="%d" selected`, bike)) {
+		t.Errorf("назначенный неактивный велосипед не выбран")
+	}
+}
+
 // TestWorkoutPageBike — на деталке есть выбор велосипеда с текущим значением.
 func TestWorkoutPageBike(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
