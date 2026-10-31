@@ -327,7 +327,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 		nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 		nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
-		nullableFloat(w.WorkKJ), nullableFloat(w.AvgTemp), w.MetricsVersion)
+		nullableMetric(w.WorkKJ, w.WorkKJ != 0 || w.HasPower),
+		nullableMetric(w.AvgTemp, w.HasTemp), w.MetricsVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -350,6 +351,15 @@ func nullableInt(v int) any {
 
 func nullableFloat(v float64) any {
 	if v <= 0 {
+		return nil
+	}
+	return v
+}
+
+// nullableMetric — значение метрики: NULL, только если данных нет. В отличие
+// от nullableFloat ноль и отрицательные валидны (0 °C, −5 °C, 0 кДж).
+func nullableMetric(v float64, ok bool) any {
+	if !ok {
 		return nil
 	}
 	return v
@@ -654,7 +664,8 @@ func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
 			nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 			nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 			nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
-			nullableFloat(w.WorkKJ), nullableFloat(w.AvgTemp), w.MetricsVersion, w.ID); err != nil {
+			nullableMetric(w.WorkKJ, w.WorkKJ != 0 || w.HasPower),
+			nullableMetric(w.AvgTemp, w.HasTemp), w.MetricsVersion, w.ID); err != nil {
 			return err
 		}
 	}
