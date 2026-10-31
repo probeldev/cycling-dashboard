@@ -122,19 +122,31 @@ func TestDistributionsCoastWithZones(t *testing.T) {
 	}
 }
 
-// TestSampleSecondsPowerPause — положительная мощность не спасает от паузы:
-// разрыв 30 с при нулевой скорости — это стоянка, а не 30 с педалирования.
-func TestSampleSecondsPowerPause(t *testing.T) {
+// TestSampleSecondsPedalingWithoutSpeed — ни дистанции, ни скорости нет, но
+// мощность и каденс есть: это прореживание записи при движении, а не пауза.
+func TestSampleSecondsPedalingWithoutSpeed(t *testing.T) {
 	samples := []store.Sample{
-		{Offset: 0, Power: 200, HasPwr: true},
-		{Offset: 30, Power: 200, HasPwr: true},
+		{Offset: 0, Power: 120, HasPwr: true, Cadence: 90, HasCad: true},
+		{Offset: 30, Power: 120, HasPwr: true, Cadence: 90, HasCad: true},
 	}
 	times := sampleSeconds(samples)
-	if times[0] != 1 {
-		t.Errorf("пауза при speed=0: %.1f с, хочу 1", times[0])
+	if times[0] != 30 {
+		t.Errorf("педалирование без скорости: %.1f с, хочу 30", times[0])
 	}
 	if times[1] != 1 {
 		t.Errorf("последняя запись: %.1f с, хочу 1", times[1])
+	}
+}
+
+// TestSampleSecondsStopWithDistance — тот же разрыв, но дистанция не выросла:
+// это стоянка, даже если в записи осталась мощность.
+func TestSampleSecondsStopWithDistance(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 120, HasPwr: true, DistanceM: 100, HasDist: true},
+		{Offset: 30, Power: 120, HasPwr: true, DistanceM: 100, HasDist: true},
+	}
+	if got := sampleSeconds(samples)[0]; got != 1 {
+		t.Errorf("стоянка с мощностью: %.1f с, хочу 1", got)
 	}
 }
 
@@ -282,11 +294,12 @@ func TestDistributionsEdgeCases(t *testing.T) {
 }
 
 // TestDistributionsPauseAppliesToZones — правило паузы общее для всех power-бакетов:
-// 30 с стоянки не попадают в зону, где была мощность перед остановкой.
+// 30 с стоянки (дистанция не выросла) не попадают в зону, где была мощность
+// перед остановкой.
 func TestDistributionsPauseAppliesToZones(t *testing.T) {
 	samples := []store.Sample{
-		{Offset: 0, Power: 120, HasPwr: true},
-		{Offset: 30, Power: 120, HasPwr: true},
+		{Offset: 0, Power: 120, HasPwr: true, DistanceM: 500, HasDist: true},
+		{Offset: 30, Power: 120, HasPwr: true, DistanceM: 500, HasDist: true},
 	}
 	d := distributions(samples, 200)
 	if got := secsOf(d.Buckets["power"], "Z2 · 112–151"); got != 2 {
