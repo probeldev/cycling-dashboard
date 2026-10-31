@@ -218,17 +218,30 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 	if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); ok {
 		w.AvgCadence = avg
 	}
-	if max, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.Power, s.HasPwr }); ok && max > 0 {
-		w.MaxPower = max
+	if sampleMax, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.Power, s.HasPwr }); ok && sampleMax > 0 {
+		if w.MaxPower <= 0 || sampleMax <= w.MaxPower {
+			w.MaxPower = sampleMax
+		}
+		// else: sampleMax exceeds device-reported max — keep device value
 	}
-	if max, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); ok && max > 0 {
-		w.MaxCadence = max
+	if sampleMax, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); ok && sampleMax > 0 {
+		if w.MaxCadence <= 0 || sampleMax <= w.MaxCadence {
+			w.MaxCadence = sampleMax
+		}
+		// else: sampleMax exceeds device-reported max — keep device value
 	}
 	if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.HR, s.HR > 0 }); ok {
 		w.AvgHR = avg
 	}
 	if max, ok := maxValid(samples, func(s store.Sample) (int, bool) { return s.HR, s.HR > 0 }); ok && max > 0 {
 		w.MaxHR = max
+	}
+	if sampleMaxMs, ok := maxValidFloat(samples, func(s store.Sample) (float64, bool) { return s.SpeedMs, s.SpeedMs > 0 }); ok && sampleMaxMs > 0 {
+		sampleMaxKmh := sampleMaxMs * 3.6
+		if w.MaxSpeedKmh <= 0 || sampleMaxKmh <= w.MaxSpeedKmh {
+			w.MaxSpeedKmh = sampleMaxKmh
+		}
+		// else: sample max exceeds device-reported max — keep device value
 	}
 
 	// станок: нет GPS, FIT помечен как indoor cycling, либо трек меньше 1 км —
@@ -260,6 +273,20 @@ func avgValid(samples []store.Sample, get func(store.Sample) (int, bool)) (int, 
 // maxValid — максимум по сэмплам с валидным значением.
 func maxValid(samples []store.Sample, get func(store.Sample) (int, bool)) (int, bool) {
 	m, found := 0, false
+	for _, s := range samples {
+		if v, ok := get(s); ok {
+			if !found || v > m {
+				m = v
+				found = true
+			}
+		}
+	}
+	return m, found
+}
+
+// maxValidFloat — максимум по сэмплам с валидным значением (float64).
+func maxValidFloat(samples []store.Sample, get func(store.Sample) (float64, bool)) (float64, bool) {
+	m, found := 0.0, false
 	for _, s := range samples {
 		if v, ok := get(s); ok {
 			if !found || v > m {
