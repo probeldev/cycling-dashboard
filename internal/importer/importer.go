@@ -100,25 +100,43 @@ func BackfillSubSport(db *sql.DB) (int, error) {
 }
 
 // BackfillNormalizedPower пересчитывает NP у тренировок, посчитанных старым
-// алгоритмом. Сэмплы уже в БД — FIT не перечитываем. Идемпотентен: после
-// прогона np_version == impNPVersion и запрос ничего не находит.
-func BackfillNormalizedPower(db *sql.DB) (int, error) {
+// алгоритмом. Сэмплы уже в БД — FIT не перечитываем, запись идёт одной
+// транзакцией. Тренировки без сэмплов или без валидной мощности не трогаем:
+// device-NP затирать нулём нельзя, а посчитать нечего. Они остаются с
+// np_version=0 и попадут в следующий прогон, когда появятся сэмплы.
+func BackfillNormalizedPower(db *sql.DB) (done, skipped int, err error) {
 	ids, err := store.WorkoutsNeedingNP(db, impNPVersion)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	var done int
+	var updates []store.NormPowerUpdate
 	for _, id := range ids {
 		samples, err := store.RawSamples(db, id)
 		if err != nil {
-			return done, err
+			return done, skipped, err
 		}
-		if err := store.SetNormPower(db, id, normalizedPower(samples), impNPVersion); err != nil {
-			return done, err
+		if !hasPowerData(samples) {
+			skipped++
+			continue
 		}
-		done++
+		updates = append(updates, store.NormPowerUpdate{
+			ID: id, NP: normalizedPower(samples), Version: impNPVersion,
+		})
 	}
-	return done, nil
+	if err := store.SetNormPowers(db, updates); err != nil {
+		return done, skipped, err
+	}
+	return len(updates), skipped, nil
+}
+
+// hasPowerData — есть ли в сэмплах хоть одна валидная мощность.
+func hasPowerData(samples []store.Sample) bool {
+	for _, s := range samples {
+		if s.HasPwr {
+			return true
+		}
+	}
+	return false
 }
 
 func isFIT(name string) bool {

@@ -466,10 +466,31 @@ func WorkoutsNeedingNP(db *sql.DB, version int) ([]int64, error) {
 	return out, rows.Err()
 }
 
-// SetNormPower записывает NP и версию алгоритма, которым он посчитан.
-func SetNormPower(db *sql.DB, id int64, np, version int) error {
-	_, err := db.Exec(`UPDATE workouts SET norm_power = ?, np_version = ? WHERE id = ?`, np, version, id)
-	return err
+// NormPowerUpdate — новый NP и версия алгоритма для одной тренировки.
+type NormPowerUpdate struct {
+	ID      int64
+	NP      int
+	Version int
+}
+
+// SetNormPowers записывает NP и версии пачкой в одной транзакции: бэкфилл
+// не должен оставлять базу в промежуточном состоянии.
+func SetNormPowers(db *sql.DB, updates []NormPowerUpdate) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, u := range updates {
+		if _, err := tx.Exec(`UPDATE workouts SET norm_power = ?, np_version = ? WHERE id = ?`,
+			u.NP, u.Version, u.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 type WorkoutRow struct {

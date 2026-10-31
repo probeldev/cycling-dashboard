@@ -46,10 +46,10 @@ func main() {
 
 	// NP старых тренировок посчитан алгоритмом с окном в сэмплах — пересчитываем
 	// по уже сохранённым сэмплам, без перечитывания FIT.
-	if n, err := importer.BackfillNormalizedPower(db); err != nil {
+	if n, skipped, err := importer.BackfillNormalizedPower(db); err != nil {
 		log.Printf("бэкфилл NP: %v", err)
-	} else if n > 0 {
-		fmt.Printf("бэкфилл NP: %d тренировок\n", n)
+	} else if n > 0 || skipped > 0 {
+		fmt.Printf("бэкфилл NP: %d тренировок, пропущено (нет мощности): %d\n", n, skipped)
 	}
 
 	syncMgr := web.NewSyncManager()
