@@ -70,6 +70,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(static)))
 	sync.routes(r, syncDir, afterSync)
 	profileRoutes(r, db)
+	progressRoutes(r, db)
 
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
 		years, err := store.ListTree(db)

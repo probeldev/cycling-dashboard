@@ -70,6 +70,11 @@ func TestRenderPages(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "Профиль") || !strings.Contains(body, "</html>") {
 		t.Errorf("GET /profile: код %d, тело %d байт", code, len(body))
 	}
+
+	code, body = get("/progress")
+	if code != http.StatusOK || !strings.Contains(body, "CTL") || !strings.Contains(body, "heatmap") || !strings.Contains(body, "</html>") {
+		t.Errorf("GET /progress: код %d, тело %d байт", code, len(body))
+	}
 }
 
 // TestRenderErrorReturns500 — ошибка шаблона даёт 500, а не 200 с мусором.

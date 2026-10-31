@@ -1,0 +1,117 @@
+{{ template "head" . }}
+<h1>Прогресс <span class="sub" style="font-size:14px; font-weight:400; color:var(--dim)">на {{ .TodayDate }}</span></h1>
+
+<div class="stats">
+  <div class="stat"><div class="v">{{ printf "%.0f" .Today.CTL }}</div><div class="k">CTL · форма</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .Today.ATL }}</div><div class="k">ATL · усталость</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .Today.TSB }}</div><div class="k">TSB · {{ .TSBLabel }}</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .WeekTSS }}</div><div class="k">TSS за неделю</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .Prev4TSS }}</div><div class="k">TSS за 4 недели</div></div>
+</div>
+
+<h2>Нагрузка</h2>
+<div class="tabs" id="periodBtns">
+  <button class="tab" data-days="30">30 дней</button>
+  <button class="tab" data-days="90">90 дней</button>
+  <button class="tab active" data-days="180">180 дней</button>
+  <button class="tab" data-days="365">365 дней</button>
+</div>
+<canvas id="pmc" style="width:100%; height:280px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
+<p id="empty" hidden class="sub" style="color:var(--dim)">Нет данных за выбранный период.</p>
+
+<h2>Календарь года</h2>
+<div class="heatmap" id="heatmap"></div>
+<div class="hm-legend">
+  <span>меньше</span>
+  <i class="hm lvl0"></i><i class="hm lvl1"></i><i class="hm lvl2"></i><i class="hm lvl3"></i><i class="hm lvl4"></i>
+  <span>больше</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+(() => {
+const fmt = d => {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
+const todayKey = fmt(new Date());
+const ctx = document.getElementById("pmc");
+const empty = document.getElementById("empty");
+let chart = null;
+
+const level = tss => tss <= 0 ? 0 : tss <= 30 ? 1 : tss <= 60 ? 2 : tss <= 100 ? 3 : 4;
+
+async function loadChart(days) {
+  const to = new Date(), from = new Date();
+  from.setDate(from.getDate() - days + 1);
+  const data = await (await fetch(`/api/timeline?from=${fmt(from)}&to=${fmt(to)}`)).json();
+  const has = data.some(d => d.tss > 0);
+  ctx.style.display = has ? "" : "none";
+  empty.hidden = has;
+  if (!has) {
+    if (chart) { chart.destroy(); chart = null; }
+    return;
+  }
+  const labels = data.map(d => d.date.slice(5, 10));
+  const sets = [
+    { type: "bar", label: "TSS", data: data.map(d => d.tss), backgroundColor: "#0969da" },
+    { type: "line", label: "CTL", data: data.map(d => d.ctl), borderColor: "#8250df", pointRadius: 0, borderWidth: 2 },
+    { type: "line", label: "ATL", data: data.map(d => d.atl), borderColor: "#cf222e", pointRadius: 0, borderWidth: 2 },
+    { type: "line", label: "TSB", data: data.map(d => d.tsb), borderColor: "#1a7f37", pointRadius: 0, borderWidth: 1, yAxisID: "y1" },
+  ];
+  if (!chart) {
+    chart = new Chart(ctx, {
+      type: "bar",
+      data: { labels, datasets: sets },
+      options: {
+        animation: false,
+        plugins: { legend: { position: "bottom" } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 12 } },
+          y: { position: "left", title: { display: true, text: "TSS / CTL / ATL" } },
+          y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "TSB" } },
+        },
+      },
+    });
+  } else {
+    chart.data.labels = labels;
+    chart.data.datasets = sets;
+    chart.update();
+  }
+}
+
+async function loadHeatmap() {
+  const year = new Date().getFullYear();
+  const data = await (await fetch(`/api/timeline?from=${year}-01-01&to=${year}-12-31`)).json();
+  const byDate = {};
+  data.forEach(d => { byDate[d.date.slice(0, 10)] = d; });
+
+  const root = document.getElementById("heatmap");
+  root.innerHTML = "";
+  const first = new Date(year, 0, 1), last = new Date(year, 11, 31);
+  const lead = (first.getDay() + 6) % 7; // пн = 0
+  for (let i = 0; i < lead; i++) {
+    const e = document.createElement("i");
+    e.className = "hm lvl0";
+    root.appendChild(e);
+  }
+  for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
+    const key = fmt(d), day = byDate[key], tss = day ? day.tss : 0;
+    const e = document.createElement("i");
+    e.className = "hm lvl" + level(tss) + (key === todayKey ? " today" : "");
+    e.title = day && day.rides
+      ? `${key} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}`
+      : `${key} · отдых`;
+    root.appendChild(e);
+  }
+}
+
+document.querySelectorAll("#periodBtns .tab").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("#periodBtns .tab").forEach(x => x.classList.toggle("active", x === b));
+  loadChart(+b.dataset.days);
+}));
+loadChart(180);
+loadHeatmap();
+})();
+</script>
+{{ template "foot" . }}

@@ -1,0 +1,64 @@
+package web
+
+import (
+	"database/sql"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"cycling-dashboard/internal/store"
+)
+
+func progressRoutes(r chi.Router, db *sql.DB) {
+	r.Get("/progress", func(w http.ResponseWriter, req *http.Request) {
+		now := time.Now()
+		to := startOfLocalDay(now)
+		days, err := store.Timeline(db, to.AddDate(0, 0, -364), to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		today := days[len(days)-1]
+
+		// текущая неделя пн–вс и предыдущие 4 полные недели
+		ws := weekStart(now)
+		var weekTSS, prev4 float64
+		for _, d := range days {
+			if !d.Date.Before(ws) {
+				weekTSS += d.TSS
+			}
+			if !d.Date.Before(ws.AddDate(0, 0, -28)) && d.Date.Before(ws) {
+				prev4 += d.TSS
+			}
+		}
+		render(w, "progress.html", map[string]any{
+			"Today":     today,
+			"WeekTSS":   weekTSS,
+			"Prev4TSS":  prev4,
+			"TSBLabel":  tsbLabel(today.TSB),
+			"TodayDate": now.Format("02.01.2006"),
+		})
+	})
+}
+
+// weekStart — понедельник 00:00 локального времени.
+func weekStart(t time.Time) time.Time {
+	wd := int(t.Weekday()) // воскресенье = 0
+	if wd == 0 {
+		wd = 7
+	}
+	return startOfLocalDay(t).AddDate(0, 0, 1-wd)
+}
+
+// tsbLabel — словесная трактовка свежести.
+func tsbLabel(tsb float64) string {
+	switch {
+	case tsb < -10:
+		return "загружен"
+	case tsb > 5:
+		return "свежий"
+	default:
+		return "норма"
+	}
+}
