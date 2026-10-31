@@ -87,14 +87,14 @@ func BackfillSubSport(db *sql.DB) (int, error) {
 			fmt.Fprintf(os.Stderr, "бэкфилл subsport %s: %v\n", ref.Path, err)
 			continue
 		}
+		// пишем даже пустое значение: subsport_checked = 1, повторно файл не читаем
 		sub := subSportName(activity.Sessions[0].SubSport)
-		if sub == "" {
-			continue // в файле subsport не записан — оставляем пустым
-		}
 		if err := store.SetSubSport(db, ref.ID, sub); err != nil {
 			return filled, err
 		}
-		filled++
+		if sub != "" {
+			filled++
+		}
 	}
 	return filled, nil
 }

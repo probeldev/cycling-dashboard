@@ -142,7 +142,7 @@ func TestBackfillSubSportIdempotent(t *testing.T) {
 
 	// имитируем базу до появления subsport: колонка пустая, зато пользователь
 	// уже задал имя и вручную снял флаг станка
-	if _, err := db.Exec(`UPDATE workouts SET subsport = ''`); err != nil {
+	if _, err := db.Exec(`UPDATE workouts SET subsport = '', subsport_checked = 0`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetName(db, w.ID, "Моя тренировка"); err != nil {
@@ -203,7 +203,7 @@ func TestBackfillSubSportMissingFile(t *testing.T) {
 	if _, _, err := ImportDir(db, dir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE workouts SET subsport = ''`); err != nil {
+	if _, err := db.Exec(`UPDATE workouts SET subsport = '', subsport_checked = 0`); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(dir, "gone.fit")); err != nil {
@@ -217,4 +217,56 @@ func TestBackfillSubSportMissingFile(t *testing.T) {
 	if n != 0 {
 		t.Errorf("заполнено %d тренировок, хочу 0", n)
 	}
+}
+
+// TestBackfillSubSportMarksChecked — FIT без subsport: строка всё равно
+// помечается проверенной, иначе файл перечитывался бы при каждом старте.
+func TestBackfillSubSportMarksChecked(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nosub.fit")
+	writeFIT(t, path, fit.SubSportInvalid, 30)
+
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.SubSport != "" {
+		t.Fatalf("subsport = %q, хочу пустой", w.SubSport)
+	}
+	if got := subsportChecked(t, db, w.ID); got != 1 {
+		t.Errorf("после импорта subsport_checked = %d, хочу 1", got)
+	}
+
+	// имитируем строку из старой базы: бэкфилл должен пометить её проверенной,
+	// хотя subsport в FIT нет
+	if _, err := db.Exec(`UPDATE workouts SET subsport_checked = 0`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillSubSport(db); err != nil || n != 0 {
+		t.Fatalf("бэкфилл: %d, %v; хочу 0, nil", n, err)
+	}
+	if got := subsportChecked(t, db, w.ID); got != 1 {
+		t.Errorf("после бэкфилла subsport_checked = %d, хочу 1", got)
+	}
+
+	// файл пропал: проверенная строка больше не читается, ошибки нет
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillSubSport(db); err != nil || n != 0 {
+		t.Errorf("повторный бэкфилл: %d, %v; хочу 0, nil", n, err)
+	}
+}
+
+func subsportChecked(t *testing.T, db *sql.DB, id int64) int {
+	t.Helper()
+	var checked int
+	if err := db.QueryRow(`SELECT subsport_checked FROM workouts WHERE id = ?`, id).Scan(&checked); err != nil {
+		t.Fatal(err)
+	}
+	return checked
 }

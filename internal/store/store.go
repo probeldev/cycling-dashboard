@@ -140,6 +140,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "ftp_w", `ALTER TABLE workouts ADD COLUMN ftp_w INTEGER`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -202,15 +203,15 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		dist = sql.NullInt64{Int64: int64(w.DistanceKm * 1000), Valid: true}
 	}
 	_, err := db.Exec(`INSERT INTO workouts
-	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, has_gps, trainer,
+	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, subsport_checked, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
 	     avg_power, max_power, norm_power, np_version, avg_hr, max_hr, calories,
 	     total_ascent, total_descent, ftp_w, weight_kg)
-	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
-	      subsport=excluded.subsport, has_gps=excluded.has_gps,
+	      subsport=excluded.subsport, subsport_checked=1, has_gps=excluded.has_gps,
 	      trainer=CASE WHEN trainer_override IS NOT NULL THEN trainer ELSE excluded.trainer END,
 	      duration_sec=excluded.duration_sec, distance_m=excluded.distance_m,
 	      avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
@@ -419,11 +420,12 @@ type FileRef struct {
 	Path string
 }
 
-// MissingSubSport возвращает тренировки с пустым subsport: колонка была в схеме
-// с самого начала, но не заполнялась, поэтому старые записи нужно дочитать из
-// FIT-файлов. После бэкфилла запрос ничего не находит.
+// MissingSubSport возвращает тренировки, у которых subsport ещё не проверяли:
+// колонка была в схеме с самого начала, но не заполнялась, поэтому старые записи
+// нужно дочитать из FIT-файлов. subsport_checked ставится и когда в файле пусто —
+// иначе один и тот же файл перечитывался бы при каждом старте.
 func MissingSubSport(db *sql.DB) ([]FileRef, error) {
-	rows, err := db.Query(`SELECT id, file_path FROM workouts WHERE subsport = '' ORDER BY id`)
+	rows, err := db.Query(`SELECT id, file_path FROM workouts WHERE subsport_checked = 0 ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -439,10 +441,10 @@ func MissingSubSport(db *sql.DB) ([]FileRef, error) {
 	return out, rows.Err()
 }
 
-// SetSubSport проставляет subsport, не трогая остальные поля тренировки —
-// пользовательские name и trainer_override должны уцелеть.
+// SetSubSport проставляет subsport и помечает строку проверенной, не трогая
+// остальные поля — пользовательские name и trainer_override должны уцелеть.
 func SetSubSport(db *sql.DB, id int64, subsport string) error {
-	_, err := db.Exec(`UPDATE workouts SET subsport = ? WHERE id = ?`, subsport, id)
+	_, err := db.Exec(`UPDATE workouts SET subsport = ?, subsport_checked = 1 WHERE id = ?`, subsport, id)
 	return err
 }
 
