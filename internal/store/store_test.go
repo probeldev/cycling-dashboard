@@ -133,10 +133,43 @@ func TestSamplesEmptyWorkout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := Samples(db, id, 500); err != nil || len(got) != 0 {
-		t.Errorf("Samples без сэмплов: %d, %v; хочу 0, nil", len(got), err)
+	if got, err := Samples(db, id, 500); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("Samples без сэмплов: %v, %v; хочу пустой (не nil) срез", got, err)
 	}
-	if got, err := RawSamples(db, id); err != nil || len(got) != 0 {
-		t.Errorf("RawSamples без сэмплов: %d, %v; хочу 0, nil", len(got), err)
+	if got, err := RawSamples(db, id); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("RawSamples без сэмплов: %v, %v; хочу пустой (не nil) срез", got, err)
+	}
+}
+
+// TestSamplesBucketOffsetIsMean — offset точки — среднее по записям бакета,
+// а не MIN: иначе после длинной паузы внутри бакета точка садится на его край.
+func TestSamplesBucketOffsetIsMean(t *testing.T) {
+	db := openTestDB(t)
+	id, err := InsertWorkout(db, &Workout{StartTime: time.Now(), Duration: 105 * time.Second},
+		"hash-bucket-mean", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples []Sample
+	for i := 0; i < 5; i++ { // до паузы
+		samples = append(samples, Sample{Offset: int64(i), Power: 100, HasPwr: true})
+	}
+	for i := 0; i < 5; i++ { // после паузы в 96 с
+		samples = append(samples, Sample{Offset: int64(100 + i), Power: 100, HasPwr: true})
+	}
+	if err := InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+
+	one, err := Samples(db, id, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one) != 1 {
+		t.Fatalf("%d точек, хочу 1", len(one))
+	}
+	// среднее (0+1+2+3+4+100+101+102+103+104)/10 = 52
+	if one[0].Offset != 52 {
+		t.Errorf("offset точки = %d, хочу 52 (среднее по бакету, а не MIN)", one[0].Offset)
 	}
 }

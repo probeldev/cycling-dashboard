@@ -732,12 +732,14 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 		return nil, err
 	}
 	if total == 0 {
-		return nil, nil
+		return []Sample{}, nil
 	}
 	bucket := (total + maxN - 1) / maxN
-	// группируем по номеру записи, а не по ts_offset: иначе одинаковые offset
-	// (запись 2 Гц) склеиваются и точек получается больше, чем просили
-	rows, err := db.Query(`SELECT MIN(ts_offset), AVG(lat), AVG(lon),
+	// Группируем по номеру записи, а не по ts_offset: иначе одинаковые offset
+	// (запись 2 Гц) склеиваются и точек получается больше, чем просили.
+	// Offset точки — средний по записям бакета: MIN прижимал бы точку к началу
+	// бакета, и после длинной паузы внутри бакета она уезжала бы к её краю.
+	rows, err := db.Query(`SELECT CAST(ROUND(AVG(ts_offset)) AS INTEGER), AVG(lat), AVG(lon),
 	    CAST(AVG(power) AS INTEGER), CAST(AVG(cadence) AS INTEGER), CAST(AVG(hr) AS INTEGER),
 	    AVG(speed_ms), AVG(altitude_m), MAX(distance_m)
 	    FROM (
@@ -768,7 +770,7 @@ func RawSamples(db *sql.DB, id int64) ([]Sample, error) {
 // scanSamples разбирает строки сэмплов; набор и порядок колонок у Samples
 // и RawSamples одинаковые.
 func scanSamples(rows *sql.Rows) ([]Sample, error) {
-	var out []Sample
+	out := []Sample{}
 	for rows.Next() {
 		var s Sample
 		var lat, lon, spd, alt, dist sql.NullFloat64

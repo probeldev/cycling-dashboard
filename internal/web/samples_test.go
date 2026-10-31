@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,7 @@ func TestSamplesMaxBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	count := func(max int) int {
+	get := func(max int) []store.Sample {
 		t.Helper()
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
@@ -51,20 +52,48 @@ func TestSamplesMaxBound(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatalf("max=%d: битый JSON: %v", max, err)
 		}
-		return len(got)
+		return got
 	}
 
 	for _, max := range []int{1, 10, 100, 500, 5281, 6000} {
-		got := count(max)
-		if got > max {
-			t.Errorf("max=%d: вернулось %d точек — больше лимита", max, got)
+		got := get(max)
+		if len(got) > max {
+			t.Errorf("max=%d: вернулось %d точек — больше лимита", max, len(got))
 		}
-		if max <= n && got < max/2 {
-			t.Errorf("max=%d: вернулось %d точек — подозрительно мало", max, got)
+		if max <= n && len(got) < max/2 {
+			t.Errorf("max=%d: вернулось %d точек — подозрительно мало", max, len(got))
 		}
 	}
-	if got := count(n); got < n-1 {
-		t.Errorf("max=%d: вернулось %d точек, хочу почти все исходные", n, got)
+
+	// при max >= total данные не теряются: все offset на месте
+	all := get(n)
+	if len(all) != n {
+		t.Fatalf("max=%d: %d точек, хочу %d", n, len(all), n)
+	}
+	if all[0].Offset != 0 || all[n-1].Offset != int64(n-1) {
+		t.Errorf("диапазон offset %d..%d, хочу 0..%d", all[0].Offset, all[n-1].Offset, n-1)
+	}
+	unique := make(map[int64]struct{}, n)
+	for _, s := range all {
+		unique[s.Offset] = struct{}{}
+	}
+	if len(unique) != n {
+		t.Errorf("уникальных offset %d, хочу %d", len(unique), n)
+	}
+
+	// при прореживании offset растёт и покрывает весь диапазон тренировки
+	bucketed := get(500)
+	if len(bucketed) < 2 {
+		t.Fatalf("max=500: %d точек", len(bucketed))
+	}
+	for i := 1; i < len(bucketed); i++ {
+		if bucketed[i].Offset <= bucketed[i-1].Offset {
+			t.Fatalf("offset не растёт: %d после %d", bucketed[i].Offset, bucketed[i-1].Offset)
+		}
+	}
+	if bucketed[0].Offset > 20 || bucketed[len(bucketed)-1].Offset < int64(n-1-20) {
+		t.Errorf("бакеты покрывают %d..%d, хочу почти весь диапазон 0..%d",
+			bucketed[0].Offset, bucketed[len(bucketed)-1].Offset, n-1)
 	}
 }
 
@@ -256,5 +285,32 @@ func TestSamplesRawNulls(t *testing.T) {
 	}
 	if !got[1].HasPwr || got[1].Power != 150 || got[1].HR != 130 {
 		t.Errorf("вторая запись: %+v, хочу power=150 hr=130", got[1])
+	}
+}
+
+// TestSamplesEmptyArray — у известной тренировки без сэмплов ответ [], а не null.
+func TestSamplesEmptyArray(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{StartTime: time.Now(), Duration: time.Second},
+		"hash-empty-array", filepath.Join(t.TempDir(), "test.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/workout/%d/samples", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Errorf("тело %q, хочу []", body)
 	}
 }
