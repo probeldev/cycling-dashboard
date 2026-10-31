@@ -393,3 +393,141 @@ func TestProfileRollbackOnStampError(t *testing.T) {
 		t.Errorf("в profile_history %d записей, хочу 0 (откат)", n)
 	}
 }
+
+// TestProfileStampsByKind — FTP станка и улицы берутся из разных видов профиля,
+// у улицы при отсутствии ftp_outdoor — fallback на станковый.
+func TestProfileStampsByKind(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	if err := AddProfileEntry(db, "ftp", 156, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	trainer, err := InsertWorkout(db, &Workout{
+		StartTime: day(6, 1), Duration: time.Hour, Trainer: true,
+	}, "hash-kind-tr", "/tmp/tr.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outdoor, err := InsertWorkout(db, &Workout{
+		StartTime: day(6, 2), Duration: time.Hour,
+	}, "hash-kind-out", "/tmp/out.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	// уличного FTP ещё нет: обе тренировки на станковом
+	for _, id := range []int64{trainer, outdoor} {
+		w, err := GetWorkout(db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w.FTP != 156 || w.FTPKind != "trainer" {
+			t.Errorf("id=%d: FTP=%d kind=%q, хочу 156/trainer (fallback)", id, w.FTP, w.FTPKind)
+		}
+	}
+
+	// появился уличный FTP — у улицы он, у станка по-прежнему станковый
+	if err := AddProfileEntry(db, "ftp_outdoor", 170, day(5, 1)); err != nil {
+		t.Fatal(err)
+	}
+	tr, _ := GetWorkout(db, trainer)
+	out, _ := GetWorkout(db, outdoor)
+	if tr.FTP != 156 || tr.FTPKind != "trainer" {
+		t.Errorf("станок: FTP=%d kind=%q, хочу 156/trainer", tr.FTP, tr.FTPKind)
+	}
+	if out.FTP != 170 || out.FTPKind != "outdoor" {
+		t.Errorf("улица: FTP=%d kind=%q, хочу 170/outdoor", out.FTP, out.FTPKind)
+	}
+}
+
+// TestFTPChangeInvalidatesOnlyOwnKind — смена уличного FTP инвалидирует только
+// уличные тренировки, смена станкового — только станковые.
+func TestFTPChangeInvalidatesOnlyOwnKind(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	if err := AddProfileEntry(db, "ftp", 156, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	trainer, _ := InsertWorkout(db, &Workout{StartTime: day(6, 1), Duration: time.Hour, Trainer: true},
+		"hash-inv-tr", "/tmp/tr.fit", 1)
+	outdoor, _ := InsertWorkout(db, &Workout{StartTime: day(6, 2), Duration: time.Hour},
+		"hash-inv-out", "/tmp/out.fit", 1)
+	// штампуем обе (пока только станковый FTP) и помечаем метрики посчитанными
+	if err := BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET metrics_version = 1, norm_power = 140, avg_power = 123`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AddProfileEntry(db, "ftp_outdoor", 180, day(2, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := metricsVersionOf(t, db, outdoor); got != 0 {
+		t.Errorf("улица: metrics_version=%d, хочу 0 (FTP изменился)", got)
+	}
+	if got := metricsVersionOf(t, db, trainer); got != 1 {
+		t.Errorf("станок: metrics_version=%d, хочу 1 (уличный FTP не влияет)", got)
+	}
+
+	if err := AddProfileEntry(db, "ftp", 160, day(2, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if got := metricsVersionOf(t, db, trainer); got != 0 {
+		t.Errorf("станок: metrics_version=%d, хочу 0 (FTP изменился)", got)
+	}
+	if got := metricsVersionOf(t, db, outdoor); got != 0 {
+		t.Errorf("улица: metrics_version=%d, хочу 0 (уже была сброшена)", got)
+	}
+}
+
+func metricsVersionOf(t *testing.T, db *sql.DB, id int64) int {
+	t.Helper()
+	var v int
+	if err := db.QueryRow(`SELECT metrics_version FROM workouts WHERE id = ?`, id).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// TestSetTrainerOverrideRestampsFTP — смена типа тренировки перевыбирает
+// источник FTP и инвалидирует метрики.
+func TestSetTrainerOverrideRestampsFTP(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	if err := AddProfileEntry(db, "ftp", 156, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfileEntry(db, "ftp_outdoor", 170, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	id, err := InsertWorkout(db, &Workout{StartTime: day(6, 1), Duration: time.Hour},
+		"hash-override", "/tmp/o.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET metrics_version = 1, norm_power = 140 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetTrainerOverride(db, id, true); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := GetWorkout(db, id)
+	if w.FTP != 156 || w.FTPKind != "trainer" || w.MetricsVersion != 0 {
+		t.Errorf("после станка: FTP=%d kind=%q version=%d, хочу 156/trainer/0",
+			w.FTP, w.FTPKind, w.MetricsVersion)
+	}
+	if err := SetTrainerOverride(db, id, false); err != nil {
+		t.Fatal(err)
+	}
+	w, _ = GetWorkout(db, id)
+	if w.FTP != 170 || w.FTPKind != "outdoor" {
+		t.Errorf("после улицы: FTP=%d kind=%q, хочу 170/outdoor", w.FTP, w.FTPKind)
+	}
+}

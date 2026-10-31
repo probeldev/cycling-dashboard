@@ -52,9 +52,11 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", full, err)
 			return nil
 		}
-		// штампуем вес и FTP на дату тренировки — зоны считаются от них
-		if ftp, ok := store.ProfileAt(db, "ftp", w.StartTime); ok {
+		// штампуем вес и FTP на дату тренировки — зоны считаются от них.
+		// FTP зависит от типа: станок и улица берут его из разных видов профиля
+		if ftp, kind, ok := store.FTPAt(db, w.Trainer, w.StartTime); ok {
 			w.FTP = int(ftp)
+			w.FTPKind = kind
 		}
 		if kg, ok := store.ProfileAt(db, "weight", w.StartTime); ok {
 			w.WeightKg = kg

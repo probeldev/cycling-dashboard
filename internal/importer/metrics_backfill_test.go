@@ -401,3 +401,56 @@ func TestBackfillMetricsSkipsFITWithoutPower(t *testing.T) {
 		t.Error("TSS должен считаться без сэмплов мощности")
 	}
 }
+
+// TestMetricsOutdoorFTP — уличная тренировка считает IF/TSS от ftp_outdoor,
+// станковая — от ftp; источники не пересекаются.
+func TestMetricsOutdoorFTP(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	if err := store.AddProfileEntry(db, "ftp", 200, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp_outdoor", 250, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	outdoor, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: day(6, 1), Duration: time.Hour, NormPower: 200, AvgPower: 200,
+	}, "hash-outdoor-ftp", "/nonexistent/o.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trainer, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: day(6, 2), Duration: time.Hour, NormPower: 200, AvgPower: 200, Trainer: true,
+	}, "hash-trainer-ftp", "/nonexistent/t.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := store.GetWorkout(db, outdoor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.FTP != 250 || out.FTPKind != "outdoor" {
+		t.Errorf("улица: FTP=%d kind=%q, хочу 250/outdoor", out.FTP, out.FTPKind)
+	}
+	if math.Abs(out.IF-0.8) > 1e-9 || math.Abs(out.TSS-64) > 0.01 {
+		t.Errorf("улица: IF=%v TSS=%v, хочу 0.8 и 64", out.IF, out.TSS)
+	}
+
+	tr, err := store.GetWorkout(db, trainer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.FTP != 200 || tr.FTPKind != "trainer" {
+		t.Errorf("станок: FTP=%d kind=%q, хочу 200/trainer", tr.FTP, tr.FTPKind)
+	}
+	if math.Abs(tr.IF-1) > 1e-9 || math.Abs(tr.TSS-100) > 0.01 {
+		t.Errorf("станок: IF=%v TSS=%v, хочу 1 и 100", tr.IF, tr.TSS)
+	}
+}

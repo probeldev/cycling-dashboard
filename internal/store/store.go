@@ -49,6 +49,7 @@ type Workout struct {
 	// чтобы история не пересчитывалась при изменении FTP/веса
 	FTP      int
 	WeightKg float64
+	FTPKind  string // источник FTP: trainer | outdoor (пусто — FTP нет)
 
 	// версия алгоритма, которым посчитан NormPower (0 — старый, до окна 30 с);
 	// по ней бэкфилл понимает, что тренировку надо пересчитать
@@ -226,6 +227,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"samples", "distance_m", `ALTER TABLE samples ADD COLUMN distance_m REAL`},
 		{"samples", "temperature", `ALTER TABLE samples ADD COLUMN temperature REAL`},
 		{"workouts", "ftp_w", `ALTER TABLE workouts ADD COLUMN ftp_w INTEGER`},
+		{"workouts", "ftp_kind", `ALTER TABLE workouts ADD COLUMN ftp_kind TEXT`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},
@@ -342,10 +344,10 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, subsport_checked, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
 	     avg_power, max_power, norm_power, np_version, avg_hr, max_hr, calories,
-	     total_ascent, total_descent, ftp_w, weight_kg,
+	     total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	     if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	     elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version)
-	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
@@ -359,7 +361,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
 	      calories=excluded.calories,
 	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent,
-	      ftp_w=excluded.ftp_w, weight_kg=excluded.weight_kg,
+	      ftp_w=excluded.ftp_w, ftp_kind=excluded.ftp_kind,
+	      weight_kg=excluded.weight_kg,
 	      if=excluded.if, tss=excluded.tss, vi=excluded.vi,
 	      avg_power_active=excluded.avg_power_active, coasting_sec=excluded.coasting_sec,
 	      no_power_sec=excluded.no_power_sec, suspect_dropout_sec=excluded.suspect_dropout_sec,
@@ -374,7 +377,7 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower), w.NPVersion,
 		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories),
 		nullableInt(w.AscentM), nullableInt(w.DescentM),
-		nullableInt(w.FTP), nullableFloat(w.WeightKg),
+		nullableInt(w.FTP), w.FTPKind, nullableFloat(w.WeightKg),
 		nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 		nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 		nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
@@ -416,13 +419,25 @@ func nullableMetric(v float64, ok bool) any {
 	return v
 }
 
+// SetTrainerOverride меняет тип тренировки. Вместе с флагом пересчитывает FTP:
+// у станка и улицы разные источники, а TrainerOverride влияет на выбор.
 func SetTrainerOverride(db *sql.DB, id int64, trainer bool) error {
 	v := 0
 	if trainer {
 		v = 1
 	}
-	_, err := db.Exec(`UPDATE workouts SET trainer_override = ?, trainer = ? WHERE id = ?`, v, v, id)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE workouts SET trainer_override = ?, trainer = ? WHERE id = ?`, v, v, id); err != nil {
+		return err
+	}
+	if err := restampWorkoutTx(tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type Sample struct {
@@ -565,19 +580,46 @@ func ProfileHistory(db *sql.DB) ([]ProfileEntry, error) {
 
 // ProfileAt возвращает значение ('weight'/'ftp'), действовавшее на момент t:
 // последнее до t, а если такого нет — самое раннее известное.
-func ProfileAt(db *sql.DB, kind string, t time.Time) (float64, bool) {
+func ProfileAt(db DBTX, kind string, t time.Time) (float64, bool) {
+	return profileAt(db, kind, t)
+}
+
+func profileAt(q DBTX, kind string, t time.Time) (float64, bool) {
 	ts := t.UTC().Format(time.RFC3339)
 	var v float64
-	err := db.QueryRow(`SELECT value FROM profile_history
+	err := q.QueryRow(`SELECT value FROM profile_history
 		WHERE kind = ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1`, kind, ts).Scan(&v)
 	if err == sql.ErrNoRows {
-		err = db.QueryRow(`SELECT value FROM profile_history
+		err = q.QueryRow(`SELECT value FROM profile_history
 			WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1`, kind).Scan(&v)
 	}
 	if err != nil {
 		return 0, false
 	}
 	return v, true
+}
+
+// FTPAt — FTP тренировки и источник значения: для станка берётся `ftp`, для
+// улицы — `ftp_outdoor` с обязательным fallback на `ftp`. Пустой kind — FTP нет.
+func FTPAt(db DBTX, trainer bool, t time.Time) (float64, string, bool) {
+	return effectiveFTPAt(db, trainer, t)
+}
+
+func effectiveFTPAt(q DBTX, trainer bool, t time.Time) (float64, string, bool) {
+	if trainer {
+		if v, ok := profileAt(q, "ftp", t); ok {
+			return v, "trainer", true
+		}
+		return 0, "", false
+	}
+	if v, ok := profileAt(q, "ftp_outdoor", t); ok {
+		return v, "outdoor", true
+	}
+	// уличного FTP ещё нет — считаем от станкового, источник так и помечаем
+	if v, ok := profileAt(q, "ftp", t); ok {
+		return v, "trainer", true
+	}
+	return 0, "", false
 }
 
 // BackfillProfileStamps проставляет тренировкам вес и FTP по истории профиля
@@ -594,39 +636,79 @@ func BackfillProfileStamps(db *sql.DB) error {
 	return tx.Commit()
 }
 
-// backfillProfileStampsTx проставляет штампы FTP/веса в переданной транзакции.
-// IF/TSS зависят только от FTP (VI — вообще не от профиля): при реальной смене
-// FTP у строк с мощностью обнуляем версию метрик. Вес на метрики не влияет —
-// зоны считаются из штампов на лету, поэтому его изменение метрики не трогает.
+// backfillProfileStampsTx проставляет штампы FTP/веса всем тренировкам.
+// Источник FTP зависит от типа: станок — `ftp`, улица — `ftp_outdoor` с
+// fallback на `ftp`. IF/TSS зависят от FTP (VI — нет): при реальной смене
+// эффективного значения у строк с мощностью обнуляем версию метрик; смена
+// только источника (значения равны) метрики не трогает.
 func backfillProfileStampsTx(tx *sql.Tx) error {
-	for _, m := range []struct {
-		kind, column string
-		invalidates  bool
-	}{
-		{"ftp", "ftp_w", true},
-		{"weight", "weight_kg", false},
-	} {
-		if m.invalidates {
-			if _, err := tx.Exec(`UPDATE workouts SET metrics_version = 0
-			    WHERE metrics_version <> 0 AND norm_power > 0 AND `+m.column+` IS NOT COALESCE(
-			      (SELECT value FROM profile_history
-			       WHERE kind = ? AND recorded_at <= start_time
-			       ORDER BY recorded_at DESC LIMIT 1),
-			      (SELECT value FROM profile_history
-			       WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1))`, m.kind, m.kind); err != nil {
-				return err
-			}
+	rows, err := tx.Query(`SELECT id FROM workouts ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
 		}
-		if _, err := tx.Exec(`UPDATE workouts SET `+m.column+` = COALESCE(
-			(SELECT value FROM profile_history
-			 WHERE kind = ? AND recorded_at <= start_time
-			 ORDER BY recorded_at DESC LIMIT 1),
-			(SELECT value FROM profile_history
-			 WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1))`, m.kind, m.kind); err != nil {
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := restampWorkoutTx(tx, id); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// restampWorkoutTx пересчитывает штампы одной тренировки: FTP (с учётом типа
+// и fallback) и вес. Метрики инвалидируются только если изменился сам FTP.
+func restampWorkoutTx(tx *sql.Tx, id int64) error {
+	var trainer bool
+	var start string
+	var ftpW, kg sql.NullFloat64
+	var ftpKind sql.NullString
+	var normPower, version sql.NullInt64
+	if err := tx.QueryRow(`SELECT trainer, start_time, ftp_w, ftp_kind, weight_kg,
+	    norm_power, metrics_version FROM workouts WHERE id = ?`, id).
+		Scan(&trainer, &start, &ftpW, &ftpKind, &kg, &normPower, &version); err != nil {
+		return err
+	}
+	t, err := time.Parse(time.RFC3339, start)
+	if err != nil {
+		return err
+	}
+	ftp, kind, _ := effectiveFTPAt(tx, trainer, t)
+	weight, _ := profileAt(tx, "weight", t)
+
+	newFTP := sql.NullFloat64{Float64: ftp, Valid: ftp > 0}
+	newKg := sql.NullFloat64{Float64: weight, Valid: weight > 0}
+	ftpChanged := !sameNullFloat(ftpW, newFTP)
+	kindChanged := ftpKind.String != kind
+	if !ftpChanged && !kindChanged && sameNullFloat(kg, newKg) {
+		return nil
+	}
+	newVersion := version.Int64
+	if ftpChanged && newVersion != 0 && normPower.Int64 > 0 {
+		newVersion = 0
+	}
+	_, err = tx.Exec(`UPDATE workouts SET ftp_w = ?, ftp_kind = ?, weight_kg = ?, metrics_version = ?
+	    WHERE id = ?`, newFTP, kind, newKg, newVersion, id)
+	return err
+}
+
+// sameNullFloat — равны ли значения с учётом NULL.
+func sameNullFloat(a, b sql.NullFloat64) bool {
+	if a.Valid != b.Valid {
+		return false
+	}
+	return !a.Valid || a.Float64 == b.Float64
 }
 
 func SetName(db *sql.DB, id int64, name string) error {
@@ -969,17 +1051,18 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc, ftp sql.NullInt64
 	var wkg sql.NullFloat64
 	var ifv, tss, vi, work, temp sql.NullFloat64
+	var ftpKind sql.NullString
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
-	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg,
+	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
-		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg,
+		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion)
 	if err != nil {
 		return nil, err
@@ -1017,6 +1100,7 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.Calories = int(kcal.Int64)
 	w.HasPower = ap.Valid
 	w.FTP = int(ftp.Int64)
+	w.FTPKind = ftpKind.String
 	w.WeightKg = wkg.Float64
 	w.IF = ifv.Float64
 	w.TSS = tss.Float64
