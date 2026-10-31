@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"database/sql"
 	"math"
 
 	"cycling-dashboard/internal/ridedata"
@@ -81,4 +82,46 @@ func applyMetrics(w *store.Workout, samples []store.Sample) {
 		w.VI = float64(w.NormPower) / float64(w.AvgPower)
 	}
 	w.MetricsVersion = metricsVersion
+}
+
+// BackfillMetrics пересчитывает метрики нагрузки у тренировок со старой версией.
+// Сэмплы и NP/FTP/duration уже в БД; elapsed_sec и work_kj есть только в
+// FIT-сессии, поэтому для них дочитываем сессию — если файла нет, останутся NULL.
+// TSS считается от duration_sec, поэтому заполняется и без сэмплов (когда NP и
+// FTP известны). Идемпотентен: после прогона metrics_version == metricsVersion.
+func BackfillMetrics(db *sql.DB) (int, error) {
+	refs, err := store.WorkoutsNeedingMetrics(db, metricsVersion)
+	if err != nil {
+		return 0, err
+	}
+	updates := make([]*store.Workout, 0, len(refs))
+	for _, ref := range refs {
+		w, err := store.GetWorkout(db, ref.ID)
+		if err != nil {
+			return 0, err
+		}
+		// elapsed и работу из сэмплов не восстановить — берём из сессии, если файл на месте
+		if w.ElapsedSec == 0 || w.WorkKJ == 0 {
+			if activity, err := readActivity(ref.Path); err == nil {
+				s := activity.Sessions[0]
+				if w.ElapsedSec == 0 && s.TotalElapsedTime != math.MaxUint32 {
+					w.ElapsedSec = int(s.TotalElapsedTime / 1000)
+				}
+				if w.WorkKJ == 0 && s.TotalWork != math.MaxUint32 {
+					w.WorkKJ = float64(s.TotalWork) / 1e6
+				}
+			}
+			// файла нет — не страшно, elapsed/work останутся NULL
+		}
+		samples, err := store.RawSamples(db, ref.ID)
+		if err != nil {
+			return 0, err
+		}
+		applyMetrics(w, samples)
+		updates = append(updates, w)
+	}
+	if err := store.SetWorkoutMetricsBatch(db, updates); err != nil {
+		return 0, err
+	}
+	return len(updates), nil
 }

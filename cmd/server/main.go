@@ -54,6 +54,13 @@ func main() {
 		fmt.Printf("бэкфилл NP: %d тренировок, пропущено (нет мощности): %d\n", n, skipped)
 	}
 
+	// Метрики нагрузки (IF/TSS/VI/...) — после NP: считаются от актуального NP.
+	if n, err := importer.BackfillMetrics(db); err != nil {
+		log.Printf("бэкфилл метрик: %v", err)
+	} else if n > 0 {
+		fmt.Printf("бэкфилл метрик: %d тренировок\n", n)
+	}
+
 	syncMgr := web.NewSyncManager()
 	h, err := web.Handler(db, syncMgr, absDir, func() {
 		n, _, err := importer.ImportDir(db, absDir)

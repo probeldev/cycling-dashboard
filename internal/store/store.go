@@ -569,6 +569,53 @@ type NormPowerUpdate struct {
 	Version int
 }
 
+// WorkoutsNeedingMetrics — тренировки, у которых метрики нагрузки посчитаны
+// версией старше version.
+func WorkoutsNeedingMetrics(db *sql.DB, version int) ([]FileRef, error) {
+	rows, err := db.Query(`SELECT id, file_path FROM workouts
+	    WHERE metrics_version < ? ORDER BY id`, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileRef
+	for rows.Next() {
+		var r FileRef
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetWorkoutMetricsBatch записывает метрики нагрузки пачкой в одной транзакции.
+// Пользовательские поля (name, trainer_override) и сами данные тренировки
+// не трогает — только метрики.
+func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
+	if len(works) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, w := range works {
+		if _, err := tx.Exec(`UPDATE workouts SET
+		    if=?, tss=?, vi=?, avg_power_active=?, coasting_sec=?, no_power_sec=?,
+		    suspect_dropout_sec=?, elapsed_sec=?, pause_sec=?, work_kj=?, metrics_version=?
+		    WHERE id = ?`,
+			nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
+			nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
+			nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
+			nullableFloat(w.WorkKJ), w.MetricsVersion, w.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // SetNormPowers записывает NP и версии пачкой в одной транзакции: бэкфилл
 // не должен оставлять базу в промежуточном состоянии.
 func SetNormPowers(db *sql.DB, updates []NormPowerUpdate) error {
