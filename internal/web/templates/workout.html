@@ -21,6 +21,7 @@
     {{ if not .W.Trainer }}<div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>{{ end }}
     {{ if and (not .W.Trainer) .W.AscentM }}<div class="stat"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор</div></div>{{ end }}
     {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
+    {{ if .W.HasTemp }}<div class="stat"><div class="v">{{ trimFloat .W.AvgTemp }} °C</div><div class="k">температура</div></div>{{ end }}
   </div>
   {{ if .W.HasPower }}
   <h3>Мощность</h3>

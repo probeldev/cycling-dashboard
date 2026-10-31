@@ -55,6 +55,8 @@ type Workout struct {
 	ElapsedSec        int     // из session TotalElapsedTime
 	PauseSec          int     // elapsed_sec - duration_sec
 	WorkKJ            float64 // механическая работа, кДж
+	AvgTemp           float64 // средняя температура, °C
+	HasTemp           bool    // была ли температура в записях
 	MetricsVersion    int     // версия расчёта метрик, 0 — не считались
 }
 
@@ -171,6 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "total_descent", `ALTER TABLE workouts ADD COLUMN total_descent INTEGER`},
 		{"samples", "altitude_m", `ALTER TABLE samples ADD COLUMN altitude_m REAL`},
 		{"samples", "distance_m", `ALTER TABLE samples ADD COLUMN distance_m REAL`},
+		{"samples", "temperature", `ALTER TABLE samples ADD COLUMN temperature REAL`},
 		{"workouts", "ftp_w", `ALTER TABLE workouts ADD COLUMN ftp_w INTEGER`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
@@ -186,6 +189,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "pause_sec", `ALTER TABLE workouts ADD COLUMN pause_sec INTEGER`},
 		{"workouts", "work_kj", `ALTER TABLE workouts ADD COLUMN work_kj REAL`},
 		{"workouts", "metrics_version", `ALTER TABLE workouts ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "avg_temp", `ALTER TABLE workouts ADD COLUMN avg_temp REAL`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -289,8 +293,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	     avg_power, max_power, norm_power, np_version, avg_hr, max_hr, calories,
 	     total_ascent, total_descent, ftp_w, weight_kg,
 	     if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
-	     elapsed_sec, pause_sec, work_kj, metrics_version)
-	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	     elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version)
+	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
@@ -309,7 +313,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      avg_power_active=excluded.avg_power_active, coasting_sec=excluded.coasting_sec,
 	      no_power_sec=excluded.no_power_sec, suspect_dropout_sec=excluded.suspect_dropout_sec,
 	      elapsed_sec=excluded.elapsed_sec, pause_sec=excluded.pause_sec,
-	      work_kj=excluded.work_kj, metrics_version=excluded.metrics_version`,
+	      work_kj=excluded.work_kj, avg_temp=excluded.avg_temp,
+	      metrics_version=excluded.metrics_version`,
 		hash, path, mtime, w.StartTime.UTC().Format(time.RFC3339),
 		w.StartTime.Year(), int(w.StartTime.Month()), w.SubSport, gps, tr,
 		int64(w.Duration.Seconds()), dist,
@@ -322,7 +327,7 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 		nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 		nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
-		nullableFloat(w.WorkKJ), w.MetricsVersion)
+		nullableFloat(w.WorkKJ), nullableFloat(w.AvgTemp), w.MetricsVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -374,6 +379,8 @@ type Sample struct {
 	HasAlt    bool
 	DistanceM float64
 	HasDist   bool
+	TempC     float64
+	HasTemp   bool
 }
 
 func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
@@ -382,14 +389,14 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 		return err
 	}
 	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT INTO samples (workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`)
+	stmt, err := tx.Prepare(`INSERT INTO samples (workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m, temperature)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for _, s := range samples {
-		var lat, lon, alt, dist, pwr, cad any
+		var lat, lon, alt, dist, temp, pwr, cad any
 		if s.HasPos {
 			lat, lon = s.Lat, s.Lon
 		}
@@ -398,6 +405,9 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 		}
 		if s.HasDist {
 			dist = s.DistanceM
+		}
+		if s.HasTemp {
+			temp = s.TempC
 		}
 		// power/каденс: NULL только при дропауте датчика, честный 0 храним как 0
 		if s.HasPwr {
@@ -408,7 +418,7 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 		}
 		if _, err := stmt.Exec(workoutID, s.Offset, lat, lon,
 			pwr, cad, nullableInt(s.HR), nullableFloat(s.SpeedMs),
-			alt, dist); err != nil {
+			alt, dist, temp); err != nil {
 			return err
 		}
 	}
@@ -623,12 +633,12 @@ func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
 	for _, w := range works {
 		if _, err := tx.Exec(`UPDATE workouts SET
 		    if=?, tss=?, vi=?, avg_power_active=?, coasting_sec=?, no_power_sec=?,
-		    suspect_dropout_sec=?, elapsed_sec=?, pause_sec=?, work_kj=?, metrics_version=?
+		    suspect_dropout_sec=?, elapsed_sec=?, pause_sec=?, work_kj=?, avg_temp=?, metrics_version=?
 		    WHERE id = ?`,
 			nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
 			nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 			nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
-			nullableFloat(w.WorkKJ), w.MetricsVersion, w.ID); err != nil {
+			nullableFloat(w.WorkKJ), nullableFloat(w.AvgTemp), w.MetricsVersion, w.ID); err != nil {
 			return err
 		}
 	}
@@ -841,7 +851,7 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var spd, mspd sql.NullFloat64
 	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc, ftp sql.NullInt64
 	var wkg sql.NullFloat64
-	var ifv, tss, vi, work sql.NullFloat64
+	var ifv, tss, vi, work, temp sql.NullFloat64
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
@@ -849,11 +859,11 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
-	    elapsed_sec, pause_sec, work_kj, metrics_version
+	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
 		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg,
-		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &w.MetricsVersion)
+		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -901,6 +911,8 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	w.ElapsedSec = int(elapsed.Int64)
 	w.PauseSec = int(pause.Int64)
 	w.WorkKJ = work.Float64
+	w.AvgTemp = temp.Float64
+	w.HasTemp = temp.Valid
 	return &w, nil
 }
 
@@ -934,9 +946,9 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 	// бакета, и после длинной паузы внутри бакета она уезжала бы к её краю.
 	rows, err := db.Query(`SELECT CAST(ROUND(AVG(ts_offset)) AS INTEGER), AVG(lat), AVG(lon),
 	    CAST(AVG(power) AS INTEGER), CAST(AVG(cadence) AS INTEGER), CAST(AVG(hr) AS INTEGER),
-	    AVG(speed_ms), AVG(altitude_m), MAX(distance_m)
+	    AVG(speed_ms), AVG(altitude_m), MAX(distance_m), AVG(temperature)
 	    FROM (
-	      SELECT ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m,
+	      SELECT ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m, temperature,
 	             ROW_NUMBER() OVER (ORDER BY ts_offset, rowid) - 1 AS rn
 	      FROM samples WHERE workout_id = ?
 	    ) GROUP BY rn / ? ORDER BY 1`, id, bucket)
@@ -951,7 +963,7 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 // для внешнего анализа нужны честные медиана и пики, а не средние по бакетам.
 func RawSamples(db *sql.DB, id int64) ([]Sample, error) {
 	rows, err := db.Query(`SELECT ts_offset, lat, lon, power, cadence, hr,
-	    speed_ms, altitude_m, distance_m
+	    speed_ms, altitude_m, distance_m, temperature
 	    FROM samples WHERE workout_id = ? ORDER BY ts_offset, rowid`, id)
 	if err != nil {
 		return nil, err
@@ -966,9 +978,9 @@ func scanSamples(rows *sql.Rows) ([]Sample, error) {
 	out := []Sample{}
 	for rows.Next() {
 		var s Sample
-		var lat, lon, spd, alt, dist sql.NullFloat64
+		var lat, lon, spd, alt, dist, temp sql.NullFloat64
 		var p, c, h sql.NullInt64
-		if err := rows.Scan(&s.Offset, &lat, &lon, &p, &c, &h, &spd, &alt, &dist); err != nil {
+		if err := rows.Scan(&s.Offset, &lat, &lon, &p, &c, &h, &spd, &alt, &dist, &temp); err != nil {
 			return nil, err
 		}
 		s.Lat = lat.Float64
@@ -984,6 +996,8 @@ func scanSamples(rows *sql.Rows) ([]Sample, error) {
 		s.HasAlt = alt.Valid
 		s.DistanceM = dist.Float64
 		s.HasDist = dist.Valid
+		s.TempC = temp.Float64
+		s.HasTemp = temp.Valid
 		out = append(out, s)
 	}
 	return out, rows.Err()

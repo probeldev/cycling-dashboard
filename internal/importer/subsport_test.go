@@ -3,6 +3,7 @@ package importer
 import (
 	"database/sql"
 	"encoding/binary"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,6 +45,7 @@ func writeFIT(t *testing.T, path string, sub fit.SubSport, records int) {
 		r.Timestamp = start.Add(time.Duration(i) * time.Second)
 		r.Power = 200
 		r.Cadence = 85
+		r.Temperature = 17 // invalid по профилю — 0x7F
 		act.Records = append(act.Records, r)
 	}
 
@@ -336,5 +338,33 @@ func TestBackfillSubSportWrongDir(t *testing.T) {
 	}
 	if got := subsportChecked(t, db, id); got != 0 {
 		t.Errorf("subsport_checked = %d, хочу 0 (неверный -dir не должен помечать)", got)
+	}
+}
+
+// TestImportTemperature — температура из record попадает в сэмплы и в среднее
+// по тренировке.
+func TestImportTemperature(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "temp.fit"), fit.SubSportRoad, 60)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.HasTemp || math.Abs(w.AvgTemp-17) > 0.01 {
+		t.Errorf("avg_temp = %v (has=%v), хочу 17", w.AvgTemp, w.HasTemp)
+	}
+	samples, err := store.RawSamples(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 60 {
+		t.Fatalf("%d сэмплов, хочу 60", len(samples))
+	}
+	if !samples[0].HasTemp || samples[0].TempC != 17 {
+		t.Errorf("сэмпл без температуры: %+v", samples[0])
 	}
 }

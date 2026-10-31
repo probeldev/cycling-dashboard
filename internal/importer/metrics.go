@@ -19,14 +19,21 @@ type sampleMetrics struct {
 	NoPowerSec        int     // время без данных поверметра (power IS NULL)
 	SuspectDropoutSec int     // power == 0 при cadence > 0 — похоже на отвал датчика
 	WorkKJ            float64 // Σ(power·dt)/1000
+	AvgTemp           float64 // средняя по записям с температурой
+	HasTemp           bool
 }
 
 // sampleMetricsOf считает метрики по сэмплам. Время берём из ridedata.Timings —
 // того же источника, что NP и распределения, чтобы не появилось третьей логики.
 func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 	times := ridedata.Timings(samples)
-	var sumActive, secsActive, coast, noPower, suspect, workJ float64
+	var sumActive, secsActive, coast, noPower, suspect, workJ, tempSum float64
+	var tempN int
 	for i, s := range samples {
+		if s.HasTemp {
+			tempSum += s.TempC
+			tempN++
+		}
 		dt := times[i].Secs
 		switch {
 		case !s.HasPwr:
@@ -48,6 +55,10 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 		SuspectDropoutSec: int(math.Round(suspect)),
 		WorkKJ:            workJ / 1000,
 	}
+	if tempN > 0 {
+		sm.AvgTemp = tempSum / float64(tempN)
+		sm.HasTemp = true
+	}
 	if secsActive > 0 {
 		sm.AvgPowerActive = int(math.Round(sumActive / secsActive))
 	}
@@ -66,6 +77,10 @@ func applyMetrics(w *store.Workout, samples []store.Sample) {
 	w.SuspectDropoutSec = sm.SuspectDropoutSec
 	if w.WorkKJ <= 0 {
 		w.WorkKJ = sm.WorkKJ
+	}
+	if sm.HasTemp {
+		w.AvgTemp = math.Round(sm.AvgTemp*10) / 10
+		w.HasTemp = true
 	}
 	// паузы — разница между общим временем и временем в движении; отрицательную не пишем
 	if pause := w.ElapsedSec - int(w.Duration.Seconds()); w.ElapsedSec > 0 && pause > 0 {
