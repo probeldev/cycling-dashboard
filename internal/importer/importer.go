@@ -59,6 +59,7 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 		if kg, ok := store.ProfileAt(db, "weight", w.StartTime); ok {
 			w.WeightKg = kg
 		}
+		applyMetrics(w, samples)
 		id, err := store.InsertWorkout(db, w, hash, full, fi.ModTime().Unix())
 		if err != nil {
 			return err
@@ -229,6 +230,13 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 	}
 	w.AscentM = validUint16(s.TotalAscent)
 	w.DescentM = validUint16(s.TotalDescent)
+	if s.TotalElapsedTime != math.MaxUint32 {
+		w.ElapsedSec = int(s.TotalElapsedTime / 1000) // scale 1000
+	}
+	// FIT total_work: scale 1000 даёт джоули, в кДж — ещё /1000
+	if s.TotalWork != math.MaxUint32 {
+		w.WorkKJ = float64(s.TotalWork) / 1e6
+	}
 
 	w.HasPower = w.AvgPower > 0
 

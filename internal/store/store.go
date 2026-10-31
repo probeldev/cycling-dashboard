@@ -42,6 +42,20 @@ type Workout struct {
 	// версия алгоритма, которым посчитан NormPower (0 — старый, до окна 30 с);
 	// по ней бэкфилл понимает, что тренировку надо пересчитать
 	NPVersion int
+
+	// метрики тренировочной нагрузки; нули в БД — это NULL («неизвестно»),
+	// кроме MetricsVersion
+	IF                float64 // NP / ftp_w
+	TSS               float64 // duration_sec · NP · IF / (ftp_w · 3600) · 100
+	VI                float64 // NP / avg_power
+	AvgPowerActive    int     // средняя мощность только по power > 0
+	CoastingSec       int     // время с power == 0
+	NoPowerSec        int     // время без данных поверметра (power IS NULL)
+	SuspectDropoutSec int     // power == 0 при cadence > 0 — похоже на отвал датчика
+	ElapsedSec        int     // из session TotalElapsedTime
+	PauseSec          int     // elapsed_sec - duration_sec
+	WorkKJ            float64 // механическая работа, кДж
+	MetricsVersion    int     // версия расчёта метрик, 0 — не считались
 }
 
 type MonthAgg struct {
@@ -142,6 +156,17 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "if", `ALTER TABLE workouts ADD COLUMN if REAL`},
+		{"workouts", "tss", `ALTER TABLE workouts ADD COLUMN tss REAL`},
+		{"workouts", "vi", `ALTER TABLE workouts ADD COLUMN vi REAL`},
+		{"workouts", "avg_power_active", `ALTER TABLE workouts ADD COLUMN avg_power_active INTEGER`},
+		{"workouts", "coasting_sec", `ALTER TABLE workouts ADD COLUMN coasting_sec INTEGER`},
+		{"workouts", "no_power_sec", `ALTER TABLE workouts ADD COLUMN no_power_sec INTEGER`},
+		{"workouts", "suspect_dropout_sec", `ALTER TABLE workouts ADD COLUMN suspect_dropout_sec INTEGER`},
+		{"workouts", "elapsed_sec", `ALTER TABLE workouts ADD COLUMN elapsed_sec INTEGER`},
+		{"workouts", "pause_sec", `ALTER TABLE workouts ADD COLUMN pause_sec INTEGER`},
+		{"workouts", "work_kj", `ALTER TABLE workouts ADD COLUMN work_kj REAL`},
+		{"workouts", "metrics_version", `ALTER TABLE workouts ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -243,8 +268,10 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, subsport_checked, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
 	     avg_power, max_power, norm_power, np_version, avg_hr, max_hr, calories,
-	     total_ascent, total_descent, ftp_w, weight_kg)
-	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	     total_ascent, total_descent, ftp_w, weight_kg,
+	     if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
+	     elapsed_sec, pause_sec, work_kj, metrics_version)
+	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
@@ -258,7 +285,12 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
 	      calories=excluded.calories,
 	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent,
-	      ftp_w=excluded.ftp_w, weight_kg=excluded.weight_kg`,
+	      ftp_w=excluded.ftp_w, weight_kg=excluded.weight_kg,
+	      if=excluded.if, tss=excluded.tss, vi=excluded.vi,
+	      avg_power_active=excluded.avg_power_active, coasting_sec=excluded.coasting_sec,
+	      no_power_sec=excluded.no_power_sec, suspect_dropout_sec=excluded.suspect_dropout_sec,
+	      elapsed_sec=excluded.elapsed_sec, pause_sec=excluded.pause_sec,
+	      work_kj=excluded.work_kj, metrics_version=excluded.metrics_version`,
 		hash, path, mtime, w.StartTime.UTC().Format(time.RFC3339),
 		w.StartTime.Year(), int(w.StartTime.Month()), w.SubSport, gps, tr,
 		int64(w.Duration.Seconds()), dist,
@@ -267,7 +299,11 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower), w.NPVersion,
 		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories),
 		nullableInt(w.AscentM), nullableInt(w.DescentM),
-		nullableInt(w.FTP), nullableFloat(w.WeightKg))
+		nullableInt(w.FTP), nullableFloat(w.WeightKg),
+		nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
+		nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
+		nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
+		nullableFloat(w.WorkKJ), w.MetricsVersion)
 	if err != nil {
 		return 0, err
 	}
@@ -714,14 +750,19 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var spd, mspd sql.NullFloat64
 	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc, ftp sql.NullInt64
 	var wkg sql.NullFloat64
+	var ifv, tss, vi, work sql.NullFloat64
+	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
-	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg
+	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg,
+	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
+	    elapsed_sec, pause_sec, work_kj, metrics_version
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
-		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg)
+		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg,
+		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &w.MetricsVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -759,6 +800,16 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	w.HasPower = ap.Valid
 	w.FTP = int(ftp.Int64)
 	w.WeightKg = wkg.Float64
+	w.IF = ifv.Float64
+	w.TSS = tss.Float64
+	w.VI = vi.Float64
+	w.AvgPowerActive = int(apa.Int64)
+	w.CoastingSec = int(coast.Int64)
+	w.NoPowerSec = int(nop.Int64)
+	w.SuspectDropoutSec = int(susp.Int64)
+	w.ElapsedSec = int(elapsed.Int64)
+	w.PauseSec = int(pause.Int64)
+	w.WorkKJ = work.Float64
 	return &w, nil
 }
 
