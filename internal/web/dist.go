@@ -1,7 +1,9 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 
 	"cycling-dashboard/internal/store"
 )
@@ -12,10 +14,50 @@ type bucket struct {
 	Secs  int    `json:"secs"`
 }
 
+// distEntry — бакет распределения. Проценты заполняются только для мощности:
+// Pct — от времени педалирования (прежняя база, существующий UI не ломаем),
+// PctTotal — от общего времени вместе с накатом.
 type distEntry struct {
-	Label string `json:"label"`
-	Secs  int    `json:"secs"`
+	Label    string  `json:"label"`
+	Secs     int     `json:"secs"`
+	Pct      float64 `json:"pct,omitempty"`
+	PctTotal float64 `json:"pctTotal,omitempty"`
 }
+
+// powerBase — две базы времени распределения мощности. Раньше нулевая мощность
+// молча выбрасывалась и зоны считались только «по времени педалирования»,
+// из-за чего было непонятно, откуда база.
+type powerBase struct {
+	CoastSecs int `json:"coastSecs"` // power == 0 при живом поверметре — накат
+	PedalSecs int `json:"pedalSecs"` // power > 0 — педалирование
+	TotalSecs int `json:"totalSecs"` // pedal + coast
+}
+
+// dist — результат распределений. В JSON раскладывается плоско
+// ({"power": [...], "cadence": [...], ..., "powerBase": {...}}), чтобы
+// dist.power остался массивом и контракт API не сломался.
+type dist struct {
+	Buckets   map[string][]distEntry
+	PowerBase powerBase
+}
+
+func (d dist) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, len(d.Buckets)+1)
+	for k, v := range d.Buckets {
+		m[k] = v
+	}
+	if _, ok := d.Buckets["power"]; ok {
+		m["powerBase"] = d.PowerBase
+	}
+	return json.Marshal(m)
+}
+
+// coastLabel — бакет наката: нулевая мощность при работающем поверметре.
+const coastLabel = "0 Вт · накат"
+
+// pauseGapSec — разрыв между сэмплами больше этого означает авто-паузу:
+// велосипед уже стоит. В накат такое время не пишем — стоянка не равна качению.
+const pauseGapSec = 5
 
 // ranges — типичные диапазоны для шоссейника; последний бакет «и выше».
 var distDefs = map[string][]bucket{
@@ -84,6 +126,18 @@ func zoneBuckets(ftp int) []bucket {
 	return out
 }
 
+// powerBuckets — диапазоны мощности (зоны Коггана при заданном FTP, иначе
+// фиксированные) с добавленным первым бакетом «0 Вт · накат».
+func powerBuckets(ftp int) []bucket {
+	base := distDefs["power"]
+	if ftp > 0 {
+		base = zoneBuckets(ftp)
+	}
+	out := make([]bucket, 0, len(base)+1)
+	out = append(out, bucket{Label: coastLabel, From: 0})
+	return append(out, base...)
+}
+
 func value(s store.Sample, kind string) float64 {
 	switch kind {
 	case "cadence":
@@ -98,37 +152,66 @@ func value(s store.Sample, kind string) float64 {
 	return 0
 }
 
-// distributions считает время в каждом диапазоне. Время сэмпла — интервал
-// до следующего сэмпла, поэтому паузы не размазываются по бакетам.
-// Если задан FTP (штамп тренировки), мощность режется на зоны Коггана,
-// иначе — по фиксированным диапазонам.
-func distributions(samples []store.Sample, ftp int) map[string][]distEntry {
-	out := map[string][]distEntry{}
+// bucketIndex — номер бакета для сэмпла, -1 если значение не учитывается.
+// Для мощности нуль — это накат (первый бакет), а отсутствие данных
+// (дропаут поверметра, HasPwr=false) не учитывается вовсе: это разные вещи.
+// Для остальных метрик нули по-прежнему исключаются.
+func bucketIndex(kind string, buckets []bucket, s store.Sample) int {
+	v := value(s, kind)
+	if kind == "power" {
+		if !s.HasPwr {
+			return -1
+		}
+		if v == 0 {
+			return 0 // накат
+		}
+	} else if v <= 0 {
+		return -1
+	}
+	for j := len(buckets) - 1; j >= 0; j-- {
+		if v >= buckets[j].From {
+			return j
+		}
+	}
+	return -1
+}
+
+// sampleSecs — время сэмпла: интервал до следующего сэмпла, поэтому паузы
+// не размазываются по бакетам. Для бакета наката разрыв-автопауза даёт одну
+// секунду: после остановки секунды стоянки накатом считать нельзя.
+func sampleSecs(samples []store.Sample, i int, coast bool) int {
+	dt := int64(1)
+	if i+1 < len(samples) {
+		dt = samples[i+1].Offset - samples[i].Offset
+	}
+	if dt <= 0 || dt > 60 {
+		dt = 1
+	}
+	if coast && dt > pauseGapSec {
+		dt = 1
+	}
+	return int(dt)
+}
+
+// distributions считает время в каждом диапазоне. Если задан FTP (штамп
+// тренировки), мощность режется на зоны Коггана, иначе — по фиксированным
+// диапазонам. Нулевая мощность попадает в отдельный бакет наката, плюс
+// считаются обе базы времени — педалирование и педалирование вместе с накатом.
+func distributions(samples []store.Sample, ftp int) dist {
+	out := dist{Buckets: map[string][]distEntry{}}
 	for kind, buckets := range distDefs {
-		if kind == "power" && ftp > 0 {
-			buckets = zoneBuckets(ftp)
+		if kind == "power" {
+			buckets = powerBuckets(ftp)
 		}
 		secs := make([]int, len(buckets))
 		var hasData bool
 		for i, s := range samples {
-			v := value(s, kind)
-			if v <= 0 {
+			j := bucketIndex(kind, buckets, s)
+			if j < 0 {
 				continue
 			}
 			hasData = true
-			dt := int64(1)
-			if i+1 < len(samples) {
-				dt = samples[i+1].Offset - s.Offset
-			}
-			if dt <= 0 || dt > 60 {
-				dt = 1
-			}
-			for j := len(buckets) - 1; j >= 0; j-- {
-				if v >= buckets[j].From {
-					secs[j] += int(dt)
-					break
-				}
-			}
+			secs[j] += sampleSecs(samples, i, kind == "power" && j == 0)
 		}
 		if !hasData {
 			continue
@@ -137,7 +220,42 @@ func distributions(samples []store.Sample, ftp int) map[string][]distEntry {
 		for j, b := range buckets {
 			entries[j] = distEntry{Label: b.Label, Secs: secs[j]}
 		}
-		out[kind] = entries
+		if kind == "power" {
+			out.PowerBase = powerBase{
+				CoastSecs: secs[0],
+				PedalSecs: sum(secs) - secs[0],
+			}
+			out.PowerBase.TotalSecs = out.PowerBase.CoastSecs + out.PowerBase.PedalSecs
+			fillPercents(entries, out.PowerBase)
+		}
+		out.Buckets[kind] = entries
 	}
 	return out
+}
+
+// fillPercents проставляет доли бакетов мощности: Pct — от времени
+// педалирования (бакет наката не педалирование, у него Pct=0),
+// PctTotal — от общего времени. Сумма PctTotal по всем бакетам ≈ 100.
+func fillPercents(entries []distEntry, base powerBase) {
+	pedal, total := float64(base.PedalSecs), float64(base.TotalSecs)
+	for j := range entries {
+		if j > 0 && pedal > 0 {
+			entries[j].Pct = round1(float64(entries[j].Secs) / pedal * 100)
+		}
+		if total > 0 {
+			entries[j].PctTotal = round1(float64(entries[j].Secs) / total * 100)
+		}
+	}
+}
+
+func sum(v []int) int {
+	total := 0
+	for _, x := range v {
+		total += x
+	}
+	return total
+}
+
+func round1(v float64) float64 {
+	return math.Round(v*10) / 10
 }

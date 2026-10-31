@@ -68,7 +68,7 @@
 <div class="dist-grid" id="distGrid">
   <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
   {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
-  <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas></div>
+  <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
   <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
 </div>
 
@@ -193,6 +193,13 @@ document.querySelectorAll("#distGrid .dist").forEach(el => {
       scales: { x: { title: { display: true, text: "минут" } } },
     },
   });
+  // накат — отдельный бакет: подписываем обе базы времени
+  if (kind === "power" && dist.powerBase) {
+    const b = dist.powerBase, mins = s => Math.round(s / 60);
+    const note = el.querySelector(".dist-note");
+    note.hidden = false;
+    note.textContent = `${mins(b.pedalSecs)} мин педалирования + ${mins(b.coastSecs)} мин наката = ${mins(b.totalSecs)} мин`;
+  }
 });
 if (!Object.keys(dist).length) document.getElementById("distGrid").style.display = "none";
 
