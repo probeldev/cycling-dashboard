@@ -36,6 +36,14 @@ func main() {
 	}
 	fmt.Printf("импорт: %d новых, %d без изменений\n", imported, skipped)
 
+	// subsport раньше не записывался — дочитываем из FIT для старых тренировок.
+	// Идемпотентно: когда заполнять нечего, файлы не перечитываются.
+	if n, err := importer.BackfillSubSport(db); err != nil {
+		log.Printf("бэкфилл subsport: %v", err)
+	} else if n > 0 {
+		fmt.Printf("бэкфилл subsport: %d тренировок\n", n)
+	}
+
 	syncMgr := web.NewSyncManager()
 	h, err := web.Handler(db, syncMgr, absDir, func() {
 		n, _, err := importer.ImportDir(db, absDir)

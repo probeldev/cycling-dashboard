@@ -17,6 +17,7 @@ type Workout struct {
 	HasGPS     bool
 	Trainer    bool
 	Override   *bool
+	SubSport   string // подсорт из FIT: generic, indoor_cycling, road, mountain…
 
 	AvgSpeedKmh float64
 	MaxSpeedKmh float64
@@ -196,15 +197,15 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		dist = sql.NullInt64{Int64: int64(w.DistanceKm * 1000), Valid: true}
 	}
 	_, err := db.Exec(`INSERT INTO workouts
-	    (file_hash, file_path, file_mtime, start_time, year, month, has_gps, trainer,
+	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
 	     avg_power, max_power, norm_power, avg_hr, max_hr, calories, total_ascent, total_descent,
 	     ftp_w, weight_kg)
-	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
-	      has_gps=excluded.has_gps,
+	      subsport=excluded.subsport, has_gps=excluded.has_gps,
 	      trainer=CASE WHEN trainer_override IS NOT NULL THEN trainer ELSE excluded.trainer END,
 	      duration_sec=excluded.duration_sec, distance_m=excluded.distance_m,
 	      avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
@@ -215,7 +216,7 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent,
 	      ftp_w=excluded.ftp_w, weight_kg=excluded.weight_kg`,
 		hash, path, mtime, w.StartTime.UTC().Format(time.RFC3339),
-		w.StartTime.Year(), int(w.StartTime.Month()), gps, tr,
+		w.StartTime.Year(), int(w.StartTime.Month()), w.SubSport, gps, tr,
 		int64(w.Duration.Seconds()), dist,
 		nullableFloat(w.AvgSpeedKmh/3.6), nullableFloat(w.MaxSpeedKmh/3.6),
 		nullableInt(w.AvgCadence), nullableInt(w.MaxCadence),
@@ -406,6 +407,39 @@ func SetName(db *sql.DB, id int64, name string) error {
 	return err
 }
 
+// FileRef — ссылка тренировки на исходный FIT-файл.
+type FileRef struct {
+	ID   int64
+	Path string
+}
+
+// MissingSubSport возвращает тренировки с пустым subsport: колонка была в схеме
+// с самого начала, но не заполнялась, поэтому старые записи нужно дочитать из
+// FIT-файлов. После бэкфилла запрос ничего не находит.
+func MissingSubSport(db *sql.DB) ([]FileRef, error) {
+	rows, err := db.Query(`SELECT id, file_path FROM workouts WHERE subsport = '' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileRef
+	for rows.Next() {
+		var r FileRef
+		if err := rows.Scan(&r.ID, &r.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// SetSubSport проставляет subsport, не трогая остальные поля тренировки —
+// пользовательские name и trainer_override должны уцелеть.
+func SetSubSport(db *sql.DB, id int64, subsport string) error {
+	_, err := db.Exec(`UPDATE workouts SET subsport = ? WHERE id = ?`, subsport, id)
+	return err
+}
+
 type WorkoutRow struct {
 	ID          int64
 	StartTime   time.Time
@@ -569,11 +603,11 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var wkg sql.NullFloat64
 	var tr, gps int
 	var ov sql.NullInt64
-	err := db.QueryRow(`SELECT id, start_time, name, duration_sec, distance_m, has_gps, trainer,
+	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
 	    norm_power, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg
 	    FROM workouts WHERE id = ?`, id).Scan(
-		&w.ID, &start, &w.Name, &durSec, &dist, &gps, &tr, &ov,
+		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
 		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg)
 	if err != nil {
 		return nil, err

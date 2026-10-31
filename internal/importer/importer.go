@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/tormoder/fit"
 
@@ -69,6 +70,35 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 	return imported, skipped, err
 }
 
+// BackfillSubSport дочитывает subsport из FIT-файлов тем тренировкам, у которых
+// он пустой: колонка была в схеме с самого начала, но не заполнялась.
+// Идемпотентен — повторный запуск не находит таких строк и файлы не перечитывает.
+// Пользовательские поля (name, trainer_override) не трогает, ре-импорт не нужен.
+func BackfillSubSport(db *sql.DB) (int, error) {
+	refs, err := store.MissingSubSport(db)
+	if err != nil {
+		return 0, err
+	}
+	var filled int
+	for _, ref := range refs {
+		activity, err := readActivity(ref.Path)
+		if err != nil {
+			// файла могло не остаться на диске — старт сервера из-за этого не падаем
+			fmt.Fprintf(os.Stderr, "бэкфилл subsport %s: %v\n", ref.Path, err)
+			continue
+		}
+		sub := subSportName(activity.Sessions[0].SubSport)
+		if sub == "" {
+			continue // в файле subsport не записан — оставляем пустым
+		}
+		if err := store.SetSubSport(db, ref.ID, sub); err != nil {
+			return filled, err
+		}
+		filled++
+	}
+	return filled, nil
+}
+
 func isFIT(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return ext == ".fit"
@@ -87,23 +117,33 @@ func fileHash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:32], nil
 }
 
-func ParseFile(path string) (*store.Workout, []store.Sample, error) {
+// readActivity — активность из FIT-файла. Отдельной функцией, чтобы subsport
+// можно было дочитать без полного разбора записей.
+func readActivity(path string) (*fit.ActivityFile, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer f.Close()
 
 	fitf, err := fit.Decode(f)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	activity, err := fitf.Activity()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if len(activity.Sessions) == 0 {
-		return nil, nil, fmt.Errorf("no sessions")
+		return nil, fmt.Errorf("no sessions")
+	}
+	return activity, nil
+}
+
+func ParseFile(path string) (*store.Workout, []store.Sample, error) {
+	activity, err := readActivity(path)
+	if err != nil {
+		return nil, nil, err
 	}
 	s := activity.Sessions[0]
 
@@ -111,6 +151,7 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 		StartTime:  s.StartTime,
 		Duration:   time.Duration(s.TotalTimerTime/1000) * time.Second, // scale 1000
 		HasGPS:     false,
+		SubSport:   subSportName(s.SubSport),
 		AvgCadence: validUint8(s.AvgCadence),
 		MaxCadence: validUint8(s.MaxCadence),
 		AvgPower:   validUint16(s.AvgPower),
@@ -363,6 +404,30 @@ func validUint8(v uint8) int {
 		return 0
 	}
 	return int(v)
+}
+
+// subSportName — строковый subsport как в FIT-профиле: IndoorCycling → indoor_cycling.
+// Для invalid и неизвестных устройству значений возвращает пустую строку.
+func subSportName(s fit.SubSport) string {
+	if s == fit.SubSportInvalid {
+		return ""
+	}
+	name := s.String()
+	if strings.HasPrefix(name, "SubSport(") { // stringer такое значение не знает
+		return ""
+	}
+	var b strings.Builder
+	for i, r := range name {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func validUint16(v uint16) int {
