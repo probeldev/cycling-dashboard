@@ -143,3 +143,41 @@ func TestFitCPThreePoints(t *testing.T) {
 		t.Errorf("три точки: %+v", res)
 	}
 }
+
+// TestFitCPRawR2Threshold — порог считается по неокруглённому R²: 0.9496
+// отображается как 0.950, но достоверность уже низкая.
+func TestFitCPRawR2Threshold(t *testing.T) {
+	res := fitCP([]store.PowerRecord{
+		{WindowSec: 120, Watts: 366.7}, {WindowSec: 300, Watts: 236.7},
+		{WindowSec: 600, Watts: 233.3}, {WindowSec: 900, Watts: 195.8},
+		{WindowSec: 1200, Watts: 216.7},
+	})
+	if res.R2 == nil || *res.R2 != 0.95 {
+		t.Fatalf("R² = %v, хочу 0.950 после округления", res.R2)
+	}
+	if !res.LowConfidence {
+		t.Error("порог должен сравниваться по неокруглённому R²")
+	}
+}
+
+// TestFitCPNegativeIntercept — CP ≤ 0: модель не годится, числа не отдаём.
+func TestFitCPNegativeIntercept(t *testing.T) {
+	res := fitCP([]store.PowerRecord{
+		{WindowSec: 120, Watts: 50}, {WindowSec: 300, Watts: 3},
+		{WindowSec: 600, Watts: 5}, {WindowSec: 900, Watts: 5},
+		{WindowSec: 1200, Watts: 3},
+	})
+	if res.CP != nil || res.WPrime != nil || !res.LowConfidence {
+		t.Errorf("отрицательный CP: %+v", res)
+	}
+}
+
+// TestFitCPDenZero — все окна одинаковые (1/t совпадает): фит невозможен.
+func TestFitCPDenZero(t *testing.T) {
+	res := fitCP([]store.PowerRecord{
+		{WindowSec: 120, Watts: 200}, {WindowSec: 120, Watts: 210}, {WindowSec: 120, Watts: 220},
+	})
+	if res.CP != nil || !res.LowConfidence {
+		t.Errorf("den=0: %+v", res)
+	}
+}

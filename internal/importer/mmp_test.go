@@ -88,11 +88,11 @@ func TestMMP418Golden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// накат входит в окно временем: длинные окна ниже, чем «по педалированию»
+	// накат входит временем, дропауты — fill-forward (как NP)
 	want := map[int]float64{
 		1: 436, 2: 395, 5: 376.6, 10: 367.6, 20: 323.6, 30: 251.4,
-		60: 218.1, 120: 185.7, 300: 169.9, 600: 160.3, 900: 156.9,
-		1200: 153.9, 1800: 121.7,
+		60: 218.1, 120: 185.7, 300: 169.4, 600: 160.3, 900: 156.3,
+		1200: 153.7, 1800: 122.0,
 	}
 	m := mmpOf(samples)
 	if len(m) != len(want) {
@@ -174,22 +174,101 @@ func TestMMPCoasting(t *testing.T) {
 	}
 }
 
-// TestMMPDropoutSkipped — дропаут датчика пропускается без разрыва сегмента
-// (см. комментарий у mmpOf): разрыв на каждом дропауте убил бы длинные окна.
-func TestMMPDropoutSkipped(t *testing.T) {
+// TestMMPFillForward — дропаут заполняется последним валидным значением:
+// 10 с 200 + 10 с дропаута + 10 с 200 → MMP 30 = 200.
+func TestMMPFillForward(t *testing.T) {
 	var samples []store.Sample
-	for i := 0; i < 60; i++ {
-		samples = append(samples, store.Sample{Offset: int64(i), Power: 300, HasPwr: true})
+	for i := 0; i < 10; i++ {
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 200, HasPwr: true})
 	}
 	for i := 0; i < 10; i++ {
-		samples = append(samples, store.Sample{Offset: int64(60 + i)}) // дропаут
+		samples = append(samples, store.Sample{Offset: int64(10 + i)}) // дропаут
 	}
-	for i := 0; i < 60; i++ {
-		samples = append(samples, store.Sample{Offset: int64(70 + i), Power: 300, HasPwr: true})
+	for i := 0; i < 10; i++ {
+		samples = append(samples, store.Sample{Offset: int64(20 + i), Power: 200, HasPwr: true})
 	}
 	m := mmpOf(samples)
-	if got := m[120]; math.Abs(got-300) > 1e-9 {
-		t.Errorf("MMP 120 = %v, хочу 300 (дропаут не рвёт сегмент и не добавляет время)", got)
+	if got := m[30]; math.Abs(got-200) > 1e-9 {
+		t.Errorf("MMP 30 = %v, хочу 200 (дропаут заполняется последним значением)", got)
+	}
+}
+
+// TestMMPMonotonic — MMP не растёт с длиной окна: MMP(w) >= MMP(2w).
+func TestMMPMonotonic(t *testing.T) {
+	check := func(t *testing.T, m map[int]float64) {
+		t.Helper()
+		for _, w := range mmpWindows {
+			long := w * 2
+			if v, ok := m[long]; ok {
+				if m[w]+1e-9 < v {
+					t.Errorf("MMP(%d)=%v < MMP(%d)=%v", w, m[w], long, v)
+				}
+			}
+		}
+	}
+
+	// синтетика: 308-подобный рамп с провалами 20% (заполняются fill-forward)
+	var ramp []store.Sample
+	for i := 0; i < 3000; i++ {
+		s := store.Sample{Offset: int64(i), Power: 100 + i/10}
+		if i%50 < 40 {
+			s.HasPwr = true
+		}
+		ramp = append(ramp, s)
+	}
+	rm := mmpOf(ramp)
+	check(t, rm)
+	// эталон синтетического рампа (посчитан независимым скриптом)
+	for w, want := range map[int]float64{
+		1: 398, 5: 398, 30: 397.7, 60: 396.2, 120: 393.3, 300: 384.3,
+		600: 369.3, 900: 354.3, 1200: 339.3, 1800: 309.3,
+	} {
+		if rm[w] != want {
+			t.Errorf("рамп: MMP %d = %v, хочу %v", w, rm[w], want)
+		}
+	}
+
+	// реальный 308, если файл есть
+	if _, err := statFile("../../tracks/20261029204857.fit"); err == nil {
+		_, samples, err := ParseFile("../../tracks/20261029204857.fit")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := mmpOf(samples)
+		check(t, m)
+		if m[1200] != 98.3 || m[1800] != 97.2 {
+			t.Errorf("308: MMP 1200=%v 1800=%v, хочу 98.3 и 97.2", m[1200], m[1800])
+		}
+	}
+}
+
+// TestMMPFractionalWindow — запись, пересекающая правую границу, входит частично.
+func TestMMPFractionalWindow(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 200, HasPwr: true},  // 10 с
+		{Offset: 10, Power: 100, HasPwr: true}, // 12 с
+		{Offset: 22, Power: 50, HasPwr: true},  // 1 с
+	}
+	// окно 20 с: 10 с по 200 + 10 с по 100 (вторая запись входит частично)
+	if got := mmpOf(samples)[20]; math.Abs(got-150) > 0.05 {
+		t.Errorf("MMP 20 = %v, хочу 150 (частичная запись на границе)", got)
+	}
+}
+
+// TestMMPLongRecordInsideWindow — длинная запись внутри окна не раздувает
+// короткое окно: 10 с 300 Вт + 100 с нуля → окно 30 с = 100 Вт.
+func TestMMPLongRecordInsideWindow(t *testing.T) {
+	samples := []store.Sample{{Offset: 0, Power: 300, HasPwr: true}} // запись 10 с
+	for i := 0; i < 100; i++ {                                       // дальше 100 с нуля
+		samples = append(samples, store.Sample{Offset: int64(10 + i), Power: 0, HasPwr: true})
+	}
+	m := mmpOf(samples)
+	if got := m[30]; math.Abs(got-100) > 1e-9 {
+		t.Errorf("MMP 30 = %v, хочу 100 (10 с по 300 + 20 с нуля)", got)
+	}
+	// окно 5 с не может начинаться с 10-секундной записи
+	if got := m[5]; math.Abs(got-0) > 1e-9 {
+		t.Errorf("MMP 5 = %v, хочу 0 (10-секундная запись не представляет 5 с)", got)
 	}
 }
 
@@ -277,10 +356,17 @@ func TestImportAtomicOnSampleError(t *testing.T) {
 	    BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
 		t.Fatal(err)
 	}
+	zonesBefore, err := store.WorkoutZones(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := ImportDir(db, dir, true); err == nil {
 		t.Fatal("жду ошибку от триггера")
 	}
-	// состояние прежнее: рекорды на месте, версия актуальна
+	// состояние прежнее: зоны и рекорды на месте, версия актуальна
+	if zonesAfter, err := store.WorkoutZones(db, w.ID); err != nil || zonesAfter != zonesBefore {
+		t.Errorf("зоны изменились после отката: %v -> %v, %v", zonesBefore, zonesAfter, err)
+	}
 	var version int
 	if err := db.QueryRow(`SELECT mmp_version FROM workouts WHERE id = ?`, w.ID).Scan(&version); err != nil {
 		t.Fatal(err)
@@ -291,5 +377,45 @@ func TestImportAtomicOnSampleError(t *testing.T) {
 	recs, err := store.WorkoutMMP(db, w.ID)
 	if err != nil || len(recs) == 0 {
 		t.Errorf("после отката рекорды пропали: %v, %v", recs, err)
+	}
+}
+
+// TestReimportReplacesMMP — полный ImportDir(force) заменяет записи без дублей.
+func TestReimportReplacesMMP(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "reimport.fit"), fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.WorkoutMMP(db, w.ID)
+	if err != nil || len(before) == 0 {
+		t.Fatalf("исходные записи: %v, %v", before, err)
+	}
+	if _, _, err := ImportDir(db, dir, true); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.WorkoutMMP(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("окон %d после реимпорта, было %d", len(after), len(before))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("запись %d: %v -> %v", i, before[i], after[i])
+		}
+	}
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM power_records WHERE workout_id = ?`, w.ID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != len(before) {
+		t.Errorf("строк %d после реимпорта, было %d (дубли?)", rows, len(before))
 	}
 }

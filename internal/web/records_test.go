@@ -163,3 +163,60 @@ func TestWorkoutPageMMP(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordsAPIPrevious — previous заполняется из реального предыдущего периода.
+func TestRecordsAPIPrevious(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i, w := range []struct {
+		start time.Time
+		hash  string
+		watts float64
+	}{
+		{time.Now(), "hash-prev-cur", 300},
+		{time.Now().AddDate(0, 0, -45), "hash-prev-old", 200},
+	} {
+		id, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: w.start, Duration: time.Hour, HasPower: true, AvgPower: 200,
+		}, w.hash, filepath.Join(t.TempDir(), "x.fit"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetWorkoutMMP(db, id, []store.PowerRecord{{WindowSec: 5, Watts: w.watts}}, 1); err != nil {
+			t.Fatal(err)
+		}
+		_ = i
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(period string) []store.Record {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/records?period="+period, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("period=%s: код %d", period, rec.Code)
+		}
+		var out []store.Record
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	cur := get("30d")
+	if len(cur) != 1 || cur[0].Watts != 300 {
+		t.Fatalf("30d: %+v", cur)
+	}
+	if cur[0].Previous == nil || cur[0].Previous.Watts != 200 {
+		t.Errorf("30d: previous = %+v, хочу 200", cur[0].Previous)
+	}
+	// в предыдущем 90-дневном окне тренировок нет — previous пуст
+	if got := get("90d"); len(got) != 1 || got[0].Previous != nil {
+		t.Errorf("90d: %+v", got)
+	}
+}

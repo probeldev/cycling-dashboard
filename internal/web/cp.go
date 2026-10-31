@@ -57,7 +57,10 @@ func fitCP(records []store.PowerRecord) cpResult {
 		sxy += xs[i] * ys[i]
 	}
 	den := n*sxx - sx*sx
-	if den == 0 {
+	// вырожденный фит (все окна одинаковые): den отличается от нуля только
+	// ошибкой округления — сравниваем относительно масштаба
+	scale := math.Max(math.Abs(n*sxx), math.Abs(sx*sx))
+	if scale == 0 || math.Abs(den) <= 1e-12*scale {
 		res.LowConfidence = true
 		return res
 	}
@@ -88,7 +91,7 @@ func fitCP(records []store.PowerRecord) cpResult {
 	res.CP = &cp
 	res.WPrime = &wp
 	res.R2 = &r2
-	res.LowConfidence = r2raw < 0.9
+	res.LowConfidence = r2raw < 0.95
 	return res
 }
 
@@ -99,6 +102,8 @@ func cpView(res cpResult) map[string]any {
 		"Points": res.Points,
 		"Low":    res.LowConfidence,
 		"FTP":    nil,
+		"R2":     nil,
+		"Reason": "",
 	}
 	if res.CP != nil {
 		v["CP"] = *res.CP
@@ -108,6 +113,17 @@ func cpView(res cpResult) map[string]any {
 	}
 	if res.FTPEst != nil {
 		v["FTP"] = *res.FTPEst
+	}
+	if res.R2 != nil {
+		v["R2"] = *res.R2
+	}
+	if res.CP == nil {
+		// различаем «мало точек» и «кривая не описывается моделью»
+		if res.Points < 3 {
+			v["Reason"] = "few"
+		} else {
+			v["Reason"] = "model"
+		}
 	}
 	return v
 }
