@@ -79,6 +79,9 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 		if err := store.SetWorkoutZones(db, id, zonesOf(samples, w.FTP), zonesVersion); err != nil {
 			return err
 		}
+		if err := store.SetWorkoutMMP(db, id, mmpRecords(samples), mmpVersion); err != nil {
+			return err
+		}
 		imported++
 		return nil
 	})

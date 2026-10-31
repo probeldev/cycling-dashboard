@@ -68,6 +68,13 @@ func main() {
 		fmt.Printf("бэкфилл зон: %d тренировок\n", n)
 	}
 
+	// MMP (power-duration) для старых тренировок.
+	if n, err := importer.BackfillMMP(db); err != nil {
+		log.Printf("бэкфилл MMP: %v", err)
+	} else if n > 0 {
+		fmt.Printf("бэкфилл MMP: %d тренировок\n", n)
+	}
+
 	syncMgr := web.NewSyncManager()
 	h, err := web.Handler(db, syncMgr, absDir, func() {
 		n, _, err := importer.ImportDir(db, absDir)

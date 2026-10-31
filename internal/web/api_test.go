@@ -155,3 +155,45 @@ func TestWorkoutsListJSON(t *testing.T) {
 		t.Errorf("в объекте нет поля Override")
 	}
 }
+
+// TestWorkoutMMPAPI — /mmp отдаёт только существующие окна, неизвестный id — 404.
+func TestWorkoutMMPAPI(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour,
+	}, "hash-mmp-api", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetWorkoutMMP(db, id, []store.PowerRecord{
+		{WindowSec: 5, Watts: 300}, {WindowSec: 60, Watts: 200},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/workout/%d/mmp", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	var got []store.PowerRecord
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].WindowSec != 5 || got[0].Watts != 300 || got[1].WindowSec != 60 {
+		t.Errorf("MMP = %+v", got)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workout/99999/mmp", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("неизвестный id: код %d, хочу 404", rec.Code)
+	}
+}

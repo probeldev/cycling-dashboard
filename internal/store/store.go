@@ -212,6 +212,13 @@ CREATE TABLE IF NOT EXISTS samples (
 );
 CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 
+CREATE TABLE IF NOT EXISTS power_records (
+    workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
+    window_sec INTEGER NOT NULL,
+    watts      REAL NOT NULL,
+    PRIMARY KEY (workout_id, window_sec)
+);
+
 CREATE TABLE IF NOT EXISTS workout_zones (
     workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
     zone       INTEGER NOT NULL, -- 1..7, зоны Коггана
@@ -243,6 +250,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "ftp_w", `ALTER TABLE workouts ADD COLUMN ftp_w INTEGER`},
 		{"workouts", "ftp_kind", `ALTER TABLE workouts ADD COLUMN ftp_kind TEXT`},
 		{"workouts", "zones_version", `ALTER TABLE workouts ADD COLUMN zones_version INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "mmp_version", `ALTER TABLE workouts ADD COLUMN mmp_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},

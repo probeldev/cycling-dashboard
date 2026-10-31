@@ -205,6 +205,20 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		writeJSON(w, days)
 	})
 
+	r.Get("/api/workout/{id}/mmp", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		if _, err := store.GetWorkout(db, id); err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		records, err := store.WorkoutMMP(db, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, records)
+	})
+
 	r.Get("/api/weeks", func(w http.ResponseWriter, req *http.Request) {
 		n, err := parseWeeksN(req.URL.Query())
 		if err != nil {
