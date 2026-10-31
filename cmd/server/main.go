@@ -44,6 +44,14 @@ func main() {
 		fmt.Printf("бэкфилл subsport: %d тренировок\n", n)
 	}
 
+	// NP старых тренировок посчитан алгоритмом с окном в сэмплах — пересчитываем
+	// по уже сохранённым сэмплам, без перечитывания FIT.
+	if n, err := importer.BackfillNormalizedPower(db); err != nil {
+		log.Printf("бэкфилл NP: %v", err)
+	} else if n > 0 {
+		fmt.Printf("бэкфилл NP: %d тренировок\n", n)
+	}
+
 	syncMgr := web.NewSyncManager()
 	h, err := web.Handler(db, syncMgr, absDir, func() {
 		n, _, err := importer.ImportDir(db, absDir)

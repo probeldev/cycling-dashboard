@@ -99,6 +99,28 @@ func BackfillSubSport(db *sql.DB) (int, error) {
 	return filled, nil
 }
 
+// BackfillNormalizedPower пересчитывает NP у тренировок, посчитанных старым
+// алгоритмом. Сэмплы уже в БД — FIT не перечитываем. Идемпотентен: после
+// прогона np_version == impNPVersion и запрос ничего не находит.
+func BackfillNormalizedPower(db *sql.DB) (int, error) {
+	ids, err := store.WorkoutsNeedingNP(db, impNPVersion)
+	if err != nil {
+		return 0, err
+	}
+	var done int
+	for _, id := range ids {
+		samples, err := store.RawSamples(db, id)
+		if err != nil {
+			return done, err
+		}
+		if err := store.SetNormPower(db, id, normalizedPower(samples), impNPVersion); err != nil {
+			return done, err
+		}
+		done++
+	}
+	return done, nil
+}
+
 func isFIT(name string) bool {
 	ext := strings.ToLower(filepath.Ext(name))
 	return ext == ".fit"
@@ -157,6 +179,7 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 		AvgPower:   validUint16(s.AvgPower),
 		MaxPower:   validUint16(s.MaxPower),
 		NormPower:  validUint16(s.NormalizedPower),
+		NPVersion:  impNPVersion,
 		AvgHR:      validUint8(s.AvgHeartRate),
 		MaxHR:      validUint8(s.MaxHeartRate),
 		Calories:   validUint16(s.TotalCalories),
@@ -342,6 +365,10 @@ func maxValidFloat(samples []store.Sample, get func(store.Sample) (float64, bool
 const (
 	npWindowSec = 30 // скользящее окно Коггана, секунд
 	npPauseSec  = 5  // разрыв между сэмплами больше — авто-пауза, окно через неё не тянем
+
+	// impNPVersion — версия алгоритма NP. Поднимать при изменении normalizedPower:
+	// тогда бэкфилл при старте пересчитает тренировки с np_version < impNPVersion.
+	impNPVersion = 1
 )
 
 // normalizedPower считает NP по Коггану: скользящее среднее мощности,

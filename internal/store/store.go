@@ -37,6 +37,10 @@ type Workout struct {
 	// чтобы история не пересчитывалась при изменении FTP/веса
 	FTP      int
 	WeightKg float64
+
+	// версия алгоритма, которым посчитан NormPower (0 — старый, до окна 30 с);
+	// по ней бэкфилл понимает, что тренировку надо пересчитать
+	NPVersion int
 }
 
 type MonthAgg struct {
@@ -135,6 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"samples", "distance_m", `ALTER TABLE samples ADD COLUMN distance_m REAL`},
 		{"workouts", "ftp_w", `ALTER TABLE workouts ADD COLUMN ftp_w INTEGER`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
+		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -199,9 +204,9 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	_, err := db.Exec(`INSERT INTO workouts
 	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
-	     avg_power, max_power, norm_power, avg_hr, max_hr, calories, total_ascent, total_descent,
-	     ftp_w, weight_kg)
-	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	     avg_power, max_power, norm_power, np_version, avg_hr, max_hr, calories,
+	     total_ascent, total_descent, ftp_w, weight_kg)
+	    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
@@ -211,7 +216,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
 	      avg_cadence=excluded.avg_cadence, max_cadence=excluded.max_cadence,
 	      avg_power=excluded.avg_power, max_power=excluded.max_power,
-	      norm_power=excluded.norm_power, avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
+	      norm_power=excluded.norm_power, np_version=excluded.np_version,
+	      avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
 	      calories=excluded.calories,
 	      total_ascent=excluded.total_ascent, total_descent=excluded.total_descent,
 	      ftp_w=excluded.ftp_w, weight_kg=excluded.weight_kg`,
@@ -220,7 +226,7 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 		int64(w.Duration.Seconds()), dist,
 		nullableFloat(w.AvgSpeedKmh/3.6), nullableFloat(w.MaxSpeedKmh/3.6),
 		nullableInt(w.AvgCadence), nullableInt(w.MaxCadence),
-		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower),
+		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower), w.NPVersion,
 		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories),
 		nullableInt(w.AscentM), nullableInt(w.DescentM),
 		nullableInt(w.FTP), nullableFloat(w.WeightKg))
@@ -440,6 +446,30 @@ func SetSubSport(db *sql.DB, id int64, subsport string) error {
 	return err
 }
 
+// WorkoutsNeedingNP — id тренировок, у которых NP посчитан алгоритмом старше version.
+func WorkoutsNeedingNP(db *sql.DB, version int) ([]int64, error) {
+	rows, err := db.Query(`SELECT id FROM workouts WHERE np_version < ? ORDER BY id`, version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetNormPower записывает NP и версию алгоритма, которым он посчитан.
+func SetNormPower(db *sql.DB, id int64, np, version int) error {
+	_, err := db.Exec(`UPDATE workouts SET norm_power = ?, np_version = ? WHERE id = ?`, np, version, id)
+	return err
+}
+
 type WorkoutRow struct {
 	ID          int64
 	StartTime   time.Time
@@ -605,10 +635,10 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	var ov sql.NullInt64
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
 	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
-	    norm_power, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg
+	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, weight_kg
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
-		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg)
+		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &wkg)
 	if err != nil {
 		return nil, err
 	}
