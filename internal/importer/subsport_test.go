@@ -484,3 +484,43 @@ func TestImportTemperatureMixed(t *testing.T) {
 		t.Errorf("в БД %d сэмплов с температурой, хочу 2 (0x7F не должен попасть)", inDB)
 	}
 }
+
+// writeOutdoorFIT — FIT уличной активности: GPS-трек ~2 км, записи по 200 Вт.
+func writeOutdoorFIT(t *testing.T, path string, records int) {
+	t.Helper()
+	file, err := fit.NewFile(fit.FileTypeActivity, fit.NewHeader(fit.V20, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	act, err := file.Activity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 10, 31, 10, 0, 0, 0, time.UTC)
+	sess := fit.NewSessionMsg()
+	sess.Sport = fit.SportCycling
+	sess.SubSport = fit.SubSportRoad
+	sess.StartTime = start
+	sess.Timestamp = start.Add(time.Duration(records) * time.Second)
+	sess.TotalElapsedTime = uint32(records) * 1000
+	sess.TotalTimerTime = uint32(records) * 1000
+	sess.Event = fit.EventSession
+	sess.EventType = fit.EventTypeStop
+	act.Sessions = append(act.Sessions, sess)
+	for i := 0; i < records; i++ {
+		r := fit.NewRecordMsg()
+		r.Timestamp = start.Add(time.Duration(i) * time.Second)
+		r.Power = 200
+		r.PositionLat = fit.NewLatitudeDegrees(55.0 + float64(i)*0.001)
+		r.PositionLong = fit.NewLongitudeDegrees(37.0 + float64(i)*0.001)
+		act.Records = append(act.Records, r)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := fit.Encode(f, file, binary.LittleEndian); err != nil {
+		t.Fatal(err)
+	}
+}

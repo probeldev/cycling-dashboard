@@ -53,8 +53,15 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 			return nil
 		}
 		// штампуем вес и FTP на дату тренировки — зоны считаются от них.
-		// FTP зависит от типа: станок и улица берут его из разных видов профиля
-		if ftp, kind, ok := store.FTPAt(db, w.Trainer, w.StartTime); ok {
+		// FTP зависит от типа, а тип — от пользовательского override: при
+		// ре-импорте FIT не должен перебивать выбор, сделанный пользователем.
+		trainer := w.Trainer
+		if ov, err := store.TrainerOverrideByHash(db, hash); err != nil {
+			return err
+		} else if ov != nil {
+			trainer = *ov
+		}
+		if ftp, kind, ok := store.FTPAt(db, trainer, w.StartTime); ok {
 			w.FTP = int(ftp)
 			w.FTPKind = kind
 		}

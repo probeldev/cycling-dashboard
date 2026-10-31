@@ -454,3 +454,48 @@ func TestMetricsOutdoorFTP(t *testing.T) {
 		t.Errorf("станок: IF=%v TSS=%v, хочу 1 и 100", tr.IF, tr.TSS)
 	}
 }
+
+// TestReimportRespectsTrainerOverride — ре-импорт не должен выбирать FTP по типу
+// из FIT, если пользователь переключил тренировку вручную.
+func TestReimportRespectsTrainerOverride(t *testing.T) {
+	dir := t.TempDir()
+	writeOutdoorFIT(t, filepath.Join(dir, "outdoor.fit"), 20)
+
+	db := openTestDB(t)
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.AddProfileEntry(db, "ftp", 156, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp_outdoor", 170, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Trainer || w.FTP != 170 || w.FTPKind != "outdoor" {
+		t.Fatalf("исходно: trainer=%v FTP=%d kind=%q, хочу улицу 170/outdoor", w.Trainer, w.FTP, w.FTPKind)
+	}
+
+	// пользователь переключил в станок и файл переимпортирован
+	if err := store.SetTrainerOverride(db, w.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportDir(db, dir, true); err != nil {
+		t.Fatal(err)
+	}
+	w, err = store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.Trainer || w.FTP != 156 || w.FTPKind != "trainer" {
+		t.Errorf("после переимпорта с override: trainer=%v FTP=%d kind=%q, хочу 156/trainer",
+			w.Trainer, w.FTP, w.FTPKind)
+	}
+	if math.Abs(w.IF-200.0/156) > 1e-9 {
+		t.Errorf("IF = %v, хочу %v (от станкового FTP)", w.IF, 200.0/156)
+	}
+}

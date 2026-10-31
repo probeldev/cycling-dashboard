@@ -607,6 +607,24 @@ func profileAt(q DBTX, kind string, t time.Time) (float64, bool) {
 	return v, true
 }
 
+// TrainerOverrideByHash — пользовательский тип тренировки для файла (nil, если
+// override не задан). Нужен импорту: от эффективного типа зависит выбор FTP.
+func TrainerOverrideByHash(db DBTX, hash string) (*bool, error) {
+	var ov sql.NullInt64
+	err := db.QueryRow(`SELECT trainer_override FROM workouts WHERE file_hash = ?`, hash).Scan(&ov)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !ov.Valid {
+		return nil, nil
+	}
+	b := ov.Int64 == 1
+	return &b, nil
+}
+
 // FTPAt — FTP тренировки и источник значения: для станка берётся `ftp`, для
 // улицы — `ftp_outdoor` с обязательным fallback на `ftp`. Пустой kind — FTP нет.
 func FTPAt(db DBTX, trainer bool, t time.Time) (float64, string, bool) {
