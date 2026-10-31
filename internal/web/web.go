@@ -86,7 +86,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		wo, err := store.GetWorkout(db, id)
 		if err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		mmp, err := store.WorkoutMMP(db, id)
@@ -168,7 +168,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r.Post("/workout/{id}/bike", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		if _, err := store.GetWorkout(db, id); err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		var bikeID *int64
@@ -179,7 +179,11 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 				return
 			}
 			if _, err := store.BikeByID(db, v); err != nil {
-				http.Error(w, "неизвестный велосипед", http.StatusBadRequest)
+				if errors.Is(err, sql.ErrNoRows) {
+					http.Error(w, "неизвестный велосипед", http.StatusBadRequest)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			bikeID = &v
@@ -212,7 +216,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r.Get("/api/workouts/latest", func(w http.ResponseWriter, req *http.Request) {
 		wo, err := store.LatestWorkout(db)
 		if err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		writeJSON(w, wo)
@@ -222,7 +226,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		wo, err := store.GetWorkout(db, id)
 		if err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		writeJSON(w, wo)
@@ -237,7 +241,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		}
 		// как и /dist: неизвестная тренировка — 404, а не 200 null
 		if _, err := store.GetWorkout(db, id); err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		var samples []store.Sample
@@ -309,7 +313,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r.Get("/api/workout/{id}/prs", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		if _, err := store.GetWorkout(db, id); err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		prs, err := store.WorkoutPRs(db, id, time.Now())
@@ -337,7 +341,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r.Get("/api/workout/{id}/mmp", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		if _, err := store.GetWorkout(db, id); err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		records, err := store.WorkoutMMP(db, id)
@@ -366,7 +370,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		wo, err := store.GetWorkout(db, id)
 		if err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
 		// распределение считаем по сырым сэмплам: бакет-усреднение смешало бы
@@ -380,6 +384,16 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	})
 
 	return r, nil
+}
+
+// notFoundOr500 — 404 только для отсутствующей строки, остальное — 500:
+// иначе ошибка базы маскируется под «не найдено».
+func notFoundOr500(w http.ResponseWriter, req *http.Request, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		http.NotFound(w, req)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
 // render рендерит шаблон в буфер и отдаёт его только при успехе: иначе ошибка
