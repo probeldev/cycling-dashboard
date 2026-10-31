@@ -13,7 +13,7 @@ import (
 func progressRoutes(r chi.Router, db *sql.DB) {
 	r.Get("/progress", func(w http.ResponseWriter, req *http.Request) {
 		now := time.Now()
-		to := startOfLocalDay(now)
+		to := store.StartOfDay(now)
 		days, err := store.Timeline(db, to.AddDate(0, 0, -364), to)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

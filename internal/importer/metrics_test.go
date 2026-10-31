@@ -350,3 +350,99 @@ func TestImportWritesZones(t *testing.T) {
 		t.Errorf("зоны = %v, хочу 30 с в Z4", zones)
 	}
 }
+
+// TestZonesRecomputedOnFTPChange — смена FTP пересчитывает зоны без дублей.
+func TestZonesRecomputedOnFTPChange(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "zones.fit"), fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	jan := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.AddProfileEntry(db, "ftp", 200, jan); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zones, err := store.WorkoutZones(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones != [7]int{0, 0, 0, 30, 0, 0, 0} {
+		t.Fatalf("исходные зоны = %v, хочу 30 с в Z4", zones)
+	}
+
+	// новый FTP действует с даты перед тренировкой: 200/156 = 128% → Z6
+	if err := store.AddProfileEntry(db, "ftp", 156, w.StartTime.AddDate(0, 0, -1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	zones, err = store.WorkoutZones(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones != [7]int{0, 0, 0, 0, 0, 30, 0} {
+		t.Errorf("зоны после смены FTP = %v, хочу 30 с в Z6", zones)
+	}
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workout_zones WHERE workout_id = ?`, w.ID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("строк зон %d, хочу 1 (без дублей)", rows)
+	}
+}
+
+// TestBackfillZones — бэкфилл заполняет зоны старых тренировок и идемпотентен.
+func TestBackfillZones(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "bf.fit"), fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	if err := store.AddProfileEntry(db, "ftp", 200, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// имитируем базу до появления таблицы
+	if _, err := db.Exec(`DELETE FROM workout_zones WHERE workout_id = ?`, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET zones_version = 0 WHERE id = ?`, w.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := BackfillZones(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("бэкфилл обработал %d тренировок, хочу 1", n)
+	}
+	zones, err := store.WorkoutZones(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones != [7]int{0, 0, 0, 30, 0, 0, 0} {
+		t.Errorf("зоны после бэкфилла = %v, хочу 30 с в Z4", zones)
+	}
+	if n2, err := BackfillZones(db); err != nil || n2 != 0 {
+		t.Errorf("повторный бэкфилл: %d, %v; хочу 0", n2, err)
+	}
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workout_zones WHERE workout_id = ?`, w.ID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Errorf("строк зон после двух прогонов %d, хочу 1", rows)
+	}
+}

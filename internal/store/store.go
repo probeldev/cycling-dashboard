@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS workouts (
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_workouts_ym ON workouts(year, month, start_time);
+CREATE INDEX IF NOT EXISTS idx_workouts_start ON workouts(start_time);
 
 CREATE TABLE IF NOT EXISTS samples (
     workout_id  INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,

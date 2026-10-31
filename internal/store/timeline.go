@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -30,7 +31,7 @@ type Day struct {
 // а в ответ попадают только дни [from, to] — иначе CTL/TSB зависели бы от окна.
 // День тренировки — локальная дата start_time (в БД время хранится в UTC).
 func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
-	from, to = startOfDay(from), startOfDay(to)
+	from, to = StartOfDay(from), StartOfDay(to)
 	if to.Before(from) {
 		return nil, nil
 	}
@@ -73,7 +74,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 		if lt.Before(warmFrom) || !lt.Before(to.AddDate(0, 0, 1)) {
 			continue
 		}
-		d := startOfDay(lt)
+		d := StartOfDay(lt)
 		a := byDay[d]
 		if a == nil {
 			a = &agg{}
@@ -105,7 +106,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 			day.Rides = a.rides
 			day.TrainerRides = a.trainer
 			day.OutdoorRides = a.rides - a.trainer
-			day.Names = joinNames(a.names)
+			day.Names = strings.Join(a.names, ", ")
 		}
 		// TSB — вчерашние CTL/ATL, до нагрузки текущего дня
 		day.TSB = ctl - atl
@@ -136,23 +137,13 @@ func warmStart(db DBTX, from time.Time) (time.Time, error) {
 	if err != nil {
 		return from, err
 	}
-	if first := startOfDay(t.Local()); first.Before(from) {
+	if first := StartOfDay(t.Local()); first.Before(from) {
 		return first, nil
 	}
 	return from, nil
 }
 
-func startOfDay(t time.Time) time.Time {
+// StartOfDay — локальная полночь даты t.
+func StartOfDay(t time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
-}
-
-func joinNames(names []string) string {
-	out := ""
-	for i, n := range names {
-		if i > 0 {
-			out += ", "
-		}
-		out += n
-	}
-	return out
 }

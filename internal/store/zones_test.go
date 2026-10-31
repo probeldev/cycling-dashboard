@@ -89,3 +89,34 @@ func TestWeeksEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestSetWorkoutZonesTransactional — сбой на INSERT откатывает и DELETE:
+// старые зоны и версия остаются нетронутыми.
+func TestSetWorkoutZonesTransactional(t *testing.T) {
+	db := openTestDB(t)
+	id := insertWorkout(t, db, 1, func(int) int { return 100 })
+	if err := SetWorkoutZones(db, id, [7]int{10, 0, 0, 0, 0, 0, 0}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER fail_zones BEFORE INSERT ON workout_zones
+	    BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetWorkoutZones(db, id, [7]int{20, 0, 0, 0, 0, 0, 0}, 2); err == nil {
+		t.Fatal("жду ошибку от триггера")
+	}
+	zones, err := WorkoutZones(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zones[0] != 10 {
+		t.Errorf("старые зоны потеряны: %v", zones)
+	}
+	var version int
+	if err := db.QueryRow(`SELECT zones_version FROM workouts WHERE id = ?`, id).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 1 {
+		t.Errorf("zones_version = %d, хочу 1 (откат)", version)
+	}
+}

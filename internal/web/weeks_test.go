@@ -55,8 +55,10 @@ func TestWeeksAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	// середина текущей недели: не зависит от дня запуска теста
+	start := store.WeekStart(time.Now()).Add(12 * time.Hour)
 	id, err := store.InsertWorkout(db, &store.Workout{
-		StartTime: time.Now().Add(-time.Hour), Duration: time.Hour, TSS: 100,
+		StartTime: start, Duration: time.Hour, TSS: 100,
 	}, "hash-weeks-api", filepath.Join(t.TempDir(), "x.fit"), 1)
 	if err != nil {
 		t.Fatal(err)

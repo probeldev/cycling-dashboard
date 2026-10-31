@@ -8,6 +8,20 @@ import (
 	"time"
 )
 
+// withLocal делает тест независимым от зоны машины: time.Local подменяется на
+// явную зону, чтобы мутация Local→UTC ловилась.
+func withLocal(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Fatalf("load %s: %v", name, err)
+	}
+	old := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = old })
+	return loc
+}
+
 func dayOf(t *testing.T, d int) time.Time {
 	t.Helper()
 	return time.Date(2026, 10, d, 12, 0, 0, 0, time.Local)
@@ -30,6 +44,7 @@ func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 // TestTimelinePMC — один день с TSS 100: CTL=100/42, ATL=100/7, TSB=0.
 func TestTimelinePMC(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	insertTimelineWorkout(t, db, "hash-tl-1", dayOf(t, 1), 100, 60, 20, false)
 
@@ -60,6 +75,7 @@ func TestTimelinePMC(t *testing.T) {
 
 // TestTimelinePMCChain — рекурсия и TSB второго дня = CTL_1 − ATL_1.
 func TestTimelinePMCChain(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	insertTimelineWorkout(t, db, "hash-tl-c1", dayOf(t, 1), 100, 60, 20, true)
 	insertTimelineWorkout(t, db, "hash-tl-c2", dayOf(t, 2), 50, 30, 10, false)
@@ -84,6 +100,7 @@ func TestTimelinePMCChain(t *testing.T) {
 
 // TestTimelineEmptyDayKeepsCurve — день без тренировок не разрывает EWMA.
 func TestTimelineEmptyDayKeepsCurve(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	insertTimelineWorkout(t, db, "hash-tl-e1", dayOf(t, 1), 100, 60, 20, false)
 	insertTimelineWorkout(t, db, "hash-tl-e3", dayOf(t, 3), 100, 60, 20, false)
@@ -111,6 +128,7 @@ func TestTimelineEmptyDayKeepsCurve(t *testing.T) {
 
 // TestTimelineBoundsAndSort — границы включительно, порядок по дате.
 func TestTimelineBoundsAndSort(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	insertTimelineWorkout(t, db, "hash-tl-b1", dayOf(t, 1), 10, 10, 5, false)
 	insertTimelineWorkout(t, db, "hash-tl-b3", dayOf(t, 3), 20, 20, 10, false)
@@ -127,13 +145,14 @@ func TestTimelineBoundsAndSort(t *testing.T) {
 			t.Fatalf("дата %v не позже %v", days[i].Date, days[i-1].Date)
 		}
 	}
-	if !days[0].Date.Equal(startOfDay(dayOf(t, 1))) || !days[2].Date.Equal(startOfDay(dayOf(t, 3))) {
+	if !days[0].Date.Equal(StartOfDay(dayOf(t, 1))) || !days[2].Date.Equal(StartOfDay(dayOf(t, 3))) {
 		t.Errorf("границы диапазона: %v..%v", days[0].Date, days[2].Date)
 	}
 }
 
 // TestTimelineEmptyRange — пустой/обратный диапазон и диапазон без тренировок.
 func TestTimelineEmptyRange(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	if days, err := Timeline(db, dayOf(t, 5), dayOf(t, 1)); err != nil || days != nil {
 		t.Errorf("обратный диапазон: %v, %v; хочу nil", days, err)
@@ -152,36 +171,73 @@ func TestTimelineEmptyRange(t *testing.T) {
 	}
 }
 
-// TestTimelineLocalDay — день тренировки определяется по локальной дате:
-// в UTC этот момент может быть предыдущим днём.
+// TestTimelineLocalDay — день тренировки определяется по локальной дате,
+// даже если в UTC этот момент другого дня. Зоны фиксированные, без скипов.
 func TestTimelineLocalDay(t *testing.T) {
-	local := time.Date(2026, 10, 31, 0, 30, 0, 0, time.Local)
-	if local.UTC().Day() == local.Day() {
-		t.Skip("локальная зона = UTC, проверка смещения не показательна")
+	cases := []struct {
+		zone      string
+		hour, min int
+	}{
+		{"Europe/Minsk", 0, 30},      // 00:30 MSK = 21:30 UTC предыдущего дня
+		{"America/New_York", 20, 30}, // 20:30 EDT = 00:30 UTC следующего дня
 	}
-	db := openTestDB(t)
-	insertTimelineWorkout(t, db, "hash-tl-tz", local, 40, 30, 10, false)
+	for _, c := range cases {
+		t.Run(c.zone, func(t *testing.T) {
+			loc := withLocal(t, c.zone)
+			local := time.Date(2026, 10, 31, c.hour, c.min, 0, 0, loc)
+			if local.UTC().Day() == local.Day() {
+				t.Fatalf("момент %v не пересекает границу UTC-даты", local)
+			}
+			db := openTestDB(t)
+			insertTimelineWorkout(t, db, "hash-tl-tz", local, 40, 30, 10, false)
 
-	days, err := Timeline(db, local, local)
-	if err != nil {
-		t.Fatal(err)
+			days, err := Timeline(db, local, local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(days) != 1 || days[0].Rides != 1 || !days[0].Date.Equal(StartOfDay(local)) {
+				t.Fatalf("тренировка попала не в локальный день: %+v", days)
+			}
+			prev, err := Timeline(db, local.AddDate(0, 0, -1), local.AddDate(0, 0, -1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prev[0].Rides != 0 {
+				t.Errorf("поездка засчитана и в предыдущий день")
+			}
+		})
 	}
-	if len(days) != 1 || days[0].Rides != 1 || !days[0].Date.Equal(startOfDay(local)) {
-		t.Fatalf("тренировка попала не в локальный день: %+v", days)
-	}
-	// предыдущий локальный день пуст
-	prev, err := Timeline(db, local.AddDate(0, 0, -1), local.AddDate(0, 0, -1))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if prev[0].Rides != 0 {
-		t.Errorf("поездка засчитана и в предыдущий день")
+}
+
+// TestWeekStart — понедельник в явной зоне; мутация Local→UTC должна ловиться.
+func TestWeekStart(t *testing.T) {
+	for _, zone := range []string{"Europe/Minsk", "America/New_York"} {
+		t.Run(zone, func(t *testing.T) {
+			loc := withLocal(t, zone)
+			ws := WeekStart(time.Date(2026, 10, 15, 12, 0, 0, 0, loc)) // четверг
+			want := time.Date(2026, 10, 12, 0, 0, 0, 0, loc)           // понедельник
+			if !ws.Equal(want) || ws.Weekday() != time.Monday {
+				t.Fatalf("WeekStart = %v (%v), хочу %v (понедельник)", ws, ws.Weekday(), want)
+			}
+			if !WeekStart(ws).Equal(ws) {
+				t.Errorf("WeekStart не идемпотентен")
+			}
+			sun := ws.AddDate(0, 0, 6).Add(23 * time.Hour)
+			if !WeekStart(sun).Equal(ws) {
+				t.Errorf("воскресенье %v попало не в свою неделю", sun)
+			}
+			next := ws.AddDate(0, 0, 7).Add(30 * time.Minute)
+			if !WeekStart(next).Equal(ws.AddDate(0, 0, 7)) {
+				t.Errorf("понедельник %v попал не в следующую неделю", next)
+			}
+		})
 	}
 }
 
 // TestTimelineWarmUp — CTL/ATL/TSB на общую дату не зависят от окна: EWMA
 // греется с самой ранней тренировки, а не с from.
 func TestTimelineWarmUp(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
 	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.Local)
 	insertTimelineWorkout(t, db, "hash-wu-1", now.AddDate(0, 0, -100), 80, 60, 20, false)

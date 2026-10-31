@@ -1,13 +1,30 @@
 package store
 
 import (
+	"database/sql"
 	"math"
 	"time"
 )
 
 // SetWorkoutZones заменяет зоны тренировки (Z1–Z7) и помечает их актуальными.
-// Нулевые зоны строк не создают.
+// Нулевые зоны строк не создают. При вызове с *sql.DB работает в собственной
+// транзакции: DELETE + INSERT + UPDATE версии не должны применяться частично.
 func SetWorkoutZones(q DBTX, id int64, zones [7]int, version int) error {
+	if db, ok := q.(*sql.DB); ok {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := setWorkoutZones(tx, id, zones, version); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	return setWorkoutZones(q, id, zones, version)
+}
+
+func setWorkoutZones(q DBTX, id int64, zones [7]int, version int) error {
 	if _, err := q.Exec(`DELETE FROM workout_zones WHERE workout_id = ?`, id); err != nil {
 		return err
 	}

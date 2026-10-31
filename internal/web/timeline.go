@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"cycling-dashboard/internal/store"
 )
 
 const (
@@ -14,7 +16,7 @@ const (
 // parseTimelineRange разбирает ?from/?to (YYYY-MM-DD, локальные даты).
 // По умолчанию — последние 180 дней до сегодня включительно.
 func parseTimelineRange(q url.Values, now time.Time) (from, to time.Time, err error) {
-	to = startOfLocalDay(now)
+	to = store.StartOfDay(now)
 	if v := q.Get("to"); v != "" {
 		to, err = time.ParseInLocation("2006-01-02", v, time.Local)
 		if err != nil {
@@ -35,8 +37,4 @@ func parseTimelineRange(q url.Values, now time.Time) (from, to time.Time, err er
 		return from, to, fmt.Errorf("диапазон %d дней, максимум %d", days, timelineMaxDays)
 	}
 	return from, to, nil
-}
-
-func startOfLocalDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
 }
