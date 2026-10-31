@@ -9,12 +9,35 @@ import (
 
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	return openTestDBAt(t, filepath.Join(t.TempDir(), "test.db"))
+}
+
+// openTestDBAt — база по конкретному пути, чтобы переоткрыть её и прогнать миграции.
+func openTestDBAt(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+// addOrphan — сэмпл без существующей тренировки.
+func addOrphan(t *testing.T, db *sql.DB, workoutID int64) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO samples (workout_id, ts_offset, power) VALUES (?, 0, 100)`, workoutID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func countSamples(t *testing.T, db *sql.DB, where string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE `+where, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // insertWorkout — тренировка с n сэмплами по 1 с; power задаёт мощность записи.
@@ -171,5 +194,70 @@ func TestSamplesBucketOffsetIsMean(t *testing.T) {
 	// среднее (0+1+2+3+4+100+101+102+103+104)/10 = 52
 	if one[0].Offset != 52 {
 		t.Errorf("offset точки = %d, хочу 52 (среднее по бакету, а не MIN)", one[0].Offset)
+	}
+}
+
+// TestCleanupOrphanSamples — миграция удаляет сэмплы без тренировки и не трогает валидные.
+func TestCleanupOrphanSamples(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	db := openTestDBAt(t, path)
+	id := insertWorkout(t, db, 3, func(i int) int { return 100 })
+	addOrphan(t, db, 0)   // старый импорт писал workout_id=0
+	addOrphan(t, db, 999) // ссылка на удалённую тренировку
+	db.Close()
+
+	reopened := openTestDBAt(t, path)
+	if got := countSamples(t, reopened, "workout_id = ?", id); got != 3 {
+		t.Errorf("валидных сэмплов %d, хочу 3", got)
+	}
+	if got := countSamples(t, reopened, "workout_id NOT IN (SELECT id FROM workouts)"); got != 0 {
+		t.Errorf("сирот осталось %d, хочу 0", got)
+	}
+}
+
+// TestCleanupOrphanSamplesEmptyWorkouts — если workouts пуста, миграция не трогает
+// сэмплы: иначе недосозданная или частично восстановленная база потеряла бы всё.
+func TestCleanupOrphanSamplesEmptyWorkouts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	db := openTestDBAt(t, path)
+	addOrphan(t, db, 0)
+	db.Close()
+
+	reopened := openTestDBAt(t, path)
+	if got := countSamples(t, reopened, "1=1"); got != 1 {
+		t.Errorf("после миграции %d сэмплов, хочу 1 (guard при пустой workouts)", got)
+	}
+}
+
+// TestProfileEntryDoesNotTouchSamples — добавление и удаление записи профиля
+// не должны запускать чистку сэмплов.
+func TestProfileEntryDoesNotTouchSamples(t *testing.T) {
+	db := openTestDB(t)
+	id := insertWorkout(t, db, 3, func(i int) int { return 100 })
+	addOrphan(t, db, 0)
+	before := countSamples(t, db, "1=1")
+
+	if err := AddProfileEntry(db, "weight", 75, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if got := countSamples(t, db, "1=1"); got != before {
+		t.Fatalf("AddProfileEntry удалил сэмплы: было %d, стало %d", before, got)
+	}
+
+	history, err := ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("история профиля: %d записей, хочу 1", len(history))
+	}
+	if err := DeleteProfileEntry(db, history[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := countSamples(t, db, "1=1"); got != before {
+		t.Fatalf("DeleteProfileEntry удалил сэмплы: было %d, стало %d", before, got)
+	}
+	if got := countSamples(t, db, "workout_id = ?", id); got != 3 {
+		t.Errorf("валидных сэмплов %d, хочу 3", got)
 	}
 }

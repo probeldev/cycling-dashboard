@@ -153,17 +153,35 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 			}
 		}
 	}
-	// Осиротевшие сэмплы (workout_id=0 и ссылки на удалённые тренировки) остались
-	// от старого импорта: ни один запрос их не видит. Идемпотентно — на чистой
-	// базе удаляется 0 строк.
-	res, err := db.Exec(`DELETE FROM samples WHERE workout_id NOT IN (SELECT id FROM workouts)`)
+	if err := cleanupOrphanSamples(db); err != nil {
+		return err
+	}
+	return BackfillProfileStamps(db)
+}
+
+// cleanupOrphanSamples удаляет сэмплы, на которые нет тренировки: такие строки
+// не видны ни одному запросу. Если workouts пуста, данные не трогаем — иначе
+// недосозданная или частично восстановленная база потеряла бы все сэмплы.
+// Идемпотентно: на чистой базе удаляется 0 строк.
+func cleanupOrphanSamples(db *sql.DB) error {
+	var hasWorkouts bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM workouts)`).Scan(&hasWorkouts); err != nil {
+		return err
+	}
+	if !hasWorkouts {
+		log.Printf("миграция: чистка осиротевших сэмплов пропущена — таблица workouts пуста")
+		return nil
+	}
+	res, err := db.Exec(`DELETE FROM samples
+		WHERE workout_id NOT IN (SELECT id FROM workouts)
+		  AND EXISTS (SELECT 1 FROM workouts)`)
 	if err != nil {
 		return err
 	}
 	if n, err := res.RowsAffected(); err == nil && n > 0 {
 		log.Printf("миграция: удалено %d осиротевших сэмплов", n)
 	}
-	return BackfillProfileStamps(db)
+	return nil
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -348,16 +366,6 @@ func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error
 		kind, value, at.UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
-	// Осиротевшие сэмплы (workout_id=0 и ссылки на удалённые тренировки) остались
-	// от старого импорта: ни один запрос их не видит. Идемпотентно — на чистой
-	// базе удаляется 0 строк.
-	res, err := db.Exec(`DELETE FROM samples WHERE workout_id NOT IN (SELECT id FROM workouts)`)
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err == nil && n > 0 {
-		log.Printf("миграция: удалено %d осиротевших сэмплов", n)
-	}
 	return BackfillProfileStamps(db)
 }
 
@@ -365,16 +373,6 @@ func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error
 func DeleteProfileEntry(db *sql.DB, id int64) error {
 	if _, err := db.Exec(`DELETE FROM profile_history WHERE id = ?`, id); err != nil {
 		return err
-	}
-	// Осиротевшие сэмплы (workout_id=0 и ссылки на удалённые тренировки) остались
-	// от старого импорта: ни один запрос их не видит. Идемпотентно — на чистой
-	// базе удаляется 0 строк.
-	res, err := db.Exec(`DELETE FROM samples WHERE workout_id NOT IN (SELECT id FROM workouts)`)
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err == nil && n > 0 {
-		log.Printf("миграция: удалено %d осиротевших сэмплов", n)
 	}
 	return BackfillProfileStamps(db)
 }
