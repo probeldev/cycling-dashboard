@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"time"
 )
 
@@ -23,17 +24,23 @@ type Day struct {
 
 // Timeline — дневной ряд [from, to] включительно.
 // CTL_t = CTL_{t-1} + (TSS_t − CTL_{t-1})/42, ATL_t = ATL_{t-1} + (TSS_t − ATL_{t-1})/7,
-// TSB_t = CTL_{t-1} − ATL_{t-1}. Старт с нулей; пустые дни идут с TSS=0 и
-// участвуют в EWMA, поэтому пропуски не разрывают кривую.
+// TSB_t = CTL_{t-1} − ATL_{t-1}. Пустые дни идут с TSS=0 и участвуют в EWMA,
+// поэтому пропуски не разрывают кривую.
+// EWMA греется с даты самой ранней тренировки (или с from, если истории нет),
+// а в ответ попадают только дни [from, to] — иначе CTL/TSB зависели бы от окна.
 // День тренировки — локальная дата start_time (в БД время хранится в UTC).
 func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 	from, to = startOfDay(from), startOfDay(to)
 	if to.Before(from) {
 		return nil, nil
 	}
+	warmFrom, err := warmStart(db, from)
+	if err != nil {
+		return nil, err
+	}
 
 	// запас по UTC с обеих сторон: локальная дата может отличаться от UTC
-	qFrom := from.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
+	qFrom := warmFrom.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	qTo := to.AddDate(0, 0, 3).UTC().Format(time.RFC3339)
 	rows, err := db.Query(`SELECT start_time, duration_sec, COALESCE(distance_m, 0),
 	    trainer, COALESCE(tss, 0), COALESCE(name, '')
@@ -63,7 +70,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 			return nil, err
 		}
 		lt := t.Local()
-		if lt.Before(from) || !lt.Before(to.AddDate(0, 0, 1)) {
+		if lt.Before(warmFrom) || !lt.Before(to.AddDate(0, 0, 1)) {
 			continue
 		}
 		d := startOfDay(lt)
@@ -89,7 +96,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 
 	days := make([]Day, 0, int(to.Sub(from).Hours()/24)+1)
 	var ctl, atl float64
-	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
+	for d := warmFrom; !d.After(to); d = d.AddDate(0, 0, 1) {
 		day := Day{Date: d}
 		if a := byDay[d]; a != nil {
 			day.TSS = a.tss
@@ -106,9 +113,33 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 		atl += (day.TSS - atl) / 7
 		day.CTL = ctl
 		day.ATL = atl
+		if d.Before(from) {
+			continue // день прогрева — в ответ не отдаём
+		}
 		days = append(days, day)
 	}
 	return days, nil
+}
+
+// warmStart — с какого дня греть EWMA, чтобы результат не зависел от окна.
+// Берём локальную дату самой ранней тренировки; если она не раньше from или
+// истории нет — from.
+func warmStart(db DBTX, from time.Time) (time.Time, error) {
+	var minStart sql.NullString
+	if err := db.QueryRow(`SELECT MIN(start_time) FROM workouts`).Scan(&minStart); err != nil {
+		return from, err
+	}
+	if !minStart.Valid {
+		return from, nil
+	}
+	t, err := time.Parse(time.RFC3339, minStart.String)
+	if err != nil {
+		return from, err
+	}
+	if first := startOfDay(t.Local()); first.Before(from) {
+		return first, nil
+	}
+	return from, nil
 }
 
 func startOfDay(t time.Time) time.Time {

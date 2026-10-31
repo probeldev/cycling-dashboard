@@ -178,3 +178,37 @@ func TestTimelineLocalDay(t *testing.T) {
 		t.Errorf("поездка засчитана и в предыдущий день")
 	}
 }
+
+// TestTimelineWarmUp — CTL/ATL/TSB на общую дату не зависят от окна: EWMA
+// греется с самой ранней тренировки, а не с from.
+func TestTimelineWarmUp(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.Local)
+	insertTimelineWorkout(t, db, "hash-wu-1", now.AddDate(0, 0, -100), 80, 60, 20, false)
+	insertTimelineWorkout(t, db, "hash-wu-2", now.AddDate(0, 0, -10), 120, 60, 20, false)
+
+	short, err := Timeline(db, now.AddDate(0, 0, -29), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long, err := Timeline(db, now.AddDate(0, 0, -364), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(short) != 30 || len(long) != 365 {
+		t.Fatalf("длины окон: %d и %d, хочу 30 и 365", len(short), len(long))
+	}
+	a, b := short[len(short)-1], long[len(long)-1]
+	if math.Abs(a.CTL-b.CTL) > 0.01 || math.Abs(a.ATL-b.ATL) > 0.01 || math.Abs(a.TSB-b.TSB) > 0.01 {
+		t.Errorf("CTL/ATL/TSB зависят от окна: %.4f/%.4f/%.4f vs %.4f/%.4f/%.4f",
+			a.CTL, a.ATL, a.TSB, b.CTL, b.ATL, b.TSB)
+	}
+	// и на общей дате в середине окна
+	mid := long[len(long)-20]
+	if i := len(short) - 20; i >= 0 {
+		if math.Abs(short[i].CTL-mid.CTL) > 0.01 || math.Abs(short[i].TSB-mid.TSB) > 0.01 {
+			t.Errorf("середина окна: %.4f/%.4f vs %.4f/%.4f",
+				short[i].CTL, short[i].TSB, mid.CTL, mid.TSB)
+		}
+	}
+}
