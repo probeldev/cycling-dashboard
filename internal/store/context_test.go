@@ -17,7 +17,8 @@ func TestWorkoutContextStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := SetWorkoutContext(db, id, 7, "темповая, ветер"); err != nil {
+	rpe7, notes := 7, "темповая, ветер"
+	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{RPE: &rpe7, Notes: &notes}); err != nil {
 		t.Fatal(err)
 	}
 	w, err := GetWorkout(db, id)
@@ -31,16 +32,34 @@ func TestWorkoutContextStore(t *testing.T) {
 		t.Errorf("SRPE=%v, хочу 630 (7 × 90 мин)", w.SRPE)
 	}
 
-	if err := SetWorkoutContext(db, id, 0, ""); err != nil {
+	// частичное обновление: только RPE не стирает заметку
+	rpe5 := 5
+	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{RPE: &rpe5}); err != nil {
 		t.Fatal(err)
 	}
-	var rpe sql.NullInt64
-	var notes sql.NullString
-	if err := db.QueryRow(`SELECT rpe, notes FROM workouts WHERE id = ?`, id).Scan(&rpe, &notes); err != nil {
+	if w, _ := GetWorkout(db, id); w.RPE != 5 || w.Notes != "темповая, ветер" {
+		t.Errorf("частичный апдейт: RPE=%d Notes=%q", w.RPE, w.Notes)
+	}
+	// только заметка не стирает RPE
+	note2 := "другая"
+	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{Notes: &note2}); err != nil {
 		t.Fatal(err)
 	}
-	if rpe.Valid || notes.Valid {
-		t.Errorf("после очистки не NULL: rpe=%v notes=%v", rpe, notes)
+	if w, _ := GetWorkout(db, id); w.RPE != 5 || w.Notes != "другая" {
+		t.Errorf("частичный апдейт заметки: RPE=%d Notes=%q", w.RPE, w.Notes)
+	}
+
+	zero, empty := 0, ""
+	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{RPE: &zero, Notes: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	var sqlRPE sql.NullInt64
+	var sqlNotes sql.NullString
+	if err := db.QueryRow(`SELECT rpe, notes FROM workouts WHERE id = ?`, id).Scan(&sqlRPE, &sqlNotes); err != nil {
+		t.Fatal(err)
+	}
+	if sqlRPE.Valid || sqlNotes.Valid {
+		t.Errorf("после очистки не NULL: rpe=%v notes=%v", sqlRPE, sqlNotes)
 	}
 	if w, _ := GetWorkout(db, id); w.RPE != 0 || w.SRPE != 0 {
 		t.Errorf("после очистки: RPE=%d SRPE=%v", w.RPE, w.SRPE)
@@ -65,7 +84,8 @@ func TestWeeksSRPE(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := SetWorkoutContext(db, id, w.rpe, ""); err != nil {
+		rpe := w.rpe
+		if err := SetWorkoutContext(db, id, WorkoutContextUpdate{RPE: &rpe}); err != nil {
 			t.Fatal(err)
 		}
 	}

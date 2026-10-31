@@ -30,7 +30,8 @@ func TestReimportPreservesUserFields(t *testing.T) {
 	if err := store.SetWorkoutBike(db, w.ID, &bike); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetWorkoutContext(db, w.ID, 7, "заметка пользователя"); err != nil {
+	rpe, note := 7, "заметка пользователя"
+	if err := store.SetWorkoutContext(db, w.ID, store.WorkoutContextUpdate{RPE: &rpe, Notes: &note}); err != nil {
 		t.Fatal(err)
 	}
 	// станок из FIT → вручную «улица», чтобы проверить сохранение override

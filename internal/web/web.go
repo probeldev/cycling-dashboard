@@ -141,24 +141,39 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r.Post("/workout/{id}/context", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		if _, err := store.GetWorkout(db, id); err != nil {
-			http.NotFound(w, req)
+			notFoundOr500(w, req, err)
 			return
 		}
-		rpe := 0
-		if raw := req.FormValue("rpe"); raw != "" {
-			v, err := strconv.Atoi(raw)
-			if err != nil || v < 1 || v > 10 {
-				http.Error(w, "RPE: нужно целое число от 1 до 10", http.StatusBadRequest)
+		if err := req.ParseForm(); err != nil {
+			http.Error(w, "некорректная форма", http.StatusBadRequest)
+			return
+		}
+		var upd store.WorkoutContextUpdate
+		if req.Form.Has("rpe") {
+			rpe := 0
+			if raw := req.FormValue("rpe"); raw != "" {
+				v, err := strconv.Atoi(raw)
+				if err != nil || v < 1 || v > 10 {
+					http.Error(w, "RPE: нужно целое число от 1 до 10", http.StatusBadRequest)
+					return
+				}
+				rpe = v
+			}
+			upd.RPE = &rpe
+		}
+		if req.Form.Has("notes") {
+			notes := strings.TrimSpace(req.FormValue("notes"))
+			if len([]rune(notes)) > maxNotesLen {
+				http.Error(w, "заметка длиннее 2000 символов", http.StatusBadRequest)
 				return
 			}
-			rpe = v
+			upd.Notes = &notes
 		}
-		notes := strings.TrimSpace(req.FormValue("notes"))
-		if len([]rune(notes)) > maxNotesLen {
-			http.Error(w, "заметка длиннее 2000 символов", http.StatusBadRequest)
+		if upd.RPE == nil && upd.Notes == nil {
+			http.Error(w, "нужно передать rpe и/или notes", http.StatusBadRequest)
 			return
 		}
-		if err := store.SetWorkoutContext(db, id, rpe, notes); err != nil {
+		if err := store.SetWorkoutContext(db, id, upd); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
