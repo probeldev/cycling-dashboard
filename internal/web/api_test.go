@@ -113,7 +113,7 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 	}
 }
 
-// TestWorkoutsListJSON — список отдаёт массив; у объекта 38 полей, Override
+// TestWorkoutsListJSON — список отдаёт массив; у объекта 39 полей, Override
 // присутствует (контракт JSON не должен незаметно меняться).
 func TestWorkoutsListJSON(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
