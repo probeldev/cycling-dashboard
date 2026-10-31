@@ -300,8 +300,8 @@ func TestSetNormPowersRollback(t *testing.T) {
 	}
 }
 
-// TestListTreeMonthMetrics — месячный агрегат суммирует TSS и считает средний IF,
-// взвешенный по времени тренировок.
+// TestListTreeMonthMetrics — месячный агрегат суммирует TSS и считает средний IF
+// как квадратичное среднее sqrt(Σ(IF²·t)/Σt).
 func TestListTreeMonthMetrics(t *testing.T) {
 	db := openTestDB(t)
 	jan := func(day int) time.Time { return time.Date(2026, 1, day, 10, 0, 0, 0, time.Local) }

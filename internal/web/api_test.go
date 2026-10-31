@@ -112,3 +112,46 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 		t.Errorf("в profile_history %d записей, хочу 0 (транзакция должна откатиться)", n)
 	}
 }
+
+// TestWorkoutsListJSON — список отдаёт массив; у объекта 38 полей, Override
+// присутствует (контракт JSON не должен незаметно меняться).
+func TestWorkoutsListJSON(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i, start := range []time.Time{time.Now().Add(-2 * time.Hour), time.Now().Add(-time.Hour)} {
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: start, Duration: time.Hour,
+		}, fmt.Sprintf("hash-list-%d", i), filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workouts", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	var list []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("%d элементов, хочу 2", len(list))
+	}
+	if got := len(list[0]); got != 38 {
+		keys := make([]string, 0, got)
+		for k := range list[0] {
+			keys = append(keys, k)
+		}
+		t.Errorf("полей в объекте %d, хочу 38: %v", got, keys)
+	}
+	if _, ok := list[0]["Override"]; !ok {
+		t.Errorf("в объекте нет поля Override")
+	}
+}

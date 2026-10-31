@@ -365,3 +365,39 @@ func TestBackfillMetricsRollback(t *testing.T) {
 		}
 	}
 }
+
+// TestBackfillMetricsSkipsFITWithoutPower — FIT не читается для тренировки без
+// единого сэмпла с мощностью: elapsed/work остаются NULL, а не берутся из файла.
+func TestBackfillMetricsSkipsFITWithoutPower(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.fit")
+	// если бы файл прочитали, elapsed стал бы 100, а работа — 12 кДж
+	writeSessionFIT(t, path, 12000, 100000, 100000, 100)
+
+	db := openTestDB(t)
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 100 * time.Second, NormPower: 200, AvgPower: 200, FTP: 200,
+	}, "hash-skip-fit", path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// сэмплы есть, но без мощности
+	if err := store.InsertSamples(db, id, []store.Sample{{Offset: 0}, {Offset: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.ElapsedSec != 0 || w.WorkKJ != 0 {
+		t.Errorf("FIT прочитан для тренировки без мощности: elapsed=%d work=%v",
+			w.ElapsedSec, w.WorkKJ)
+	}
+	// TSS при этом считается от duration/NP/FTP (hour? нет — 100 с)
+	if !w.HasTSS {
+		t.Error("TSS должен считаться без сэмплов мощности")
+	}
+}

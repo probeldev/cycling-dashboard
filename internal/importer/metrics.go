@@ -124,13 +124,15 @@ func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, work
 	w.MetricsVersion = metricsVersion
 }
 
-// BackfillMetrics пересчитывает метрики нагрузки у тренировок со старой версией.
-// Сэмплы и NP/FTP/duration уже в БД; elapsed_sec и work_kj есть только в
-// FIT-сессии, поэтому для них дочитываем сессию — если файла нет, останутся NULL.
-// TSS считается от duration_sec, поэтому заполняется и без сэмплов (когда NP и
-// FTP известны). Идемпотентен: после прогона metrics_version == metricsVersion.
-// BackfillMetrics пересчитывает метрики в одной транзакции.
+// BackfillMetrics пересчитывает метрики нагрузки у тренировок со старой
+// версией в одной транзакции. Идемпотентен: после прогона
+// metrics_version == metricsVersion, повторный вызов ничего не находит.
 func BackfillMetrics(db *sql.DB) (int, error) {
+	// пустую транзакцию не открываем: на каждом старте пересчитывать нечего
+	refs, err := store.WorkoutsNeedingMetrics(db, metricsVersion)
+	if err != nil || len(refs) == 0 {
+		return 0, err
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return 0, err
@@ -145,6 +147,9 @@ func BackfillMetrics(db *sql.DB) (int, error) {
 
 // BackfillMetricsTx — пересчёт в переданной транзакции: правка профиля и
 // зависящие от неё метрики коммитятся вместе, ошибка откатывает всё.
+// Сэмплы и NP/FTP/duration уже в БД; elapsed_sec и work_kj есть только в
+// FIT-сессии и дочитываются для тренировок с мощностью (если файла нет —
+// останутся NULL). TSS считается от duration_sec и заполняется и без сэмплов.
 func BackfillMetricsTx(tx *sql.Tx) (int, error) {
 	return backfillMetrics(tx)
 }
@@ -178,8 +183,8 @@ func backfillMetrics(q store.DBTX) (int, error) {
 					work = wk
 				}
 			} else if elapsed == 0 {
-				// без FIT общее время и работа неизвестны — останутся NULL
-				fmt.Fprintf(os.Stderr, "бэкфилл метрик: сессия недоступна, elapsed/work будут NULL: %s\n", ref.Path)
+				// без FIT недостающие elapsed/work останутся NULL
+				fmt.Fprintf(os.Stderr, "бэкфилл метрик: сессия недоступна, недостающие elapsed/work останутся NULL: %s\n", ref.Path)
 			}
 		}
 		applyMetrics(w, samples, elapsed, work)
