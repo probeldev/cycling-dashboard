@@ -246,10 +246,40 @@ func TestImportInvalidTimerTime(t *testing.T) {
 	if w.Duration != 120*time.Second {
 		t.Errorf("Duration = %v, хочу 120 с (из elapsed)", w.Duration)
 	}
+	// NP и FTP выставляем явно: без них TSS был бы 0 и проверка ничего не ловила
+	w.NormPower = 200
 	w.FTP = 200
 	applyMetrics(w, nil, w.ElapsedSec, w.WorkKJ)
-	if w.TSS > 1000 {
-		t.Errorf("TSS = %v — похоже, duration взорвался", w.TSS)
+	// duration 120 с, NP=200, FTP=200 → IF=1, TSS ≈ 3.33; взрыв дал бы тысячи
+	if !w.HasTSS || w.TSS < 3 || w.TSS > 4 {
+		t.Errorf("TSS = %v (has=%v), хочу ≈3.33", w.TSS, w.HasTSS)
+	}
+}
+
+// TestImportAllTimersInvalid — оба таймера 0xFFFFFFFF: duration 0, TSS не
+// считается (NULL), паники и «49.7 дней» нет.
+func TestImportAllTimersInvalid(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionFIT(t, filepath.Join(dir, "notimers.fit"), math.MaxUint32, math.MaxUint32, math.MaxUint32, 100)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Duration != 0 {
+		t.Errorf("Duration = %v, хочу 0", w.Duration)
+	}
+	w.NormPower = 200
+	w.FTP = 200
+	applyMetrics(w, nil, w.ElapsedSec, w.WorkKJ)
+	if w.HasTSS || w.TSS != 0 {
+		t.Errorf("TSS = %v (has=%v), хочу NULL при duration=0", w.TSS, w.HasTSS)
+	}
+	if !w.HasIF {
+		t.Errorf("IF должен считаться при известных NP/FTP")
 	}
 }
 

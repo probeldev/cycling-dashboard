@@ -120,6 +120,12 @@ func (w Workout) DataGapsPct() float64 {
 	return float64(w.GapsSec()) * 100 / base
 }
 
+// HasDataGaps — стоит ли показывать бейдж «данные с пропусками»: только для
+// тренировок с поверметром и когда пропусков строго больше 5%.
+func (w Workout) HasDataGaps() bool {
+	return w.HasPower && w.DataGapsPct() > 5
+}
+
 type Agg struct {
 	DistanceKm float64
 	Hours      float64
@@ -790,7 +796,7 @@ type Month struct {
 	Trainer       Agg
 	TotalCalories int
 	TSS           float64 // сумма TSS за месяц
-	AvgIF         float64 // IF, взвешенный по времени тренировок
+	AvgIF         float64 // квадратичное среднее IF: sqrt(Σ(IF²·t)/Σt) по тренировкам с IF
 	Rides         []WorkoutRow
 }
 

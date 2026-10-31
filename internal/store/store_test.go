@@ -356,6 +356,23 @@ func TestWorkoutDataGapsPct(t *testing.T) {
 	}
 }
 
+// TestWorkoutHasDataGaps — порог строго больше 5% и только при наличии мощности.
+func TestWorkoutHasDataGaps(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		w    Workout
+		want bool
+	}{
+		{"ровно 5%", Workout{HasPower: true, Duration: 100 * time.Second, NoPowerSec: 5}, false},
+		{"5.1%", Workout{HasPower: true, Duration: 1000 * time.Second, NoPowerSec: 51}, true},
+		{"без мощности", Workout{Duration: 100 * time.Second, NoPowerSec: 50}, false},
+	} {
+		if got := tt.w.HasDataGaps(); got != tt.want {
+			t.Errorf("%s: HasDataGaps = %v, хочу %v (%.1f%%)", tt.name, got, tt.want, tt.w.DataGapsPct())
+		}
+	}
+}
+
 // TestProfileRollbackOnStampError — ошибка при пересчёте штампов откатывает
 // и саму запись профиля: в profile_history ничего не остаётся.
 func TestProfileRollbackOnStampError(t *testing.T) {

@@ -3,7 +3,7 @@
   <a href="/">←</a>
   {{ datetime .W.StartTime }}
   {{ if .W.Trainer }}<span class="tag">станок</span>{{ end }}
-  {{ if and .W.HasPower (gt .W.DataGapsPct 5.0) }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
+  {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
 </h1>
 
 <div style="margin:10px 0">

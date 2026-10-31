@@ -44,7 +44,7 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
   <div class="months">
   {{ range .Months }}
     <details class="month">
-      <summary>{{ monthName .Month }}: {{ if .Outdoor.Hours }}улица — {{ km .Outdoor.DistanceKm }} км, {{ hours .Outdoor.Hours }} ч{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }}; {{ end }}{{ if .Trainer.Hours }}станок — {{ hours .Trainer.Hours }} ч{{ end }}{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .TotalCalories }} · {{ .TotalCalories }} ккал{{ with pizzas .TotalCalories }} ≈ {{ . }}{{ end }}{{ end }}</summary>
+      <summary>{{ monthName .Month }}: {{ if .Outdoor.Hours }}улица — {{ km .Outdoor.DistanceKm }} км, {{ hours .Outdoor.Hours }} ч{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }}; {{ end }}{{ if .Trainer.Hours }}станок — {{ hours .Trainer.Hours }} ч{{ end }}{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .AvgIF }} · IF {{ printf "%.2f" .AvgIF }}{{ end }}{{ if .TotalCalories }} · {{ .TotalCalories }} ккал{{ with pizzas .TotalCalories }} ≈ {{ . }}{{ end }}{{ end }}</summary>
       <div class="months">
       {{ range .Rides }}
         <div class="ride" data-search="{{ date .StartTime }} {{ .Name }}">
@@ -55,7 +55,7 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
           {{ else }}
             <span>{{ km .DistanceKm }} км</span><span>{{ sec2h .DurationSec }} ч</span>
           {{ end }}
-          {{ if .AvgPower }}<span class="sub">ср. {{ .AvgPower }} Вт{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}</span>{{ else if .TSS }}<span class="sub">{{ trimFloat .TSS }} TSS</span>{{ end }}
+          {{ if .AvgPower }}<span class="sub">ср. {{ .AvgPower }} Вт{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .AvgIF }} · IF {{ printf "%.2f" .AvgIF }}{{ end }}</span>{{ else if .TSS }}<span class="sub">{{ trimFloat .TSS }} TSS</span>{{ end }}
           {{ if .AvgCadence }}<span class="sub">кад. {{ .AvgCadence }}</span>{{ end }}
           {{ if .Calories }}<span class="sub">{{ .Calories }} ккал</span>{{ end }}
         </div>

@@ -459,4 +459,28 @@ func TestImportTemperatureMixed(t *testing.T) {
 	if !w.HasTemp || w.AvgTemp != 10 {
 		t.Errorf("смесь: AvgTemp=%v HasTemp=%v, хочу 10 и true", w.AvgTemp, w.HasTemp)
 	}
+	// в сэмплах температура только у двух записей, invalid 0x7F не сохранился
+	samples, err := store.RawSamples(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withTemp := 0
+	for _, s := range samples {
+		if s.HasTemp {
+			withTemp++
+			if s.TempC != 10 {
+				t.Errorf("температура %v, хочу 10", s.TempC)
+			}
+		}
+	}
+	if withTemp != 2 {
+		t.Errorf("сэмплов с температурой %d, хочу 2", withTemp)
+	}
+	var inDB int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE workout_id = ? AND temperature IS NOT NULL`, w.ID).Scan(&inDB); err != nil {
+		t.Fatal(err)
+	}
+	if inDB != 2 {
+		t.Errorf("в БД %d сэмплов с температурой, хочу 2 (0x7F не должен попасть)", inDB)
+	}
 }

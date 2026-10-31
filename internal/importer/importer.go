@@ -170,7 +170,9 @@ func fileHash(path string) (string, error) {
 }
 
 // sessionTotals — общее время и механическая работа из FIT-сессии.
-// Ноль означает, что поле не записано (invalid-маркер или нулевая работа).
+// elapsedSec=0 — TotalElapsedTime не записан (invalid-маркер).
+// workKJ=0 — работа не записана или действительно нулевая; отдавать ли ноль
+// или NULL, решает вызывающий по сэмплам (HasWork).
 func sessionTotals(s *fit.SessionMsg) (elapsedSec int, workKJ float64) {
 	if s.TotalElapsedTime != math.MaxUint32 {
 		elapsedSec = int(s.TotalElapsedTime / 1000) // scale 1000, мс → с
