@@ -10,6 +10,16 @@
   {{ if .Wkg.HasValue }}<div class="stat"><div class="v">{{ trimFloat .Wkg.Value }}</div><div class="k">Вт/кг (станок) · {{ .Wkg.Text }}</div></div>{{ end }}
 </div>
 
+<h2>Готовность к длинным дистанциям</h2>
+<div class="stats">
+  <div class="stat"><div class="v">{{ if .Readiness.Longest90d }}{{ km .Readiness.Longest90d.KM }} км{{ else }}—{{ end }}</div><div class="k">макс. выезд за 90 дней{{ with .Readiness.Longest90d }} · {{ date .Date }}{{ end }}</div></div>
+  <div class="stat"><div class="v">{{ if .Readiness.Rolling7.Rides }}{{ km .Readiness.Rolling7.KM }} км / {{ trimFloat .Readiness.Rolling7.Hours }} ч{{ else }}—{{ end }}</div><div class="k">7 дней</div></div>
+  <div class="stat"><div class="v">{{ if .Readiness.Rolling28.Rides }}{{ km .Readiness.Rolling28.KM }} км / {{ trimFloat .Readiness.Rolling28.Hours }} ч{{ else }}—{{ end }}</div><div class="k">28 дней</div></div>
+  <div class="stat"><div class="v">{{ if .Readiness.KcalPerHour }}{{ trimFloat (deref .Readiness.KcalPerHour) }} ккал/ч{{ else }}—{{ end }}</div><div class="k">ккал/ч · 90 дней</div></div>
+  <div class="stat"><div class="v">{{ if .Readiness.AscentPer100km }}{{ trimFloat (deref .Readiness.AscentPer100km) }} м{{ else }}—{{ end }}</div><div class="k">набор на 100 км · 90 дней</div></div>
+  <div class="stat"><div class="v">{{ .Readiness.CenturyCount }} раз</div><div class="k">100+ км за всё время</div></div>
+</div>
+
 {{ if .CP.HasFit }}
 <div class="stats">
   <div class="stat"><div class="v">{{ printf "%.0f" .CP.CP }} Вт</div><div class="k">CP · огибающая MMP (за всё время, без замеров)</div></div>

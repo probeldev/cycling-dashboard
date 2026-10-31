@@ -30,7 +30,13 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"secs":      func(s int) time.Duration { return time.Duration(s) * time.Second },
 	"date":      func(t time.Time) string { return t.Format("02.01.2006") },
 	"trimFloat": trimFloat,
-	"divf":      func(a int, b float64) float64 { return float64(a) / b },
+	"deref": func(v *float64) float64 {
+		if v == nil {
+			return 0
+		}
+		return *v
+	},
+	"divf": func(a int, b float64) float64 { return float64(a) / b },
 	"pizzas": func(kcal int) string {
 		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
 		if p < 0.3 {
@@ -312,6 +318,15 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		writeJSON(w, days)
+	})
+
+	r.Get("/api/readiness", func(w http.ResponseWriter, req *http.Request) {
+		readiness, err := store.Readiness(db, time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, readiness)
 	})
 
 	r.Get("/api/records", func(w http.ResponseWriter, req *http.Request) {

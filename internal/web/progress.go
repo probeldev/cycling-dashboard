@@ -56,6 +56,11 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		readiness, err := store.Readiness(db, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		render(w, "progress.html", map[string]any{
 			"Bikes":     bikes,
 			"CP":        cpView(cp),
@@ -66,6 +71,7 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			"TSBText":   format1(tsb),
 			"TSBLabel":  tsbLabel(tsb),
 			"TodayDate": now.Format("02.01.2006"),
+			"Readiness": readiness,
 		})
 	})
 }
