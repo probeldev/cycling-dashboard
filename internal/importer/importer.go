@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -75,6 +76,9 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 // он пустой: колонка была в схеме с самого начала, но не заполнялась.
 // Идемпотентен — повторный запуск не находит таких строк и файлы не перечитывает.
 // Пользовательские поля (name, trainer_override) не трогает, ре-импорт не нужен.
+// Если файла нет на диске, строку всё равно помечаем проверенной: иначе
+// предупреждение и попытка чтения повторялись бы каждый старт. Вернувшийся
+// файл подхватит `-reimport`.
 func BackfillSubSport(db *sql.DB) (int, error) {
 	refs, err := store.MissingSubSport(db)
 	if err != nil {
@@ -84,8 +88,14 @@ func BackfillSubSport(db *sql.DB) (int, error) {
 	for _, ref := range refs {
 		activity, err := readActivity(ref.Path)
 		if err != nil {
-			// файла могло не остаться на диске — старт сервера из-за этого не падаем
+			// старт сервера из-за одного файла не падаем; пропавший файл
+			// помечаем проверенным, чтобы не читать его каждый старт
 			fmt.Fprintf(os.Stderr, "бэкфилл subsport %s: %v\n", ref.Path, err)
+			if errors.Is(err, fs.ErrNotExist) {
+				if err := store.SetSubSport(db, ref.ID, ""); err != nil {
+					return filled, err
+				}
+			}
 			continue
 		}
 		// пишем даже пустое значение: subsport_checked = 1, повторно файл не читаем

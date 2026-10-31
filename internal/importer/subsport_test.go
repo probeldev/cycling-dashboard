@@ -203,6 +203,10 @@ func TestBackfillSubSportMissingFile(t *testing.T) {
 	if _, _, err := ImportDir(db, dir); err != nil {
 		t.Fatal(err)
 	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`UPDATE workouts SET subsport = '', subsport_checked = 0`); err != nil {
 		t.Fatal(err)
 	}
@@ -216,6 +220,14 @@ func TestBackfillSubSportMissingFile(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("заполнено %d тренировок, хочу 0", n)
+	}
+	// пропавший файл помечаем проверенным: иначе предупреждение и stat
+	// повторялись бы на каждом старте
+	if got := subsportChecked(t, db, w.ID); got != 1 {
+		t.Errorf("пропавший файл: subsport_checked = %d, хочу 1", got)
+	}
+	if n2, err := BackfillSubSport(db); err != nil || n2 != 0 {
+		t.Errorf("повторный бэкфилл: %d, %v; хочу 0, nil", n2, err)
 	}
 }
 
