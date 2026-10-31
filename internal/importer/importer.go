@@ -395,8 +395,8 @@ const (
 	// impNPVersion — версия алгоритма NP. Поднимать при изменении normalizedPower:
 	// тогда бэкфилл при старте пересчитает тренировки с np_version < impNPVersion.
 	// 2 — паузы определяются общим правилом ridedata (дистанция/скорость/педали),
-	// а не любым разрывом больше 5 с.
-	impNPVersion = 2
+	// а не любым разрывом больше 5 с; 3 — окна взвешиваются по длительности записи.
+	impNPVersion = 3
 )
 
 // normalizedPower считает NP по Коггану: скользящее среднее мощности,
@@ -406,6 +406,8 @@ const (
 // Дропауты датчика заполняем последним значением (fill-forward) —
 // иначе провалы связи занижают и avg, и NP. Паузы (и только они) обрывают
 // окно; определяет их общее правило ridedata — то же, что у распределений.
+// Окна взвешиваются по длительности записи (Timings.Secs): при неравномерной
+// записи среднее по сэмплам смещает NP в сторону плотно записанных участков.
 func normalizedPower(samples []store.Sample) int {
 	if len(samples) == 0 {
 		return 0
@@ -422,7 +424,7 @@ func normalizedPower(samples []store.Sample) int {
 	}
 
 	timings := ridedata.Timings(samples)
-	var sum4, roll float64
+	var sum4, weight, roll float64
 	var n int  // сэмплов в окне
 	start := 0 // первый сэмпл окна
 	for i := range samples {
@@ -438,9 +440,10 @@ func normalizedPower(samples []store.Sample) int {
 		n++
 		avg := roll / float64(n)
 		avg2 := avg * avg
-		sum4 += avg2 * avg2
+		sum4 += avg2 * avg2 * timings[i].Secs
+		weight += timings[i].Secs
 	}
-	return int(math.Pow(sum4/float64(len(samples)), 0.25) + 0.5)
+	return int(math.Pow(sum4/weight, 0.25) + 0.5)
 }
 
 // trackSpan — диагональ bounding box трека в метрах.

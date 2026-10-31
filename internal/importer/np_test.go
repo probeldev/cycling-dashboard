@@ -210,3 +210,42 @@ func TestNormalizedPowerDeterministic(t *testing.T) {
 		t.Errorf("NP из одного сэмпла = %d, хочу 150", got)
 	}
 }
+
+// TestNormalizedPowerUniformSampleRate — равномерная запись с шагом 3 с даёт
+// тот же NP, что эквивалентная 1 Гц: окна взвешиваются по длительности.
+func TestNormalizedPowerUniformSampleRate(t *testing.T) {
+	oneHz := series(120, 1, func(i int) int {
+		if i < 60 {
+			return 100
+		}
+		return 300
+	})
+	threeSec := series(40, 1, func(i int) int {
+		if i < 20 {
+			return 100
+		}
+		return 300
+	})
+	for i := range threeSec {
+		threeSec[i].Offset *= 3
+	}
+	if a, b := normalizedPower(oneHz), normalizedPower(threeSec); a != b {
+		t.Errorf("1 Гц NP=%d, шаг 3 с NP=%d; хочу одинаковый", a, b)
+	}
+}
+
+// TestNormalizedPowerMixedSampleRate — плотный и редкий участки равной
+// длительности вносят равный вклад. Эталон 219 посчитан независимым скриптом;
+// без взвешивания получилось бы 188.
+func TestNormalizedPowerMixedSampleRate(t *testing.T) {
+	var samples []store.Sample
+	for i := 0; i < 60; i++ { // 60 с по 100 Вт с шагом 1 с
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 100, HasPwr: true})
+	}
+	for i := 0; i < 20; i++ { // 60 с по 300 Вт с шагом 3 с
+		samples = append(samples, store.Sample{Offset: int64(60 + 3*i), Power: 300, HasPwr: true})
+	}
+	if got := normalizedPower(samples); math.Abs(float64(got)-219) > 1 {
+		t.Errorf("NP = %d, хочу 219 (взвешивание по длительности)", got)
+	}
+}

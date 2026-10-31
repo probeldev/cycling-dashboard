@@ -48,7 +48,9 @@ func main() {
 	// по уже сохранённым сэмплам, без перечитывания FIT.
 	if n, skipped, err := importer.BackfillNormalizedPower(db); err != nil {
 		log.Printf("бэкфилл NP: %v", err)
-	} else if n > 0 || skipped > 0 {
+	} else if n > 0 {
+		// «пропущено» печатаем только вместе с реальной работой: иначе одна и та
+		// же строка про тренировки без поверметра повторялась бы каждый старт
 		fmt.Printf("бэкфилл NP: %d тренировок, пропущено (нет мощности): %d\n", n, skipped)
 	}
 
