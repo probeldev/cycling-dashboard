@@ -111,13 +111,17 @@ func BackfillNormalizedPower(db *sql.DB) (done, skipped int, err error) {
 	}
 	var updates []store.NormPowerUpdate
 	for _, id := range ids {
-		samples, err := store.RawSamples(db, id)
+		hasPower, err := store.HasPowerSamples(db, id)
 		if err != nil {
 			return done, skipped, err
 		}
-		if !hasPowerData(samples) {
+		if !hasPower {
 			skipped++
 			continue
+		}
+		samples, err := store.RawSamples(db, id)
+		if err != nil {
+			return done, skipped, err
 		}
 		updates = append(updates, store.NormPowerUpdate{
 			ID: id, NP: normalizedPower(samples), Version: impNPVersion,
@@ -127,16 +131,6 @@ func BackfillNormalizedPower(db *sql.DB) (done, skipped int, err error) {
 		return done, skipped, err
 	}
 	return len(updates), skipped, nil
-}
-
-// hasPowerData — есть ли в сэмплах хоть одна валидная мощность.
-func hasPowerData(samples []store.Sample) bool {
-	for _, s := range samples {
-		if s.HasPwr {
-			return true
-		}
-	}
-	return false
 }
 
 func isFIT(name string) bool {

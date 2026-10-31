@@ -448,6 +448,15 @@ func SetSubSport(db *sql.DB, id int64, subsport string) error {
 	return err
 }
 
+// HasPowerSamples — есть ли у тренировки хоть один сэмпл с валидной мощностью.
+// Дешёвая проверка, чтобы бэкфилл не вычитывал сэмплы тренировок без поверметра.
+func HasPowerSamples(db *sql.DB, id int64) (bool, error) {
+	var ok bool
+	err := db.QueryRow(`SELECT EXISTS(
+		SELECT 1 FROM samples WHERE workout_id = ? AND power IS NOT NULL)`, id).Scan(&ok)
+	return ok, err
+}
+
 // WorkoutsNeedingNP — id тренировок, у которых NP посчитан алгоритмом старше version.
 func WorkoutsNeedingNP(db *sql.DB, version int) ([]int64, error) {
 	rows, err := db.Query(`SELECT id FROM workouts WHERE np_version < ? ORDER BY id`, version)
