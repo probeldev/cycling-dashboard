@@ -158,7 +158,9 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.NotFound(w, req)
 			return
 		}
-		samples, err := store.Samples(db, id, 100000)
+		// распределение считаем по сырым сэмплам: бакет-усреднение смешало бы
+		// нули мощности с педалированием на записи 2 Гц и убило бы накат
+		samples, err := store.RawSamples(db, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

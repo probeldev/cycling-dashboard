@@ -196,6 +196,52 @@ func TestSampleSecondsMovingGapCap(t *testing.T) {
 	}
 }
 
+// TestSampleSecondsDuplicateOffsets — запись 2 Гц: две записи на секунду делят
+// интервал поровну, и нулевая мощность не растворяется в усреднении.
+func TestSampleSecondsDuplicateOffsets(t *testing.T) {
+	var samples []store.Sample
+	for sec := 0; sec < 10; sec++ {
+		samples = append(samples,
+			store.Sample{Offset: int64(sec), Power: 0, HasPwr: true},
+			store.Sample{Offset: int64(sec), Power: 200, HasPwr: true})
+	}
+	for i, got := range sampleSeconds(samples) {
+		if got != 0.5 {
+			t.Fatalf("запись %d: %.1f с, хочу 0.5", i, got)
+		}
+	}
+
+	d := distributions(samples, 0)
+	if got := d.PowerBase.CoastSecs; got != 5 {
+		t.Errorf("накат = %d с, хочу 5 (10 записей × 0.5 с)", got)
+	}
+	if got := d.PowerBase.PedalSecs; got != 5 {
+		t.Errorf("педалирование = %d с, хочу 5", got)
+	}
+	if got := d.PowerBase.TotalSecs; got != 10 {
+		t.Errorf("total = %d с, хочу 10", got)
+	}
+}
+
+// TestSampleSecondsSparseOffsets — прореженная запись (0, 3, 10, 11) при движении:
+// каждая запись получает интервал до следующей, накат не теряется.
+func TestSampleSecondsSparseOffsets(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 0, HasDist: true},
+		{Offset: 3, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 12.5, HasDist: true},
+		{Offset: 10, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 41.7, HasDist: true},
+		{Offset: 11, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 45.8, HasDist: true},
+	}
+	d := distributions(samples, 0)
+	if got := d.PowerBase.CoastSecs; got != 3 {
+		t.Errorf("накат = %d с, хочу 3 (интервал 0→3)", got)
+	}
+	// 3→10 — 7 с педалирования, 10→11 — 1 с, последняя запись — 1 с
+	if got := d.PowerBase.PedalSecs; got != 9 {
+		t.Errorf("педалирование = %d с, хочу 9", got)
+	}
+}
+
 // TestDistributionsPauseAppliesToZones — правило паузы общее для всех power-бакетов:
 // 30 с стоянки не попадают в зону, где была мощность перед остановкой.
 func TestDistributionsPauseAppliesToZones(t *testing.T) {
