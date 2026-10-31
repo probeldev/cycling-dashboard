@@ -252,3 +252,38 @@ func TestImportInvalidTimerTime(t *testing.T) {
 		t.Errorf("TSS = %v — похоже, duration взорвался", w.TSS)
 	}
 }
+
+// TestApplyMetricsAsymmetric — NP≠Avg, FTP≠NP, Duration≠Elapsed: каждая
+// формула считает от своего поля и не путает их.
+func TestApplyMetricsAsymmetric(t *testing.T) {
+	samples := series(90, 1, func(i int) int {
+		if i < 30 {
+			return 100
+		}
+		return 300
+	})
+	w := &store.Workout{
+		Duration: 90 * time.Second, ElapsedSec: 120,
+		NormPower: 210, AvgPower: 200, FTP: 300,
+	}
+	applyMetrics(w, samples)
+
+	if math.Abs(w.IF-0.7) > 1e-9 { // 210/300
+		t.Errorf("IF = %v, хочу 0.7", w.IF)
+	}
+	if math.Abs(w.TSS-1.225) > 1e-9 { // 90·210·0.7/(300·3600)·100
+		t.Errorf("TSS = %v, хочу 1.225", w.TSS)
+	}
+	if math.Abs(w.VI-1.05) > 1e-9 { // 210/200
+		t.Errorf("VI = %v, хочу 1.05", w.VI)
+	}
+	if w.AvgPowerActive != 233 { // (30·100 + 60·300) / 90
+		t.Errorf("AvgPowerActive = %d, хочу 233", w.AvgPowerActive)
+	}
+	if w.PauseSec != 30 { // 120 − 90
+		t.Errorf("PauseSec = %d, хочу 30", w.PauseSec)
+	}
+	if math.Abs(w.WorkKJ-21) > 1e-9 { // (30·100 + 60·300) / 1000
+		t.Errorf("WorkKJ = %v, хочу 21", w.WorkKJ)
+	}
+}

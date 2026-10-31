@@ -349,3 +349,30 @@ func TestWorkoutDataGapsPct(t *testing.T) {
 		t.Errorf("DataGapsPct без длительности = %v, хочу 0", got)
 	}
 }
+
+// TestSetWorkoutMetricsBatchRollback — ошибка на середине пачки откатывает
+// всю транзакцию: первая строка остаётся с прежними метриками.
+func TestSetWorkoutMetricsBatchRollback(t *testing.T) {
+	db := openTestDB(t)
+	first := insertWorkout(t, db, 1, func(int) int { return 100 })
+	second := insertWorkout(t, db, 1, func(int) int { return 100 })
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TRIGGER fail_metrics BEFORE UPDATE ON workouts
+	    WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'boom'); END`, second)); err != nil {
+		t.Fatal(err)
+	}
+	err := SetWorkoutMetricsBatch(db, []*Workout{
+		{ID: first, IF: 0.9, TSS: 50, MetricsVersion: 1},
+		{ID: second, IF: 0.8, TSS: 40, MetricsVersion: 1},
+	})
+	if err == nil {
+		t.Fatal("жду ошибку от триггера")
+	}
+	got, err := GetWorkout(db, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MetricsVersion != 0 || got.TSS != 0 || got.IF != 0 {
+		t.Errorf("первая строка не откатилась: IF=%v TSS=%v version=%d",
+			got.IF, got.TSS, got.MetricsVersion)
+	}
+}

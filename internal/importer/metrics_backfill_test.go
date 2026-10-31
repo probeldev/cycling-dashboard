@@ -2,6 +2,7 @@ package importer
 
 import (
 	"math"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -196,5 +197,37 @@ func TestMetricsInvalidatedByNP(t *testing.T) {
 	}
 	if math.Abs(w.IF-100.0/156) > 1e-9 {
 		t.Errorf("IF = %v, хочу %v", w.IF, 100.0/156)
+	}
+}
+
+// TestBackfillMetricsFromFIT — у старой строки нет elapsed/work: бэкфилл
+// дочитывает их из FIT-сессии по сохранённому пути.
+func TestBackfillMetricsFromFIT(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.fit")
+	writeSessionFIT(t, path, 12000, 100000, 100000, 100) // elapsed 100 с, работа 12 кДж
+	db := openTestDB(t)
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 100 * time.Second,
+		NormPower: 200, AvgPower: 200, FTP: 200,
+	}, "hash-metrics-fit", path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillMetrics(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл: %d, %v; хочу 1", n, err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.ElapsedSec != 100 {
+		t.Errorf("ElapsedSec = %d, хочу 100 (из FIT-сессии)", w.ElapsedSec)
+	}
+	if math.Abs(w.WorkKJ-12) > 1e-9 {
+		t.Errorf("WorkKJ = %v, хочу 12 (из TotalWork)", w.WorkKJ)
+	}
+	if w.PauseSec != 0 {
+		t.Errorf("PauseSec = %d, хочу 0", w.PauseSec)
 	}
 }

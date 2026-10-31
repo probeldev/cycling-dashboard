@@ -36,7 +36,7 @@ go build -o cycling-dashboard ./cmd/server && ./cycling-dashboard
 | `-dir` | `tracks` | папка с FIT-файлами |
 | `-db` | `cycling.db` | путь к SQLite |
 | `-addr` | `127.0.0.1:8080` | адрес сервера |
-| `-reimport` | `false` | перечитать все `.fit` из `-dir` заново (после изменений парсера). Обычные бэкфиллы (`subsport`, `np_version`) при старте отрабатывают сами |
+| `-reimport` | `false` | перечитать все `.fit` из `-dir` заново (после изменений парсера). Обычные бэкфиллы (`subsport`, `np_version`, `metrics`) при старте отрабатывают сами |
 
 Откроется `http://127.0.0.1:8080`.
 
