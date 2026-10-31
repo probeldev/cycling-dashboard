@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"cycling-dashboard/internal/importer"
 	"cycling-dashboard/internal/store"
 )
 
@@ -86,5 +89,81 @@ func TestWorkoutPageFTPKind(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "FTP на дату (улица)") {
 		t.Errorf("нет подписи источника FTP")
+	}
+}
+
+// TestTrainerToggleRecalculatesMetrics — переключение типа сразу пересчитывает
+// IF/TSS от нового FTP (без рестарта), в обе стороны; неизвестный id — 404.
+func TestTrainerToggleRecalculatesMetrics(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.AddProfileEntry(db, "ftp", 200, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp_outdoor", 250, at); err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
+		Duration:  time.Hour, NormPower: 140, AvgPower: 123, HasPower: true,
+	}, "hash-toggle", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toggle := func(id int64, v string) int {
+		t.Helper()
+		body := "value=" + v
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/workout/%d/trainer", id), strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	metrics := func() (int, string, float64, float64) {
+		t.Helper()
+		w, err := store.GetWorkout(db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w.FTP, w.FTPKind, w.IF, w.TSS
+	}
+
+	ftp, kind, iff, tss := metrics()
+	if ftp != 250 || kind != "outdoor" || math.Abs(iff-0.56) > 1e-9 || math.Abs(tss-31.36) > 0.01 {
+		t.Fatalf("исходно: FTP=%d kind=%s IF=%v TSS=%v, хочу 250/outdoor/0.56/31.36", ftp, kind, iff, tss)
+	}
+
+	if code := toggle(id, "1"); code != http.StatusOK {
+		t.Fatalf("включение станка: код %d", code)
+	}
+	ftp, kind, iff, tss = metrics()
+	if ftp != 200 || kind != "trainer" || math.Abs(iff-0.7) > 1e-9 || math.Abs(tss-49) > 0.01 {
+		t.Errorf("после станка: FTP=%d kind=%s IF=%v TSS=%v, хочу 200/trainer/0.7/49", ftp, kind, iff, tss)
+	}
+
+	if code := toggle(id, "0"); code != http.StatusOK {
+		t.Fatalf("возврат на улицу: код %d", code)
+	}
+	ftp, kind, iff, tss = metrics()
+	if ftp != 250 || kind != "outdoor" || math.Abs(iff-0.56) > 1e-9 || math.Abs(tss-31.36) > 0.01 {
+		t.Errorf("обратно: FTP=%d kind=%s IF=%v TSS=%v, хочу 250/outdoor/0.56/31.36", ftp, kind, iff, tss)
+	}
+
+	if code := toggle(99999, "1"); code != http.StatusNotFound {
+		t.Errorf("несуществующий id: код %d, хочу 404", code)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"io/fs"
 	"log"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"cycling-dashboard/internal/importer"
 	"cycling-dashboard/internal/store"
 )
 
@@ -90,7 +92,27 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 
 	r.Post("/workout/{id}/trainer", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
-		if err := store.SetTrainerOverride(db, id, req.FormValue("value") == "1"); err != nil {
+		tx, err := db.Begin()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+		if err := store.SetTrainerOverrideTx(tx, id, req.FormValue("value") == "1"); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, req)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// FTP станка и улицы — разные: после смены типа метрики надо пересчитать
+		// сразу, иначе до рестарта API отдаст IF/TSS от прежней базы
+		if _, err := importer.BackfillMetricsTx(tx); err != nil {
+			http.Error(w, "не удалось пересчитать метрики: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := tx.Commit(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

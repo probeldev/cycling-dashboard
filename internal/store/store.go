@@ -421,23 +421,31 @@ func nullableMetric(v float64, ok bool) any {
 
 // SetTrainerOverride меняет тип тренировки. Вместе с флагом пересчитывает FTP:
 // у станка и улицы разные источники, а TrainerOverride влияет на выбор.
+// Метрики здесь только инвалидируются — пересчитывает их вызывающий
+// (веб-хендлер делает это в той же транзакции через BackfillMetricsTx).
 func SetTrainerOverride(db *sql.DB, id int64, trainer bool) error {
-	v := 0
-	if trainer {
-		v = 1
-	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`UPDATE workouts SET trainer_override = ?, trainer = ? WHERE id = ?`, v, v, id); err != nil {
-		return err
-	}
-	if err := restampWorkoutTx(tx, id); err != nil {
+	if err := SetTrainerOverrideTx(tx, id, trainer); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// SetTrainerOverrideTx — то же в переданной транзакции. Несуществующий id
+// возвращает sql.ErrNoRows (из перештамповки).
+func SetTrainerOverrideTx(tx *sql.Tx, id int64, trainer bool) error {
+	v := 0
+	if trainer {
+		v = 1
+	}
+	if _, err := tx.Exec(`UPDATE workouts SET trainer_override = ?, trainer = ? WHERE id = ?`, v, v, id); err != nil {
+		return err
+	}
+	return restampWorkoutTx(tx, id)
 }
 
 type Sample struct {
