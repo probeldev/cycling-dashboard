@@ -44,13 +44,13 @@ type Syncer struct {
 	Dir  string
 	Logf func(string)
 
-	mu           sync.Mutex
-	combine      bool
-	replyOK      bool
-	data         []byte
-	fileCheck    []byte
-	trigger      bool
-	count        int
+	mu            sync.Mutex
+	combine       bool
+	replyOK       bool
+	data          []byte
+	fileCheck     []byte
+	trigger       bool
+	count         int
 	notifications chan notification
 }
 

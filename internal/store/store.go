@@ -397,7 +397,7 @@ func BackfillProfileStamps(db *sql.DB) error {
 		{"ftp", "ftp_w"},
 		{"weight", "weight_kg"},
 	} {
-		if _, err := db.Exec(`UPDATE workouts SET ` + m.column + ` = COALESCE(
+		if _, err := db.Exec(`UPDATE workouts SET `+m.column+` = COALESCE(
 			(SELECT value FROM profile_history
 			 WHERE kind = ? AND recorded_at <= start_time
 			 ORDER BY recorded_at DESC LIMIT 1),

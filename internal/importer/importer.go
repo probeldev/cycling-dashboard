@@ -393,8 +393,8 @@ func normalizedPower(samples []store.Sample) int {
 	}
 
 	var sum4, roll float64
-	var n    int // сэмплов в окне
-	start := 0   // первый сэмпл окна
+	var n int  // сэмплов в окне
+	start := 0 // первый сэмпл окна
 	for i := range samples {
 		if i > 0 && samples[i].Offset-samples[i-1].Offset > npPauseSec {
 			start, roll, n = i, 0, 0 // авто-пауза: данные до неё в окно не тянем
