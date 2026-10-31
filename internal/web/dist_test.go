@@ -122,122 +122,24 @@ func TestDistributionsCoastWithZones(t *testing.T) {
 	}
 }
 
-// TestSampleSecondsPedalingWithoutSpeed — ни дистанции, ни скорости нет, но
-// мощность и каденс есть: это прореживание записи при движении, а не пауза.
-func TestSampleSecondsPedalingWithoutSpeed(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 120, HasPwr: true, Cadence: 90, HasCad: true},
-		{Offset: 30, Power: 120, HasPwr: true, Cadence: 90, HasCad: true},
-	}
-	times := sampleSeconds(samples)
-	if times[0] != 30 {
-		t.Errorf("педалирование без скорости: %.1f с, хочу 30", times[0])
-	}
-	if times[1] != 1 {
-		t.Errorf("последняя запись: %.1f с, хочу 1", times[1])
-	}
-}
-
-// TestSampleSecondsStopWithDistance — тот же разрыв, но дистанция не выросла:
-// это стоянка, даже если в записи осталась мощность.
-func TestSampleSecondsStopWithDistance(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 120, HasPwr: true, DistanceM: 100, HasDist: true},
-		{Offset: 30, Power: 120, HasPwr: true, DistanceM: 100, HasDist: true},
-	}
-	if got := sampleSeconds(samples)[0]; got != 1 {
-		t.Errorf("стоянка с мощностью: %.1f с, хочу 1", got)
-	}
-}
-
-// TestSampleSecondsSmartRecording — редкая запись при движении (smart recording)
-// не пауза: интервал засчитывается целиком.
-func TestSampleSecondsSmartRecording(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
-		{Offset: 30, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
-	}
-	if got := sampleSeconds(samples)[0]; got != 30 {
-		t.Errorf("движение на 20 км/ч: %.1f с, хочу 30", got)
-	}
-}
-
-// TestSampleSecondsCoastSlowRecording — накат на скорости при шаге записи 10 с:
-// дистанция растёт, значит ехали, и все 10 с — накат.
-func TestSampleSecondsCoastSlowRecording(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 0, HasDist: true},
-		{Offset: 10, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 41.7, HasDist: true},
-	}
-	if got := sampleSeconds(samples)[0]; got != 10 {
-		t.Errorf("качение на 15 км/ч: %.1f с, хочу 10", got)
-	}
-}
-
-// TestSampleSecondsCoastStop — накат, потом стоянка: 10 с интервал не накат.
-func TestSampleSecondsCoastStop(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 0, HasPwr: true},
-		{Offset: 10, Power: 0, HasPwr: true},
-	}
-	if got := sampleSeconds(samples)[0]; got != 1 {
-		t.Errorf("стоянка на 0 Вт: %.1f с, хочу 1", got)
-	}
-}
-
-// TestSampleSecondsStaleSpeed — как на тренировке 418: перед авто-паузой в записи
-// осталась последняя «ещё ехавшая» скорость 7.5 км/ч, но дистанция не выросла.
-func TestSampleSecondsStaleSpeed(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 7.5 / 3.6, DistanceM: 361.74, HasDist: true},
-		{Offset: 37, Power: 0, HasPwr: true, DistanceM: 361.74, HasDist: true},
-	}
-	if got := sampleSeconds(samples)[0]; got != 1 {
-		t.Errorf("стоянка со «старой» скоростью: %.1f с, хочу 1 (дистанция не выросла)", got)
-	}
-}
-
-// TestSampleSecondsMovingGapCap — ехали, но запись пропала надолго: потолок maxGapSec.
-func TestSampleSecondsMovingGapCap(t *testing.T) {
-	samples := []store.Sample{
-		{Offset: 0, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
-		{Offset: 120, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
-	}
-	if got := sampleSeconds(samples)[0]; got != maxGapSec {
-		t.Errorf("движение с разрывом 120 с: %.1f с, хочу потолок %d", got, maxGapSec)
-	}
-}
-
-// TestSampleSecondsDuplicateOffsets — запись 2 Гц: две записи на секунду делят
-// интервал поровну, и нулевая мощность не растворяется в усреднении.
-func TestSampleSecondsDuplicateOffsets(t *testing.T) {
+// TestDistributionsDuplicateOffsets — запись 2 Гц: две записи на секунду делят
+// время поровну, и нулевая мощность не растворяется в усреднении.
+func TestDistributionsDuplicateOffsets(t *testing.T) {
 	var samples []store.Sample
 	for sec := 0; sec < 10; sec++ {
 		samples = append(samples,
 			store.Sample{Offset: int64(sec), Power: 0, HasPwr: true},
 			store.Sample{Offset: int64(sec), Power: 200, HasPwr: true})
 	}
-	for i, got := range sampleSeconds(samples) {
-		if got != 0.5 {
-			t.Fatalf("запись %d: %.1f с, хочу 0.5", i, got)
-		}
-	}
-
 	d := distributions(samples, 0)
-	if got := d.PowerBase.CoastSecs; got != 5 {
-		t.Errorf("накат = %d с, хочу 5 (10 записей × 0.5 с)", got)
-	}
-	if got := d.PowerBase.PedalSecs; got != 5 {
-		t.Errorf("педалирование = %d с, хочу 5", got)
-	}
-	if got := d.PowerBase.TotalSecs; got != 10 {
-		t.Errorf("total = %d с, хочу 10", got)
+	if got := d.PowerBase; got.CoastSecs != 5 || got.PedalSecs != 5 || got.TotalSecs != 10 {
+		t.Errorf("2 Гц: %+v, хочу coast=5 pedal=5 total=10", got)
 	}
 }
 
-// TestSampleSecondsSparseOffsets — прореженная запись (0, 3, 10, 11) при движении:
+// TestDistributionsSparseOffsets — прореженная запись (0, 3, 10, 11) при движении:
 // каждая запись получает интервал до следующей, накат не теряется.
-func TestSampleSecondsSparseOffsets(t *testing.T) {
+func TestDistributionsSparseOffsets(t *testing.T) {
 	samples := []store.Sample{
 		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 0, HasDist: true},
 		{Offset: 3, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 12.5, HasDist: true},

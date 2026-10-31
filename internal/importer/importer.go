@@ -16,6 +16,7 @@ import (
 
 	"github.com/tormoder/fit"
 
+	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
 )
 
@@ -376,11 +377,12 @@ func maxValidFloat(samples []store.Sample, get func(store.Sample) (float64, bool
 
 const (
 	npWindowSec = 30 // скользящее окно Коггана, секунд
-	npPauseSec  = 5  // разрыв между сэмплами больше — авто-пауза, окно через неё не тянем
 
 	// impNPVersion — версия алгоритма NP. Поднимать при изменении normalizedPower:
 	// тогда бэкфилл при старте пересчитает тренировки с np_version < impNPVersion.
-	impNPVersion = 1
+	// 2 — паузы определяются общим правилом ridedata (дистанция/скорость/педали),
+	// а не любым разрывом больше 5 с.
+	impNPVersion = 2
 )
 
 // normalizedPower считает NP по Коггану: скользящее среднее мощности,
@@ -388,7 +390,8 @@ const (
 // Окно — 30 СЕКУНД по ts_offset, а не 30 сэмплов: при записи не 1 Гц
 // (и после пауз) окно в сэмплах плывёт. Сэмплы должны идти по возрастанию Offset.
 // Дропауты датчика заполняем последним значением (fill-forward) —
-// иначе провалы связи занижают и avg, и NP.
+// иначе провалы связи занижают и avg, и NP. Паузы (и только они) обрывают
+// окно; определяет их общее правило ridedata — то же, что у распределений.
 func normalizedPower(samples []store.Sample) int {
 	if len(samples) == 0 {
 		return 0
@@ -404,11 +407,12 @@ func normalizedPower(samples []store.Sample) int {
 		pwr[i] = last
 	}
 
+	timings := ridedata.Timings(samples)
 	var sum4, roll float64
 	var n int  // сэмплов в окне
 	start := 0 // первый сэмпл окна
 	for i := range samples {
-		if i > 0 && samples[i].Offset-samples[i-1].Offset > npPauseSec {
+		if i > 0 && timings[i-1].Pause {
 			start, roll, n = i, 0, 0 // авто-пауза: данные до неё в окно не тянем
 		}
 		for start < i && samples[i].Offset-samples[start].Offset >= npWindowSec {

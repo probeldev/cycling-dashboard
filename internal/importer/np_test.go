@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
 )
 
@@ -103,20 +104,25 @@ func TestNormalizedPowerConstant(t *testing.T) {
 // данные до остановки с данными после неё.
 func TestNormalizedPowerPauseBreaksWindow(t *testing.T) {
 	// 40 с по 100 Вт, авто-пауза 20 с (меньше окна, поэтому без правила
-	// про разрыв старые сэмплы попали бы в окно), затем 40 с по 300 Вт
+	// про разрыв старые сэмплы попали бы в окно), затем 40 с по 300 Вт.
+	// Стоянку помечаем дистанцией: она не растёт через разрыв.
 	var samples []store.Sample
 	for i := 0; i < 40; i++ {
-		samples = append(samples, store.Sample{Offset: int64(i), Power: 100, HasPwr: true})
+		samples = append(samples, store.Sample{
+			Offset: int64(i), Power: 100, HasPwr: true, DistanceM: 100, HasDist: true,
+		})
 	}
 	for i := 0; i < 40; i++ {
-		samples = append(samples, store.Sample{Offset: int64(60 + i), Power: 300, HasPwr: true})
+		samples = append(samples, store.Sample{
+			Offset: int64(60 + i), Power: 300, HasPwr: true, DistanceM: 100, HasDist: true,
+		})
 	}
-	if gap := samples[40].Offset - samples[39].Offset; gap <= npPauseSec {
+	if gap := samples[40].Offset - samples[39].Offset; gap <= ridedata.PauseGapSec {
 		t.Fatalf("разрыв %d с не считается авто-паузой, тест ничего не проверяет", gap)
 	}
 
 	got := float64(normalizedPower(samples))
-	wantPaused := refNP(samples, npWindowSec, npPauseSec)
+	wantPaused := refNP(samples, npWindowSec, ridedata.PauseGapSec)
 	wantMixed := refNP(samples, npWindowSec, 0)
 
 	if math.Abs(got-wantPaused) > 1 {
@@ -132,12 +138,17 @@ func TestNormalizedPowerPauseBreaksWindow(t *testing.T) {
 // скриптом по спецификации (окно 30 с по ts_offset, x⁴, среднее, ⁴√),
 // а не этой же реализацией.
 func TestNormalizedPowerGolden(t *testing.T) {
+	// пауза помечена дистанцией: она не растёт через разрыв
 	var pause []store.Sample
 	for i := 0; i < 40; i++ {
-		pause = append(pause, store.Sample{Offset: int64(i), Power: 100, HasPwr: true})
+		pause = append(pause, store.Sample{
+			Offset: int64(i), Power: 100, HasPwr: true, DistanceM: 100, HasDist: true,
+		})
 	}
 	for i := 0; i < 40; i++ {
-		pause = append(pause, store.Sample{Offset: int64(60 + i), Power: 300, HasPwr: true})
+		pause = append(pause, store.Sample{
+			Offset: int64(60 + i), Power: 300, HasPwr: true, DistanceM: 100, HasDist: true,
+		})
 	}
 	saw := series(300, 1, func(i int) int { return 100 + i%50 })
 	for i := 0; i < len(saw); i += 17 {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
 )
 
@@ -186,81 +187,13 @@ const (
 	minMovingMs = 1.0 / 3.6
 )
 
-// sampleSeconds — время каждой записи. Время записи — интервал до следующей;
-// записи с одинаковым ts_offset (запись 2 Гц) делят интервал до следующего
-// РАЗЛИЧНОГО offset поровну. Разрыв больше pauseGapSec — это либо авто-пауза
-// (1 с), либо прореживание записи при движении (полный интервал, но не больше
-// maxGapSec). Правило одно для всех метрик — отдельных исключений для наката нет.
-func sampleSeconds(samples []store.Sample) []float64 {
-	out := make([]float64, len(samples))
-	for start := 0; start < len(samples); {
-		end := start + 1
-		for end < len(samples) && samples[end].Offset == samples[start].Offset {
-			end++
-		}
-		share := groupSeconds(samples, start, end) / float64(end-start)
-		for i := start; i < end; i++ {
-			out[i] = share
-		}
-		start = end
-	}
-	return out
-}
-
-// groupSeconds — время группы записей с одинаковым offset.
-func groupSeconds(samples []store.Sample, start, end int) float64 {
-	if end >= len(samples) {
-		return 1 // после последней записи времени нет
-	}
-	dt := float64(samples[end].Offset - samples[start].Offset)
-	if dt <= 0 {
-		return 1 // записи не по порядку — не размазываем
-	}
-	if dt > pauseGapSec && isPause(samples, start, end) {
-		return 1
-	}
-	return math.Min(dt, maxGapSec)
-}
-
-// isPause — разрыв это стоянка, а не прореживание записи (smart recording).
-// Приоритет признаков:
-//  1. дистанция — если известна с обеих сторон, решает её прирост: перед
-//     авто-паузой в записи остаётся последняя «ещё ехавшая» скорость (7–8 км/ч),
-//     а пройденное расстояние уже не растёт;
-//  2. скорость на границе разрыва — от 1 км/ч ехали (медленнее или нет данных —
-//     решает следующий пункт);
-//  3. педалирование: мощность или каденс есть — ехали, иначе стояли.
-func isPause(samples []store.Sample, start, end int) bool {
-	next := samples[end]
-	dt := float64(next.Offset - samples[start].Offset)
-	if samples[start].HasDist && next.HasDist && dt > 0 {
-		return (next.DistanceM-samples[start].DistanceM)/dt < minMovingMs
-	}
-	for j := max(0, start-1); j <= end; j++ {
-		if samples[j].SpeedMs >= minMovingMs {
-			return false
-		}
-	}
-	return !pedaling(samples, start, end)
-}
-
-// pedaling — в группе записей есть мощность или каденс.
-func pedaling(samples []store.Sample, start, end int) bool {
-	for i := start; i < end; i++ {
-		if samples[i].Power != 0 || samples[i].Cadence != 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // distributions считает время в каждом диапазоне. Если задан FTP (штамп
 // тренировки), мощность режется на зоны Коггана, иначе — по фиксированным
 // диапазонам. Нулевая мощность попадает в отдельный бакет наката, плюс
 // считаются обе базы времени — педалирование и педалирование вместе с накатом.
 func distributions(samples []store.Sample, ftp int) dist {
 	out := dist{Buckets: map[string][]distEntry{}}
-	times := sampleSeconds(samples)
+	times := ridedata.Timings(samples)
 	for kind, buckets := range distDefs {
 		if kind == "power" {
 			buckets = powerBuckets(ftp)
@@ -273,7 +206,7 @@ func distributions(samples []store.Sample, ftp int) dist {
 				continue
 			}
 			hasData = true
-			secs[j] += times[i]
+			secs[j] += times[i].Secs
 		}
 		if !hasData {
 			continue
