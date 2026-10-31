@@ -69,17 +69,7 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 			w.WeightKg = kg
 		}
 		applyMetrics(w, samples, w.ElapsedSec, w.WorkKJ)
-		id, err := store.InsertWorkout(db, w, hash, full, fi.ModTime().Unix())
-		if err != nil {
-			return err
-		}
-		if err := store.InsertSamples(db, id, samples); err != nil {
-			return err
-		}
-		if err := store.SetWorkoutZones(db, id, zonesOf(samples, w.FTP), zonesVersion); err != nil {
-			return err
-		}
-		if err := store.SetWorkoutMMP(db, id, mmpRecords(samples), mmpVersion); err != nil {
+		if err := importWorkout(db, w, samples, hash, full, fi.ModTime().Unix()); err != nil {
 			return err
 		}
 		imported++
@@ -164,6 +154,30 @@ func BackfillNormalizedPower(db *sql.DB) (done, skipped int, err error) {
 		return done, skipped, err
 	}
 	return len(updates), skipped, nil
+}
+
+// importWorkout пишет тренировку, сэмплы, зоны и MMP одной транзакцией:
+// сбой на любом шаге не оставляет старые рекорды/зоны рядом с новыми сэмплами.
+func importWorkout(db *sql.DB, w *store.Workout, samples []store.Sample, hash, path string, mtime int64) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	id, err := store.InsertWorkout(tx, w, hash, path, mtime)
+	if err != nil {
+		return err
+	}
+	if err := store.InsertSamples(tx, id, samples); err != nil {
+		return err
+	}
+	if err := store.SetWorkoutZones(tx, id, zonesOf(samples, w.FTP), zonesVersion); err != nil {
+		return err
+	}
+	if err := store.SetWorkoutMMP(tx, id, mmpRecords(samples), mmpVersion); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func isFIT(name string) bool {

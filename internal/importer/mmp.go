@@ -10,26 +10,34 @@ import (
 )
 
 // mmpVersion — версия расчёта MMP; поднимать при изменении формулы.
-const mmpVersion = 1
+// 2 — накат (power == 0) входит в окно временем, а не выбрасывается.
+const mmpVersion = 2
 
 // mmpWindows — окна MMP в секундах.
 var mmpWindows = []int{1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 7200}
 
-// mmpOf — лучшие средние мощности по окнам. Считаем только по записям с
-// power > 0 (время педалирования), вес — ridedata.Timings.Secs. Пауза обрывает
-// сегмент, поэтому окно не склеивает мощность до и после остановки.
-// Окно — последовательность записей, набравшая не меньше window секунд
-// активного времени; если запись короче — значения для окна нет.
+// mmpOf — лучшие средние мощности по окнам. В окно входят все записи с
+// HasPwr: power > 0 даёт работу, power == 0 (накат) даёт только время и честно
+// разбавляет среднюю. Вес — ridedata.Timings.Secs. Пауза обрывает сегмент,
+// поэтому окно не склеивает мощность до и после остановки.
+// Дропаут датчика (HasPwr == false) просто пропускается, сегмент не рвём:
+// время дропаута не засчитывается, средняя от этого не завышается, а разрыв
+// на каждом дропауте сделал бы длинные окна невычислимыми (на 418 97 дропаутов
+// и окно 600 с упало бы с 160 до 68 Вт).
+// Окно — последовательность записей, набравшая не меньше window секунд; если
+// запись короче — значения для окна нет. Окно не может начинаться с записи
+// длиннее самого окна (иначе «1-секундный пик» стал бы средним за 60 с).
 func mmpOf(samples []store.Sample) map[int]float64 {
 	times := ridedata.Timings(samples)
 
-	type segment struct{ t, p []float64 } // накопленное время и работа
+	type segment struct{ t, p, dt []float64 } // накопленное время, работа, длительности
 	var segments []segment
 	cur := segment{t: []float64{0}, p: []float64{0}}
 	for i, s := range samples {
-		if s.HasPwr && s.Power > 0 {
+		if s.HasPwr {
 			cur.t = append(cur.t, cur.t[len(cur.t)-1]+times[i].Secs)
 			cur.p = append(cur.p, cur.p[len(cur.p)-1]+float64(s.Power)*times[i].Secs)
+			cur.dt = append(cur.dt, times[i].Secs)
 		}
 		if times[i].Pause {
 			if len(cur.t) > 1 {
@@ -48,6 +56,9 @@ func mmpOf(samples []store.Sample) map[int]float64 {
 		best, found := 0.0, false
 		for _, sg := range segments {
 			for i := 0; i < len(sg.t)-1; i++ {
+				if sg.dt[i] > wf {
+					continue // запись длиннее окна — не может его представлять
+				}
 				j := sort.SearchFloat64s(sg.t, sg.t[i]+wf)
 				if j >= len(sg.t) {
 					break

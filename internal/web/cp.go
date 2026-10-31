@@ -58,12 +58,18 @@ func fitCP(records []store.PowerRecord) cpResult {
 	}
 	den := n*sxx - sx*sx
 	if den == 0 {
+		res.LowConfidence = true
 		return res
 	}
 	slope := (n*sxy - sx*sy) / den // W'
 	intercept := (sy - slope*sx) / n
+	// CP и W' должны быть положительными: плоская/убывающая кривая — не модель
+	if intercept <= 0 || slope <= 0 {
+		res.LowConfidence = true
+		return res
+	}
 
-	// R² — насколько модель объясняет разброс точек
+	// R² — насколько модель объясняет разброс точек (порог — по неокруглённому)
 	my := sy / n
 	var ssRes, ssTot float64
 	for i := range xs {
@@ -71,18 +77,18 @@ func fitCP(records []store.PowerRecord) cpResult {
 		ssRes += (ys[i] - pred) * (ys[i] - pred)
 		ssTot += (ys[i] - my) * (ys[i] - my)
 	}
-	r2 := 1.0
+	r2raw := 1.0
 	if ssTot > 0 {
-		r2 = 1 - ssRes/ssTot
+		r2raw = 1 - ssRes/ssTot
 	}
 
 	cp := math.Round(intercept*10) / 10
 	wp := math.Round(slope)
-	r2 = math.Round(r2*1000) / 1000
+	r2 := math.Round(r2raw*1000) / 1000
 	res.CP = &cp
 	res.WPrime = &wp
 	res.R2 = &r2
-	res.LowConfidence = r2 < 0.9
+	res.LowConfidence = r2raw < 0.9
 	return res
 }
 

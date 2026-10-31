@@ -114,3 +114,32 @@ func TestCPAPI(t *testing.T) {
 		t.Errorf("period=week: код %d, хочу 400", rec.Code)
 	}
 }
+
+// TestFitCPFlatAndDecreasing — плоская и убывающая кривые не дают CP/W'.
+func TestFitCPFlatAndDecreasing(t *testing.T) {
+	flat := fitCP([]store.PowerRecord{
+		{WindowSec: 120, Watts: 200}, {WindowSec: 300, Watts: 200}, {WindowSec: 600, Watts: 200},
+	})
+	if flat.CP != nil || flat.WPrime != nil || !flat.LowConfidence {
+		t.Errorf("плоская кривая: %+v", flat)
+	}
+	// мощность растёт с длительностью — физически невозможно
+	bad := fitCP([]store.PowerRecord{
+		{WindowSec: 120, Watts: 150}, {WindowSec: 300, Watts: 200}, {WindowSec: 600, Watts: 250},
+	})
+	if bad.CP != nil || bad.WPrime != nil || !bad.LowConfidence {
+		t.Errorf("убывающая кривая (slope<0): %+v", bad)
+	}
+}
+
+// TestFitCPThreePoints — ровно три точки достаточно для фита.
+func TestFitCPThreePoints(t *testing.T) {
+	res := fitCP([]store.PowerRecord{
+		{WindowSec: 120, Watts: 200 + 20000.0/120},
+		{WindowSec: 300, Watts: 200 + 20000.0/300},
+		{WindowSec: 600, Watts: 200 + 20000.0/600},
+	})
+	if res.CP == nil || math.Abs(*res.CP-200) > 2 || math.Abs(*res.WPrime-20000) > 200 || res.Points != 3 {
+		t.Errorf("три точки: %+v", res)
+	}
+}

@@ -88,10 +88,11 @@ func TestMMP418Golden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// накат входит в окно временем: длинные окна ниже, чем «по педалированию»
 	want := map[int]float64{
-		1: 436, 2: 395, 5: 376.6, 10: 367.6, 20: 323.6, 30: 271.4,
-		60: 218.1, 120: 200.2, 300: 184.9, 600: 176.4, 900: 170.9,
-		1200: 166.4, 1800: 141.6,
+		1: 436, 2: 395, 5: 376.6, 10: 367.6, 20: 323.6, 30: 251.4,
+		60: 218.1, 120: 185.7, 300: 169.9, 600: 160.3, 900: 156.9,
+		1200: 153.9, 1800: 121.7,
 	}
 	m := mmpOf(samples)
 	if len(m) != len(want) {
@@ -148,5 +149,147 @@ func TestImportAndBackfillMMP(t *testing.T) {
 	}
 	if n, err := BackfillMMP(db); err != nil || n != 0 {
 		t.Errorf("повторный бэкфилл: %d, %v; хочу 0", n, err)
+	}
+}
+
+// TestMMPCoasting — накат (power == 0) идёт временем: окно 120 с не «склеивает»
+// два усилия по 60 с.
+func TestMMPCoasting(t *testing.T) {
+	var samples []store.Sample
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 300, HasPwr: true})
+	}
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{Offset: int64(60 + i), Power: 0, HasPwr: true})
+	}
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{Offset: int64(120 + i), Power: 300, HasPwr: true})
+	}
+	m := mmpOf(samples)
+	if got := m[60]; math.Abs(got-300) > 1e-9 {
+		t.Errorf("MMP 60 = %v, хочу 300", got)
+	}
+	if got := m[120]; math.Abs(got-150) > 1e-9 {
+		t.Errorf("MMP 120 = %v, хочу 150 (с накатом)", got)
+	}
+}
+
+// TestMMPDropoutSkipped — дропаут датчика пропускается без разрыва сегмента
+// (см. комментарий у mmpOf): разрыв на каждом дропауте убил бы длинные окна.
+func TestMMPDropoutSkipped(t *testing.T) {
+	var samples []store.Sample
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 300, HasPwr: true})
+	}
+	for i := 0; i < 10; i++ {
+		samples = append(samples, store.Sample{Offset: int64(60 + i)}) // дропаут
+	}
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{Offset: int64(70 + i), Power: 300, HasPwr: true})
+	}
+	m := mmpOf(samples)
+	if got := m[120]; math.Abs(got-300) > 1e-9 {
+		t.Errorf("MMP 120 = %v, хочу 300 (дропаут не рвёт сегмент и не добавляет время)", got)
+	}
+}
+
+// TestMMPShortWindow — запись длиннее окна не может его представлять:
+// «1-секундный пик» не должен становиться средним за 60 с.
+func TestMMPShortWindow(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 300, HasPwr: true},  // длительность 60 с
+		{Offset: 60, Power: 100, HasPwr: true}, // длительность 1 с
+	}
+	m := mmpOf(samples)
+	if got := m[1]; math.Abs(got-100) > 1e-9 {
+		t.Errorf("MMP 1 = %v, хочу 100: запись 60 с не может быть 1-секундным окном", got)
+	}
+}
+
+// TestReimportResetsMMP — повторная запись тренировки сбрасывает версию и
+// удаляет старые рекорды; бэкфилл восстанавливает их по новым сэмплам.
+func TestReimportResetsMMP(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "reset.fit")
+	writeFIT(t, path, fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recs, err := store.WorkoutMMP(db, w.ID); err != nil || len(recs) == 0 {
+		t.Fatalf("исходные записи: %v, %v", recs, err)
+	}
+	var hash, filePath string
+	if err := db.QueryRow(`SELECT file_hash, file_path FROM workouts WHERE id = ?`, w.ID).Scan(&hash, &filePath); err != nil {
+		t.Fatal(err)
+	}
+
+	// upsert той же тренировки (как при импорте) сбрасывает MMP и рекорды
+	id, err := store.InsertWorkout(db, w, hash, filePath, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := db.QueryRow(`SELECT mmp_version FROM workouts WHERE id = ?`, id).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 0 {
+		t.Errorf("mmp_version = %d, хочу 0 после повторной записи", version)
+	}
+	if recs, err := store.WorkoutMMP(db, id); err != nil || len(recs) != 0 {
+		t.Errorf("старые рекорды не удалены: %v, %v", recs, err)
+	}
+
+	// досборка: сэмплы + бэкфилл возвращают рекорды
+	_, samples, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillMMP(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл MMP: %d, %v; хочу 1", n, err)
+	}
+	if recs, err := store.WorkoutMMP(db, id); err != nil || len(recs) == 0 {
+		t.Errorf("бэкфилл не восстановил рекорды: %v, %v", recs, err)
+	}
+}
+
+// TestImportAtomicOnSampleError — сбой при вставке сэмплов откатывает всю
+// транзакцию тренировки: старые MMP/зоны остаются согласованными.
+func TestImportAtomicOnSampleError(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "atomic.fit"), fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER fail_samples BEFORE INSERT ON samples
+	    BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportDir(db, dir, true); err == nil {
+		t.Fatal("жду ошибку от триггера")
+	}
+	// состояние прежнее: рекорды на месте, версия актуальна
+	var version int
+	if err := db.QueryRow(`SELECT mmp_version FROM workouts WHERE id = ?`, w.ID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != mmpVersion {
+		t.Errorf("mmp_version = %d, хочу %d (транзакция должна откатиться)", version, mmpVersion)
+	}
+	recs, err := store.WorkoutMMP(db, w.ID)
+	if err != nil || len(recs) == 0 {
+		t.Errorf("после отката рекорды пропали: %v, %v", recs, err)
 	}
 }

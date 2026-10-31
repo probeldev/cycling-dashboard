@@ -50,6 +50,8 @@ func BestRecords(db DBTX, from, to time.Time) ([]Record, error) {
 // WorkoutPRs — для каждого окна тренировки список периодов, где она держит
 // рекорд: all, 365d, 90d, 30d (по убыванию значимости; равенство — у более
 // ранней тренировки).
+// Четыре скана таблицы (по одному на период) — осознанно: power_records
+// маленькая (окна × тренировки с мощностью), а запрос только на деталке.
 func WorkoutPRs(db DBTX, id int64, now time.Time) (map[int][]string, error) {
 	to := StartOfDay(now).AddDate(0, 0, 1)
 	periods := []struct {

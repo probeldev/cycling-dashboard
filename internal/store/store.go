@@ -18,6 +18,7 @@ type DBTX interface {
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
+	Prepare(query string) (*sql.Stmt, error)
 }
 
 type Workout struct {
@@ -350,7 +351,7 @@ func Changed(db *sql.DB, hash string, mtime int64) (bool, error) {
 	return stored != mtime, nil
 }
 
-func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int64, error) {
+func InsertWorkout(db DBTX, w *Workout, hash, path string, mtime int64) (int64, error) {
 	tr := 0
 	if w.Trainer {
 		tr = 1
@@ -391,7 +392,8 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	      no_power_sec=excluded.no_power_sec, suspect_dropout_sec=excluded.suspect_dropout_sec,
 	      elapsed_sec=excluded.elapsed_sec, pause_sec=excluded.pause_sec,
 	      work_kj=excluded.work_kj, avg_temp=excluded.avg_temp,
-	      metrics_version=excluded.metrics_version`,
+	      metrics_version=excluded.metrics_version,
+	      mmp_version=0, zones_version=0`,
 		hash, path, mtime, w.StartTime.UTC().Format(time.RFC3339),
 		w.StartTime.Year(), int(w.StartTime.Month()), w.SubSport, gps, tr,
 		int64(w.Duration.Seconds()), dist,
@@ -411,6 +413,11 @@ func InsertWorkout(db *sql.DB, w *Workout, hash, path string, mtime int64) (int6
 	}
 	var id int64
 	if err := db.QueryRow(`SELECT id FROM workouts WHERE file_hash = ?`, hash).Scan(&id); err != nil {
+		return 0, err
+	}
+	// старые MMP/зоны удаляем до вставки новых: при сбое бэкфилл пересчитает
+	// по mmp_version/zones_version = 0, а не оставит рекорды от прошлого файла
+	if _, err := db.Exec(`DELETE FROM power_records WHERE workout_id = ?`, id); err != nil {
 		return 0, err
 	}
 	if _, err := db.Exec(`DELETE FROM samples WHERE workout_id = ?`, id); err != nil {
@@ -490,13 +497,23 @@ type Sample struct {
 	HasTemp   bool
 }
 
-func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
+func InsertSamples(q DBTX, workoutID int64, samples []Sample) error {
+	if db, ok := q.(*sql.DB); ok {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if err := insertSamples(tx, workoutID, samples); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
-	defer tx.Rollback()
-	stmt, err := tx.Prepare(`INSERT INTO samples (workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m, temperature)
+	return insertSamples(q, workoutID, samples)
+}
+
+func insertSamples(q DBTX, workoutID int64, samples []Sample) error {
+	stmt, err := q.Prepare(`INSERT INTO samples (workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m, temperature)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
@@ -529,7 +546,7 @@ func InsertSamples(db *sql.DB, workoutID int64, samples []Sample) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // ProfileEntry — запись истории веса или FTP.
