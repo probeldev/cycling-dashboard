@@ -117,29 +117,31 @@ func BackfillSubSport(db *sql.DB) (int, error) {
 // BackfillNormalizedPower пересчитывает NP у тренировок, посчитанных старым
 // алгоритмом. Сэмплы уже в БД — FIT не перечитываем, запись идёт одной
 // транзакцией. Тренировки без сэмплов или без валидной мощности не трогаем:
-// device-NP затирать нулём нельзя, а посчитать нечего. Они остаются с
-// np_version=0 и попадут в следующий прогон, когда появятся сэмплы.
+// device-NP затирать нулём нельзя, а посчитать нечего. Отдельно пропускаем
+// случай «все мощности нулевые, а устройство отдало NP» — это похоже на
+// залипший датчик, и стирать device-NP нулём нельзя. Такие строки остаются
+// с прежней np_version и попадут в следующий прогон.
 func BackfillNormalizedPower(db *sql.DB) (done, skipped int, err error) {
-	ids, err := store.WorkoutsNeedingNP(db, impNPVersion)
+	works, err := store.WorkoutsNeedingNP(db, impNPVersion)
 	if err != nil {
 		return 0, 0, err
 	}
 	var updates []store.NormPowerUpdate
-	for _, id := range ids {
-		hasPower, err := store.HasPowerSamples(db, id)
+	for _, w := range works {
+		total, nonZero, err := store.PowerSampleStats(db, w.ID)
 		if err != nil {
 			return done, skipped, err
 		}
-		if !hasPower {
+		if total == 0 || (nonZero == 0 && w.NormPower > 0) {
 			skipped++
 			continue
 		}
-		samples, err := store.RawSamples(db, id)
+		samples, err := store.RawSamples(db, w.ID)
 		if err != nil {
 			return done, skipped, err
 		}
 		updates = append(updates, store.NormPowerUpdate{
-			ID: id, NP: normalizedPower(samples), Version: impNPVersion,
+			ID: w.ID, NP: normalizedPower(samples), Version: impNPVersion,
 		})
 	}
 	if err := store.SetNormPowers(db, updates); err != nil {

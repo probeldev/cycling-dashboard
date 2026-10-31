@@ -484,29 +484,36 @@ func MarkSubSportChecked(db *sql.DB, id int64) error {
 	return err
 }
 
-// HasPowerSamples — есть ли у тренировки хоть один сэмпл с валидной мощностью.
-// Дешёвая проверка, чтобы бэкфилл не вычитывал сэмплы тренировок без поверметра.
-func HasPowerSamples(db *sql.DB, id int64) (bool, error) {
-	var ok bool
-	err := db.QueryRow(`SELECT EXISTS(
-		SELECT 1 FROM samples WHERE workout_id = ? AND power IS NOT NULL)`, id).Scan(&ok)
-	return ok, err
+// PowerSampleStats — сколько у тренировки сэмплов с валидной мощностью
+// и сколько из них больше нуля. Дешёвая проверка перед вычитыванием сэмплов.
+func PowerSampleStats(db *sql.DB, id int64) (total, nonZero int, err error) {
+	err = db.QueryRow(`SELECT COUNT(*),
+	    COALESCE(SUM(CASE WHEN power > 0 THEN 1 ELSE 0 END), 0)
+	    FROM samples WHERE workout_id = ? AND power IS NOT NULL`, id).Scan(&total, &nonZero)
+	return total, nonZero, err
 }
 
-// WorkoutsNeedingNP — id тренировок, у которых NP посчитан алгоритмом старше version.
-func WorkoutsNeedingNP(db *sql.DB, version int) ([]int64, error) {
-	rows, err := db.Query(`SELECT id FROM workouts WHERE np_version < ? ORDER BY id`, version)
+// NPWorkout — тренировка, которой нужен пересчёт NP, и её device-NP.
+type NPWorkout struct {
+	ID        int64
+	NormPower int // 0 — устройство NP не отдало
+}
+
+// WorkoutsNeedingNP — тренировки, у которых NP посчитан алгоритмом старше version.
+func WorkoutsNeedingNP(db *sql.DB, version int) ([]NPWorkout, error) {
+	rows, err := db.Query(`SELECT id, COALESCE(norm_power, 0) FROM workouts
+	    WHERE np_version < ? ORDER BY id`, version)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []int64
+	var out []NPWorkout
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var w NPWorkout
+		if err := rows.Scan(&w.ID, &w.NormPower); err != nil {
 			return nil, err
 		}
-		out = append(out, id)
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }

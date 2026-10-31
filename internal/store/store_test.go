@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -259,5 +260,35 @@ func TestProfileEntryDoesNotTouchSamples(t *testing.T) {
 	}
 	if got := countSamples(t, db, "workout_id = ?", id); got != 3 {
 		t.Errorf("валидных сэмплов %d, хочу 3", got)
+	}
+}
+
+// TestSetNormPowersRollback — ошибка на середине пачки откатывает всю транзакцию,
+// иначе база осталась бы с частично обновлённым NP.
+func TestSetNormPowersRollback(t *testing.T) {
+	db := openTestDB(t)
+	first := insertWorkout(t, db, 1, func(int) int { return 100 })
+	second := insertWorkout(t, db, 1, func(int) int { return 100 })
+
+	// триггер валит UPDATE второй тренировки
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TRIGGER fail_np BEFORE UPDATE ON workouts
+	    WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'boom'); END`, second)); err != nil {
+		t.Fatal(err)
+	}
+
+	err := SetNormPowers(db, []NormPowerUpdate{
+		{ID: first, NP: 111, Version: 9},
+		{ID: second, NP: 222, Version: 9},
+	})
+	if err == nil {
+		t.Fatal("жду ошибку от триггера")
+	}
+
+	got, err := GetWorkout(db, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NormPower != 0 || got.NPVersion != 0 {
+		t.Errorf("первая тренировка не откатилась: NP=%d версия=%d", got.NormPower, got.NPVersion)
 	}
 }

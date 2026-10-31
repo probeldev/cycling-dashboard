@@ -43,12 +43,27 @@ func TestBackfillNormalizedPower(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// 4) сэмплы есть, мощность везде честный 0, а device-NP=200: похоже на
+	// залипший датчик — device-NP нулём не затираем
+	zeroPower, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 10 * time.Second, NormPower: 200,
+	}, "hash-np-zeropower", "/nonexistent/zeropower.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertSamples(db, zeroPower, []store.Sample{
+		{Offset: 0, Power: 0, HasPwr: true},
+		{Offset: 1, Power: 0, HasPwr: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	done, skipped, err := BackfillNormalizedPower(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if done != 1 || skipped != 2 {
-		t.Errorf("пересчитано %d, пропущено %d; хочу 1 и 2", done, skipped)
+	if done != 1 || skipped != 3 {
+		t.Errorf("пересчитано %d, пропущено %d; хочу 1 и 3", done, skipped)
 	}
 
 	w, err := store.GetWorkout(db, id)
@@ -65,6 +80,7 @@ func TestBackfillNormalizedPower(t *testing.T) {
 	}{
 		{"без сэмплов", noSamples},
 		{"без валидной мощности", noPower},
+		{"все мощности нулевые", zeroPower},
 	} {
 		got, err := store.GetWorkout(db, tt.id)
 		if err != nil {
@@ -83,8 +99,8 @@ func TestBackfillNormalizedPower(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if done2 != 0 || skipped2 != 2 {
-		t.Errorf("повторно: пересчитано %d, пропущено %d; хочу 0 и 2", done2, skipped2)
+	if done2 != 0 || skipped2 != 3 {
+		t.Errorf("повторно: пересчитано %d, пропущено %d; хочу 0 и 3", done2, skipped2)
 	}
 	again, err := store.GetWorkout(db, id)
 	if err != nil {
