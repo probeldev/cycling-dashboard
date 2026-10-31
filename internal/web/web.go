@@ -32,7 +32,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return strconv.FormatFloat(p, 'f', 1, 64) + " пицц пепперони"
 	},
-	"datetime":  func(t time.Time) string { return t.Format("02.01.2006 15:04") },
+	"datetime": func(t time.Time) string { return t.Format("02.01.2006 15:04") },
 	"dur": func(d time.Duration) string {
 		h := int(d.Hours())
 		m := int(d.Minutes()) % 60
@@ -138,8 +138,22 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// как и /dist: неизвестная тренировка — 404, а не 200 null
+		if _, err := store.GetWorkout(db, id); err != nil {
+			http.NotFound(w, req)
+			return
+		}
 		var samples []store.Sample
 		if q.Raw {
+			total, err := store.CountSamples(db, id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := tooManySamples(total); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			samples, err = store.RawSamples(db, id)
 		} else {
 			samples, err = store.Samples(db, id, q.Max)

@@ -195,10 +195,12 @@ document.querySelectorAll("#distGrid .dist").forEach(el => {
   });
   // накат — отдельный бакет: подписываем обе базы времени
   if (kind === "power" && dist.powerBase) {
-    const b = dist.powerBase, mins = s => Math.round(s / 60);
+    const b = dist.powerBase;
+    // короткие отрезки показываем в секундах, чтобы «0 мин наката» не врало
+    const dur = s => s < 60 ? `${s} с` : `${Math.round(s / 60)} мин`;
     const note = el.querySelector(".dist-note");
     note.hidden = false;
-    note.textContent = `${mins(b.pedalSecs)} мин педалирования + ${mins(b.coastSecs)} мин наката = ${mins(b.totalSecs)} мин`;
+    note.textContent = `${dur(b.pedalSecs)} педалирования + ${dur(b.coastSecs)} наката = ${dur(b.totalSecs)}`;
   }
 });
 if (!Object.keys(dist).length) document.getElementById("distGrid").style.display = "none";

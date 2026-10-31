@@ -11,17 +11,18 @@ import (
 type bucket struct {
 	Label string `json:"label"`
 	From  float64
-	Secs  int    `json:"secs"`
+	Secs  int `json:"secs"`
 }
 
-// distEntry — бакет распределения. Проценты заполняются только для мощности:
+// distEntry — бакет распределения. Проценты ненулевые только для мощности:
 // Pct — от времени педалирования (прежняя база, существующий UI не ломаем),
-// PctTotal — от общего времени вместе с накатом.
+// PctTotal — от общего времени вместе с накатом. Поля есть у всех бакетов
+// (у cadence/speed/hr — нули), чтобы клиент мог суммировать без проверок на nil.
 type distEntry struct {
 	Label    string  `json:"label"`
 	Secs     int     `json:"secs"`
-	Pct      float64 `json:"pct,omitempty"`
-	PctTotal float64 `json:"pctTotal,omitempty"`
+	Pct      float64 `json:"pct"`
+	PctTotal float64 `json:"pctTotal"`
 }
 
 // powerBase — две базы времени распределения мощности. Раньше нулевая мощность

@@ -242,6 +242,45 @@ func TestSampleSecondsSparseOffsets(t *testing.T) {
 	}
 }
 
+// TestDistributionsEdgeCases — пустой вход, одна запись, весь накат, все дропауты.
+func TestDistributionsEdgeCases(t *testing.T) {
+	empty := distributions(nil, 0)
+	if len(empty.Buckets) != 0 || empty.PowerBase.TotalSecs != 0 {
+		t.Errorf("пустой вход: бакеты %+v, база %+v", empty.Buckets, empty.PowerBase)
+	}
+
+	single := distributions([]store.Sample{{Power: 200, HasPwr: true}}, 0)
+	if got := single.PowerBase.TotalSecs; got != 1 {
+		t.Errorf("одна запись: total = %d, хочу 1", got)
+	}
+
+	coast := distributions(seq(rep(5, pwr(0, true))), 0)
+	if got := coast.PowerBase; got.CoastSecs != 5 || got.PedalSecs != 0 || got.TotalSecs != 5 {
+		t.Errorf("весь накат: %+v, хочу coast=5 pedal=0 total=5", got)
+	}
+
+	dropouts := distributions(seq(rep(5, pwr(0, false))), 0)
+	if len(dropouts.Buckets) != 0 {
+		t.Errorf("все дропауты дали бакеты: %+v", dropouts.Buckets)
+	}
+
+	// проценты должны быть в JSON у всех бакетов, иначе клиент получит undefined
+	withCad := distributions(seq(rep(3, store.Sample{Cadence: 85, HasCad: true})), 0)
+	raw, err := json.Marshal(withCad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string][]map[string]any
+	if err := json.Unmarshal(raw, &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"pct", "pctTotal"} {
+		if _, ok := top["cadence"][0][key]; !ok {
+			t.Errorf("у cadence нет поля %q — клиент получит undefined", key)
+		}
+	}
+}
+
 // TestDistributionsPauseAppliesToZones — правило паузы общее для всех power-бакетов:
 // 30 с стоянки не попадают в зону, где была мощность перед остановкой.
 func TestDistributionsPauseAppliesToZones(t *testing.T) {

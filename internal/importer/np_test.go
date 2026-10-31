@@ -128,14 +128,46 @@ func TestNormalizedPowerPauseBreaksWindow(t *testing.T) {
 	t.Logf("с обрывом окна на паузе = %.1f, со смешиванием = %.1f", wantPaused, wantMixed)
 }
 
-// TestNormalizedPowerOneHertzMatchesOldWindow — на ровной записи 1 Гц без пауз
-// окно в 30 секунд и старое окно в 30 сэмплов совпадают.
-func TestNormalizedPowerOneHertzMatchesOldWindow(t *testing.T) {
-	samples := series(300, 1, func(i int) int { return 100 + i%50 })
-	got := float64(normalizedPower(samples))
-	want := refNP(samples, npWindowSec, 0)
-	if math.Abs(got-want) > 1 {
-		t.Errorf("NP = %v, хочу %v", got, want)
+// TestNormalizedPowerGolden — эталонные значения, посчитанные независимым
+// скриптом по спецификации (окно 30 с по ts_offset, x⁴, среднее, ⁴√),
+// а не этой же реализацией.
+func TestNormalizedPowerGolden(t *testing.T) {
+	var pause []store.Sample
+	for i := 0; i < 40; i++ {
+		pause = append(pause, store.Sample{Offset: int64(i), Power: 100, HasPwr: true})
+	}
+	for i := 0; i < 40; i++ {
+		pause = append(pause, store.Sample{Offset: int64(60 + i), Power: 300, HasPwr: true})
+	}
+	saw := series(300, 1, func(i int) int { return 100 + i%50 })
+	for i := 0; i < len(saw); i += 17 {
+		saw[i].HasPwr = false // дропаут заполняется последним значением
+	}
+
+	tests := []struct {
+		name    string
+		samples []store.Sample
+		want    int
+	}{
+		{"1 Гц, ступенька 100→300 Вт", series(120, 1, func(i int) int {
+			if i < 60 {
+				return 100
+			}
+			return 300
+		}), 228},
+		{"2 Гц, ступенька 100→300 Вт", series(240, 2, func(i int) int {
+			if i < 120 {
+				return 100
+			}
+			return 300
+		}), 228},
+		{"пауза 20 с между 100 и 300 Вт", pause, 253},
+		{"пила с дропаутами", saw, 123},
+	}
+	for _, tt := range tests {
+		if got := normalizedPower(tt.samples); math.Abs(float64(got-tt.want)) > 1 {
+			t.Errorf("%s: NP = %d, хочу %d ± 1", tt.name, got, tt.want)
+		}
 	}
 }
 

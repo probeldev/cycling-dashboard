@@ -82,9 +82,13 @@ func TestParseSamplesQuery(t *testing.T) {
 		{name: "пустое значение — дефолт", query: "max=", want: samplesQuery{Max: defaultSampleMax}},
 		{name: "raw", query: "raw=1", want: samplesQuery{Max: defaultSampleMax, Raw: true}},
 		{name: "raw выключен", query: "raw=0", want: samplesQuery{Max: defaultSampleMax}},
-		{name: "raw и max", query: "raw=1&max=42", want: samplesQuery{Max: 42, Raw: true}},
+		{name: "raw и max", query: "raw=1&max=42", want: samplesQuery{Max: defaultSampleMax, Raw: true}},
+		{name: "raw с мусорным max", query: "raw=1&max=abc", want: samplesQuery{Max: defaultSampleMax, Raw: true}},
+		{name: "raw=0 и мусорный max", query: "raw=0&max=abc", wantErr: true},
+		{name: "дробное", query: "max=500.5", wantErr: true},
+		{name: "плюс в query — это пробел", query: "max=+5", wantErr: true},
+		{name: "закодированный плюс", query: "max=%2B5", want: samplesQuery{Max: 5}},
 		{name: "мусор", query: "max=abc", wantErr: true},
-		{name: "дробное", query: "max=1.5", wantErr: true},
 		{name: "ноль", query: "max=0", wantErr: true},
 		{name: "отрицательное", query: "max=-5", wantErr: true},
 		{name: "выше потолка", query: fmt.Sprintf("max=%d", sampleMaxLimit+1), wantErr: true},
@@ -174,6 +178,17 @@ func TestSamplesHandler(t *testing.T) {
 	if rec, _ := get(t, "?max=-1"); rec.Code != http.StatusBadRequest {
 		t.Errorf("max=-1: код %d, хочу 400", rec.Code)
 	}
+	if rec, raw := get(t, "?raw=1&max=abc"); rec.Code != http.StatusOK || len(raw) != n {
+		t.Errorf("raw=1&max=abc: код %d, %d точек; хочу 200 и %d (max при raw игнорируется)",
+			rec.Code, len(raw), n)
+	}
+
+	// неизвестная тренировка — 404, как у /dist
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workout/99999/samples", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("неизвестный id: код %d, хочу 404", rec.Code)
+	}
 
 	if _, raw := get(t, "?raw=1"); len(raw) != n || peak(raw) != 900 {
 		t.Errorf("raw=1: %d точек, пик %d Вт; хочу %d точек и пик 900", len(raw), peak(raw), n)
@@ -186,5 +201,60 @@ func TestSamplesHandler(t *testing.T) {
 	if _, avgd := get(t, "?max=10"); len(avgd) >= n || peak(avgd) >= 900 {
 		t.Errorf("max=10: %d точек, пик %d Вт; хочу меньше %d точек и пик ниже 900",
 			len(avgd), peak(avgd), n)
+	}
+}
+
+// TestTooManySamples — потолок raw=1 проверяется без базы.
+func TestTooManySamples(t *testing.T) {
+	if err := tooManySamples(sampleMaxLimit); err != nil {
+		t.Errorf("ровно на потолке: %v, хочу nil", err)
+	}
+	if err := tooManySamples(sampleMaxLimit + 1); err == nil {
+		t.Error("выше потолка: ошибки нет")
+	}
+}
+
+// TestSamplesRawNulls — raw=1 честно отдаёт дыры: NULL-поля приходят нулями,
+// а Has*-флаги говорят, что данных не было.
+func TestSamplesRawNulls(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{StartTime: time.Now(), Duration: 2 * time.Second},
+		"hash-raw-nulls", filepath.Join(t.TempDir(), "test.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := []store.Sample{
+		{Offset: 0}, // все датчики отвалились
+		{Offset: 1, Power: 150, HasPwr: true, HR: 130}, // только мощность и пульс
+	}
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		fmt.Sprintf("/api/workout/%d/samples?raw=1", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	var got []store.Sample
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("%d точек, хочу 2", len(got))
+	}
+	if got[0].HasPwr || got[0].HasCad || got[0].HasPos || got[0].HasAlt || got[0].HasDist {
+		t.Errorf("дыра превратилась в данные: %+v", got[0])
+	}
+	if !got[1].HasPwr || got[1].Power != 150 || got[1].HR != 130 {
+		t.Errorf("вторая запись: %+v, хочу power=150 hr=130", got[1])
 	}
 }
