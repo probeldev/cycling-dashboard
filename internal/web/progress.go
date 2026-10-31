@@ -50,9 +50,16 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// 366 дней, чтобы у изменения за 365 дней была точка отсчёта
+		series, err := store.ProfileSeries(db, to.AddDate(0, 0, -365), to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		render(w, "progress.html", map[string]any{
 			"Bikes":     bikes,
 			"CP":        cpView(cp),
+			"Wkg":       buildWkgTrend(series, to),
 			"Today":     today,
 			"WeekTSS":   weekTSS,
 			"Last4TSS":  last4,

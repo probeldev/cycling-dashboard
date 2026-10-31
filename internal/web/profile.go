@@ -2,7 +2,9 @@ package web
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -33,6 +35,21 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			"HasFTPOutdoor": hasFTPOutdoor,
 			"Today":         now.Format("2006-01-02"),
 		})
+	})
+
+	r.Get("/api/profile/series", func(w http.ResponseWriter, req *http.Request) {
+		days, err := parseProfileSeriesDays(req.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		today := store.StartOfDay(time.Now())
+		points, err := store.ProfileSeries(db, today.AddDate(0, 0, -(days-1)), today)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, points)
 	})
 
 	r.Post("/profile/entry", func(w http.ResponseWriter, req *http.Request) {
@@ -102,4 +119,27 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 		}
 		w.Header().Set("HX-Redirect", "/profile")
 	})
+}
+
+const (
+	profileSeriesDefaultDays = 365
+	profileSeriesMaxDays     = 3660 // ~10 лет, как у таймлайна
+)
+
+// parseProfileSeriesDays разбирает ?days: по умолчанию 365, от 1 до 3660.
+func parseProfileSeriesDays(q url.Values) (int, error) {
+	if v := q.Get("days"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, fmt.Errorf("days=%q: нужно целое число", v)
+		}
+		if n < 1 {
+			return 0, fmt.Errorf("days=%d: нужно не меньше 1", n)
+		}
+		if n > profileSeriesMaxDays {
+			return 0, fmt.Errorf("days=%d: не больше %d", n, profileSeriesMaxDays)
+		}
+		return n, nil
+	}
+	return profileSeriesDefaultDays, nil
 }

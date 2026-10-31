@@ -7,6 +7,7 @@
   <div class="stat"><div class="v">{{ .TSBText }}</div><div class="k">TSB · {{ .TSBLabel }}</div></div>
   <div class="stat"><div class="v">{{ printf "%.0f" .WeekTSS }}</div><div class="k">TSS за неделю</div></div>
   <div class="stat"><div class="v">{{ printf "%.0f" .Last4TSS }}</div><div class="k">TSS за 4 недели</div></div>
+  {{ if .Wkg.HasValue }}<div class="stat"><div class="v">{{ trimFloat .Wkg.Value }}</div><div class="k">Вт/кг (станок) · {{ .Wkg.Text }}</div></div>{{ end }}
 </div>
 
 {{ if .CP.HasFit }}
