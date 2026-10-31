@@ -55,11 +55,8 @@ func (d dist) MarshalJSON() ([]byte, error) {
 // coastLabel — бакет наката: нулевая мощность при работающем поверметре.
 const coastLabel = "0 Вт · накат"
 
-// pauseGapSec — разрыв между сэмплами больше этого означает авто-паузу:
-// велосипед уже стоит. В накат такое время не пишем — стоянка не равна качению.
-const pauseGapSec = 5
-
-// ranges — типичные диапазоны для шоссейника; последний бакет «и выше».
+// distDefs — типичные бакеты для шоссейника; последний бакет «и выше».
+// Для мощности при заданном FTP вместо них берутся зоны Коггана (zoneBuckets).
 var distDefs = map[string][]bucket{
 	"cadence": {
 		{Label: "0–40", From: 0},
@@ -176,21 +173,81 @@ func bucketIndex(kind string, buckets []bucket, s store.Sample) int {
 	return -1
 }
 
-// sampleSecs — время сэмпла: интервал до следующего сэмпла, поэтому паузы
-// не размазываются по бакетам. Для бакета наката разрыв-автопауза даёт одну
-// секунду: после остановки секунды стоянки накатом считать нельзя.
-func sampleSecs(samples []store.Sample, i int, coast bool) int {
-	dt := int64(1)
-	if i+1 < len(samples) {
-		dt = samples[i+1].Offset - samples[i].Offset
+const (
+	// pauseGapSec — разрыв между записями больше этого может быть авто-паузой.
+	// Не путать с importer.npPauseSec: там тот же порог обрывает окно NP,
+	// здесь — решает, приписывать ли время разрыва бакету. Это разные допущения:
+	// окно NP должно начинаться заново, а время записи может остаться целым.
+	pauseGapSec = 5
+	// maxGapSec — потолок времени одной записи при движении (прореженная запись).
+	maxGapSec = 60
+	// minMovingMs — 1 км/ч в м/с: медленнее считаем, что велосипед стоял.
+	minMovingMs = 1.0 / 3.6
+)
+
+// sampleSeconds — время каждой записи. Время записи — интервал до следующей;
+// записи с одинаковым ts_offset (запись 2 Гц) делят интервал до следующего
+// РАЗЛИЧНОГО offset поровну. Разрыв больше pauseGapSec — это либо авто-пауза
+// (1 с), либо прореживание записи при движении (полный интервал, но не больше
+// maxGapSec). Правило одно для всех метрик — отдельных исключений для наката нет.
+func sampleSeconds(samples []store.Sample) []float64 {
+	out := make([]float64, len(samples))
+	for start := 0; start < len(samples); {
+		end := start + 1
+		for end < len(samples) && samples[end].Offset == samples[start].Offset {
+			end++
+		}
+		share := groupSeconds(samples, start, end) / float64(end-start)
+		for i := start; i < end; i++ {
+			out[i] = share
+		}
+		start = end
 	}
-	if dt <= 0 || dt > 60 {
-		dt = 1
+	return out
+}
+
+// groupSeconds — время группы записей с одинаковым offset.
+func groupSeconds(samples []store.Sample, start, end int) float64 {
+	if end >= len(samples) {
+		return 1 // после последней записи времени нет
 	}
-	if coast && dt > pauseGapSec {
-		dt = 1
+	dt := float64(samples[end].Offset - samples[start].Offset)
+	if dt <= 0 {
+		return 1 // записи не по порядку — не размазываем
 	}
-	return int(dt)
+	if dt > pauseGapSec && isPause(samples, start, end) {
+		return 1
+	}
+	return math.Min(dt, maxGapSec)
+}
+
+// isPause — разрыв это стоянка, а не прореживание записи (smart recording).
+// Дистанция — главный признак: перед авто-паузой в записи остаётся последняя
+// «ещё ехавшая» скорость (7–8 км/ч), а пройденное расстояние уже не растёт.
+// Без дистанции верим скорости на границе разрыва: медленнее 1 км/ч — стоянка.
+// Если скорость говорит о движении, но ни мощности, ни каденса нет — тоже стоянка.
+func isPause(samples []store.Sample, start, end int) bool {
+	next := samples[end]
+	dt := float64(next.Offset - samples[start].Offset)
+	if samples[start].HasDist && next.HasDist && dt > 0 {
+		return (next.DistanceM-samples[start].DistanceM)/dt < minMovingMs
+	}
+	for j := max(0, start-1); j <= end; j++ {
+		if samples[j].SpeedMs >= minMovingMs {
+			return !pedaling(samples, start, end)
+		}
+	}
+	return true
+}
+
+// pedaling — в группе записей есть мощность или каденс.
+func pedaling(samples []store.Sample, start, end int) bool {
+	for i := start; i < end; i++ {
+		if samples[i].Power != 0 || samples[i].Cadence != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // distributions считает время в каждом диапазоне. Если задан FTP (штамп
@@ -199,11 +256,12 @@ func sampleSecs(samples []store.Sample, i int, coast bool) int {
 // считаются обе базы времени — педалирование и педалирование вместе с накатом.
 func distributions(samples []store.Sample, ftp int) dist {
 	out := dist{Buckets: map[string][]distEntry{}}
+	times := sampleSeconds(samples)
 	for kind, buckets := range distDefs {
 		if kind == "power" {
 			buckets = powerBuckets(ftp)
 		}
-		secs := make([]int, len(buckets))
+		secs := make([]float64, len(buckets))
 		var hasData bool
 		for i, s := range samples {
 			j := bucketIndex(kind, buckets, s)
@@ -211,20 +269,21 @@ func distributions(samples []store.Sample, ftp int) dist {
 				continue
 			}
 			hasData = true
-			secs[j] += sampleSecs(samples, i, kind == "power" && j == 0)
+			secs[j] += times[i]
 		}
 		if !hasData {
 			continue
 		}
 		entries := make([]distEntry, len(buckets))
 		for j, b := range buckets {
-			entries[j] = distEntry{Label: b.Label, Secs: secs[j]}
+			entries[j] = distEntry{Label: b.Label, Secs: int(math.Round(secs[j]))}
 		}
 		if kind == "power" {
-			out.PowerBase = powerBase{
-				CoastSecs: secs[0],
-				PedalSecs: sum(secs) - secs[0],
+			pedal := 0
+			for _, e := range entries[1:] {
+				pedal += e.Secs
 			}
+			out.PowerBase = powerBase{CoastSecs: entries[0].Secs, PedalSecs: pedal}
 			out.PowerBase.TotalSecs = out.PowerBase.CoastSecs + out.PowerBase.PedalSecs
 			fillPercents(entries, out.PowerBase)
 		}
@@ -246,14 +305,6 @@ func fillPercents(entries []distEntry, base powerBase) {
 			entries[j].PctTotal = round1(float64(entries[j].Secs) / total * 100)
 		}
 	}
-}
-
-func sum(v []int) int {
-	total := 0
-	for _, x := range v {
-		total += x
-	}
-	return total
 }
 
 func round1(v float64) float64 {

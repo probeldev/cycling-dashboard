@@ -46,15 +46,11 @@ func secsOf(entries []distEntry, label string) int {
 }
 
 func totalSecs(entries []distEntry) int {
-	return sum(secsSlice(entries))
-}
-
-func secsSlice(entries []distEntry) []int {
-	out := make([]int, len(entries))
-	for i, e := range entries {
-		out[i] = e.Secs
+	total := 0
+	for _, e := range entries {
+		total += e.Secs
 	}
-	return out
+	return total
 }
 
 // mixed — 10 с наката, 20 на 120 Вт, 5 дропаутов, 10 на 250 Вт.
@@ -123,6 +119,96 @@ func TestDistributionsCoastWithZones(t *testing.T) {
 	}
 	if got := secsOf(power, "Z6 · 242–301"); got != 10 {
 		t.Errorf("Z6 = %d с, хочу 10 (250 Вт)", got)
+	}
+}
+
+// TestSampleSecondsPowerPause — положительная мощность не спасает от паузы:
+// разрыв 30 с при нулевой скорости — это стоянка, а не 30 с педалирования.
+func TestSampleSecondsPowerPause(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 200, HasPwr: true},
+		{Offset: 30, Power: 200, HasPwr: true},
+	}
+	times := sampleSeconds(samples)
+	if times[0] != 1 {
+		t.Errorf("пауза при speed=0: %.1f с, хочу 1", times[0])
+	}
+	if times[1] != 1 {
+		t.Errorf("последняя запись: %.1f с, хочу 1", times[1])
+	}
+}
+
+// TestSampleSecondsSmartRecording — редкая запись при движении (smart recording)
+// не пауза: интервал засчитывается целиком.
+func TestSampleSecondsSmartRecording(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
+		{Offset: 30, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
+	}
+	if got := sampleSeconds(samples)[0]; got != 30 {
+		t.Errorf("движение на 20 км/ч: %.1f с, хочу 30", got)
+	}
+}
+
+// TestSampleSecondsCoastSlowRecording — накат на скорости при шаге записи 10 с:
+// дистанция растёт, значит ехали, и все 10 с — накат.
+func TestSampleSecondsCoastSlowRecording(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 0, HasDist: true},
+		{Offset: 10, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 41.7, HasDist: true},
+	}
+	if got := sampleSeconds(samples)[0]; got != 10 {
+		t.Errorf("качение на 15 км/ч: %.1f с, хочу 10", got)
+	}
+}
+
+// TestSampleSecondsCoastStop — накат, потом стоянка: 10 с интервал не накат.
+func TestSampleSecondsCoastStop(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 0, HasPwr: true},
+		{Offset: 10, Power: 0, HasPwr: true},
+	}
+	if got := sampleSeconds(samples)[0]; got != 1 {
+		t.Errorf("стоянка на 0 Вт: %.1f с, хочу 1", got)
+	}
+}
+
+// TestSampleSecondsStaleSpeed — как на тренировке 418: перед авто-паузой в записи
+// осталась последняя «ещё ехавшая» скорость 7.5 км/ч, но дистанция не выросла.
+func TestSampleSecondsStaleSpeed(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 7.5 / 3.6, DistanceM: 361.74, HasDist: true},
+		{Offset: 37, Power: 0, HasPwr: true, DistanceM: 361.74, HasDist: true},
+	}
+	if got := sampleSeconds(samples)[0]; got != 1 {
+		t.Errorf("стоянка со «старой» скоростью: %.1f с, хочу 1 (дистанция не выросла)", got)
+	}
+}
+
+// TestSampleSecondsMovingGapCap — ехали, но запись пропала надолго: потолок maxGapSec.
+func TestSampleSecondsMovingGapCap(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
+		{Offset: 120, Power: 200, HasPwr: true, SpeedMs: 20 / 3.6},
+	}
+	if got := sampleSeconds(samples)[0]; got != maxGapSec {
+		t.Errorf("движение с разрывом 120 с: %.1f с, хочу потолок %d", got, maxGapSec)
+	}
+}
+
+// TestDistributionsPauseAppliesToZones — правило паузы общее для всех power-бакетов:
+// 30 с стоянки не попадают в зону, где была мощность перед остановкой.
+func TestDistributionsPauseAppliesToZones(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 120, HasPwr: true},
+		{Offset: 30, Power: 120, HasPwr: true},
+	}
+	d := distributions(samples, 200)
+	if got := secsOf(d.Buckets["power"], "Z2 · 112–151"); got != 2 {
+		t.Errorf("Z2 = %d с, хочу 2 (по секунде за запись, без 30 с стоянки)", got)
+	}
+	if got := d.PowerBase.TotalSecs; got != 2 {
+		t.Errorf("totalSecs = %d, хочу 2", got)
 	}
 }
 
