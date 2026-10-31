@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -151,6 +152,16 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 				return err
 			}
 		}
+	}
+	// Осиротевшие сэмплы (workout_id=0 и ссылки на удалённые тренировки) остались
+	// от старого импорта: ни один запрос их не видит. Идемпотентно — на чистой
+	// базе удаляется 0 строк.
+	res, err := db.Exec(`DELETE FROM samples WHERE workout_id NOT IN (SELECT id FROM workouts)`)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n > 0 {
+		log.Printf("миграция: удалено %d осиротевших сэмплов", n)
 	}
 	return BackfillProfileStamps(db)
 }
@@ -337,6 +348,16 @@ func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error
 		kind, value, at.UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
+	// Осиротевшие сэмплы (workout_id=0 и ссылки на удалённые тренировки) остались
+	// от старого импорта: ни один запрос их не видит. Идемпотентно — на чистой
+	// базе удаляется 0 строк.
+	res, err := db.Exec(`DELETE FROM samples WHERE workout_id NOT IN (SELECT id FROM workouts)`)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n > 0 {
+		log.Printf("миграция: удалено %d осиротевших сэмплов", n)
+	}
 	return BackfillProfileStamps(db)
 }
 
@@ -344,6 +365,16 @@ func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error
 func DeleteProfileEntry(db *sql.DB, id int64) error {
 	if _, err := db.Exec(`DELETE FROM profile_history WHERE id = ?`, id); err != nil {
 		return err
+	}
+	// Осиротевшие сэмплы (workout_id=0 и ссылки на удалённые тренировки) остались
+	// от старого импорта: ни один запрос их не видит. Идемпотентно — на чистой
+	// базе удаляется 0 строк.
+	res, err := db.Exec(`DELETE FROM samples WHERE workout_id NOT IN (SELECT id FROM workouts)`)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n > 0 {
+		log.Printf("миграция: удалено %d осиротевших сэмплов", n)
 	}
 	return BackfillProfileStamps(db)
 }
