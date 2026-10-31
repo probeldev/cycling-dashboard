@@ -64,6 +64,43 @@ func groupSeconds(samples []store.Sample, start, end int) (float64, bool) {
 	return math.Min(dt, MaxGapSec), false
 }
 
+// zoneBounds — нижние границы зон Коггана Z1–Z7 в долях FTP.
+var zoneBounds = [7]float64{0, 0.56, 0.76, 0.91, 1.06, 1.21, 1.51}
+
+// ZoneBounds возвращает границы зон в долях FTP (Z1..Z7) — единый источник
+// и для подписей, и для расчёта.
+func ZoneBounds() [7]float64 { return zoneBounds }
+
+// PowerTime — время по зонам Коггана Z1–Z7 и накату при заданном FTP.
+// Время берётся из Timings — те же правила пауз и дублей offset, что у NP и
+// распределений. Дропауты (power IS NULL) не входят ни в зоны, ни в накат.
+func PowerTime(samples []store.Sample, ftp int) (zones [7]float64, coast float64) {
+	if ftp <= 0 {
+		return zones, 0
+	}
+	times := Timings(samples)
+	limit := float64(ftp)
+	for i, s := range samples {
+		if !s.HasPwr {
+			continue
+		}
+		v := float64(s.Power)
+		if v == 0 {
+			coast += times[i].Secs
+			continue
+		}
+		z := 0
+		for j := len(zoneBounds) - 1; j >= 0; j-- {
+			if v >= zoneBounds[j]*limit {
+				z = j
+				break
+			}
+		}
+		zones[z] += times[i].Secs
+	}
+	return zones, coast
+}
+
 // isPause — разрыв это стоянка, а не прореживание записи (smart recording).
 // Приоритет признаков:
 //  1. дистанция — если известна с обеих сторон, решает её прирост: перед

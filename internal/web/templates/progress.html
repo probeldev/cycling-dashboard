@@ -27,6 +27,15 @@
   <span>больше</span>
 </div>
 
+<h2>Зоны по неделям</h2>
+<div class="tabs" id="weeksBtns">
+  <button class="tab active" data-n="12">12 недель</button>
+  <button class="tab" data-n="26">26 недель</button>
+  <button class="tab" data-n="52">52 недели</button>
+</div>
+<div id="weeks" class="weeks"></div>
+<p id="polarity" class="sub" style="color:var(--dim)"></p>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
 (() => {
@@ -106,12 +115,53 @@ async function loadHeatmap() {
   }
 }
 
+const fmtWeek = s => s.slice(8, 10) + "." + s.slice(5, 7);
+async function loadWeeks(n) {
+  const weeks = await (await fetch(`/api/weeks?n=${n}`)).json();
+  const root = document.getElementById("weeks");
+  root.innerHTML = "";
+  let low = 0, gray = 0, high = 0;
+  weeks.forEach(w => {
+    const total = w.zones.reduce((a, b) => a + b, 0);
+    low += w.zones[0] + w.zones[1];
+    gray += w.zones[2];
+    high += w.zones[3] + w.zones[4] + w.zones[5] + w.zones[6];
+    const bar = total > 0
+      ? `<span class="zbar"><i class="zlow" style="width:${w.lowPct}%"></i><i class="zgray" style="width:${w.grayPct}%"></i><i class="zhigh" style="width:${w.highPct}%"></i></span>`
+      : `<span class="zbar"></span>`;
+    const row = document.createElement("div");
+    row.className = "week-row";
+    row.innerHTML = `<span class="wk">${fmtWeek(w.start)}</span>
+      <span class="wk-num">${w.rides} тр.</span>
+      <span class="wk-num">${w.hours.toFixed(1)} ч</span>
+      <span class="wk-num">${w.tss.toFixed(0)} TSS</span>${bar}
+      <span class="wk-num">${total > 0 ? "низ " + w.lowPct.toFixed(0) + "%" : ""}</span>`;
+    root.appendChild(row);
+  });
+  const pol = document.getElementById("polarity");
+  const total = low + gray + high;
+  if (!total) {
+    pol.className = "sub";
+    pol.textContent = "Нет данных по зонам за период.";
+    return;
+  }
+  const l = Math.round(low * 100 / total), g = Math.round(gray * 100 / total), h = 100 - l - g;
+  const ok = l >= 75 && l <= 85;
+  pol.className = "sub " + (ok ? "pol-good" : "pol-warn");
+  pol.textContent = `Полярность: низко ${l}% · серо ${g}% · высоко ${h}% (ориентир 80/20)`;
+}
+
 document.querySelectorAll("#periodBtns .tab").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll("#periodBtns .tab").forEach(x => x.classList.toggle("active", x === b));
   loadChart(+b.dataset.days);
 }));
+document.querySelectorAll("#weeksBtns .tab").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("#weeksBtns .tab").forEach(x => x.classList.toggle("active", x === b));
+  loadWeeks(+b.dataset.n);
+}));
 loadChart(180);
 loadHeatmap();
+loadWeeks(12);
 })();
 </script>
 {{ template "foot" . }}

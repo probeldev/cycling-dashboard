@@ -102,28 +102,21 @@ var distDefs = map[string][]bucket{
 	},
 }
 
-// powerZones — зоны Коггана в ваттах от FTP; последний бакет «и выше».
-var powerZones = []struct {
-	Name string
-	From float64 // доля FTP
-}{
-	{"Z1", 0}, {"Z2", 0.56}, {"Z3", 0.76}, {"Z4", 0.91},
-	{"Z5", 1.06}, {"Z6", 1.21}, {"Z7", 1.51},
-}
-
 // zoneBuckets — зоны Коггана в ваттах. Границы не округляем до целых:
 // 0.56*156 = 87.36, и подпись «87» врала бы. Целые пороги печатаем как целые,
 // дробные — с одним знаком. Правая граница зоны не включается.
+// zoneBuckets — подписи зон Коггана; границы берутся из ridedata, чтобы UI и
+// расчёт зон (импорт, /dist) не разъезжались.
 func zoneBuckets(ftp int) []bucket {
-	out := make([]bucket, len(powerZones))
-	for i, z := range powerZones {
-		from := z.From * float64(ftp)
-		label := fmt.Sprintf("%s · %s+", z.Name, watts(from))
-		if i+1 < len(powerZones) {
-			to := powerZones[i+1].From * float64(ftp)
-			label = fmt.Sprintf("%s · %s–%s", z.Name, watts(from), watts(to))
+	bounds := ridedata.ZoneBounds()
+	out := make([]bucket, len(bounds))
+	for i, from := range bounds {
+		fromW := from * float64(ftp)
+		label := fmt.Sprintf("Z%d · %s+", i+1, watts(fromW))
+		if i+1 < len(bounds) {
+			label = fmt.Sprintf("Z%d · %s–%s", i+1, watts(fromW), watts(bounds[i+1]*float64(ftp)))
 		}
-		out[i] = bucket{Label: label, From: from}
+		out[i] = bucket{Label: label, From: fromW}
 	}
 	return out
 }
@@ -188,6 +181,33 @@ func bucketIndex(kind string, buckets []bucket, s store.Sample) int {
 	return -1
 }
 
+// zoneDistribution — бакеты мощности по зонам Коггана через ridedata.PowerTime
+// (единый расчёт с импортом). Первый бакет — накат.
+func zoneDistribution(samples []store.Sample, ftp int) ([]distEntry, powerBase, bool) {
+	zones, coast := ridedata.PowerTime(samples, ftp)
+	total := coast
+	for _, z := range zones {
+		total += z
+	}
+	if total == 0 {
+		return nil, powerBase{}, false
+	}
+	buckets := powerBuckets(ftp) // [накат] + Z1..Z7
+	entries := make([]distEntry, len(buckets))
+	entries[0] = distEntry{Label: coastLabel, Secs: int(math.Round(coast))}
+	for j, z := range zones {
+		entries[j+1] = distEntry{Label: buckets[j+1].Label, Secs: int(math.Round(z))}
+	}
+	pedal := 0
+	for _, e := range entries[1:] {
+		pedal += e.Secs
+	}
+	base := powerBase{CoastSecs: entries[0].Secs, PedalSecs: pedal}
+	base.TotalSecs = base.CoastSecs + base.PedalSecs
+	fillPercents(entries, base)
+	return entries, base, true
+}
+
 // distributions считает время в каждом диапазоне. Если задан FTP (штамп
 // тренировки), мощность режется на зоны Коггана, иначе — по фиксированным
 // диапазонам. Нулевая мощность попадает в отдельный бакет наката, плюс
@@ -196,6 +216,14 @@ func distributions(samples []store.Sample, ftp int) dist {
 	out := dist{Buckets: map[string][]distEntry{}}
 	times := ridedata.Timings(samples)
 	for kind, buckets := range distDefs {
+		// зоны мощности считаем тем же кодом, что импорт и /api/weeks
+		if kind == "power" && ftp > 0 {
+			if entries, base, ok := zoneDistribution(samples, ftp); ok {
+				out.PowerBase = base
+				out.Buckets[kind] = entries
+			}
+			continue
+		}
 		if kind == "power" {
 			buckets = powerBuckets(ftp)
 		}

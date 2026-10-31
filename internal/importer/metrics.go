@@ -188,6 +188,10 @@ func backfillMetrics(q store.DBTX) (int, error) {
 			}
 		}
 		applyMetrics(w, samples, elapsed, work)
+		// зоны зависят от FTP — обновляем вместе с метриками
+		if err := store.SetWorkoutZones(q, w.ID, zonesOf(samples, w.FTP), zonesVersion); err != nil {
+			return 0, err
+		}
 		updates = append(updates, w)
 	}
 	if err := store.SetWorkoutMetricsBatch(q, updates); err != nil {

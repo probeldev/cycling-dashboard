@@ -22,7 +22,7 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 		today := days[len(days)-1]
 
 		// текущая неделя пн–вс и предыдущие 4 полные недели
-		ws := weekStart(now)
+		ws := store.WeekStart(now)
 		var weekTSS, prev4 float64
 		for _, d := range days {
 			if !d.Date.Before(ws) {
@@ -40,15 +40,6 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			"TodayDate": now.Format("02.01.2006"),
 		})
 	})
-}
-
-// weekStart — понедельник 00:00 локального времени.
-func weekStart(t time.Time) time.Time {
-	wd := int(t.Weekday()) // воскресенье = 0
-	if wd == 0 {
-		wd = 7
-	}
-	return startOfLocalDay(t).AddDate(0, 0, 1-wd)
 }
 
 // tsbLabel — словесная трактовка свежести.

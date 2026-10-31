@@ -150,6 +150,11 @@ func TestMetrics418Golden(t *testing.T) {
 		}
 	}
 	checkFinite(t, w.IF, w.TSS, w.VI, w.WorkKJ)
+
+	// зоны должны совпадать с /dist этой тренировки (те же сэмплы и FTP)
+	if got, want := zonesOf(samples, w.FTP), [7]int{232, 548, 1197, 1374, 595, 331, 102}; got != want {
+		t.Errorf("зоны = %v, хочу %v", got, want)
+	}
 }
 
 // writeSessionFIT — FIT с одной сессией и n записями по 200 Вт с шагом 1 с.
@@ -315,5 +320,33 @@ func TestApplyMetricsAsymmetric(t *testing.T) {
 	}
 	if math.Abs(w.WorkKJ-21) > 1e-9 { // (30·100 + 60·300) / 1000
 		t.Errorf("WorkKJ = %v, хочу 21", w.WorkKJ)
+	}
+}
+
+// TestImportWritesZones — зоны пишутся при импорте из тех же сэмплов и FTP.
+func TestImportWritesZones(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "zones.fit"), fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	if err := store.AddProfileEntry(db, "ftp", 200, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.FTP != 200 {
+		t.Fatalf("FTP = %d, хочу 200", w.FTP)
+	}
+	zones, err := store.WorkoutZones(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 200 Вт при FTP 200 → 100% FTP, зона Z4 (0.91–1.06)
+	if zones != [7]int{0, 0, 0, 30, 0, 0, 0} {
+		t.Errorf("зоны = %v, хочу 30 с в Z4", zones)
 	}
 }

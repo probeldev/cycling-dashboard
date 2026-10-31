@@ -61,6 +61,13 @@ func main() {
 		fmt.Printf("бэкфилл метрик: %d тренировок\n", n)
 	}
 
+	// Зоны по тренировкам для старых записей (до появления workout_zones).
+	if n, err := importer.BackfillZones(db); err != nil {
+		log.Printf("бэкфилл зон: %v", err)
+	} else if n > 0 {
+		fmt.Printf("бэкфилл зон: %d тренировок\n", n)
+	}
+
 	syncMgr := web.NewSyncManager()
 	h, err := web.Handler(db, syncMgr, absDir, func() {
 		n, _, err := importer.ImportDir(db, absDir)

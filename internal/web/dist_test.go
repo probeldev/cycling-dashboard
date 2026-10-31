@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
 )
 
@@ -350,5 +351,28 @@ func TestDistJSONContract(t *testing.T) {
 	}
 	if base["coastSecs"] != 10 || base["pedalSecs"] != 30 || base["totalSecs"] != 40 {
 		t.Errorf("powerBase = %v, хочу coast=10 pedal=30 total=40", base)
+	}
+}
+
+// TestZoneTimeMatchesDist — /dist и ridedata.PowerTime (он же импорт и
+// /api/weeks) считают зоны одинаково.
+func TestZoneTimeMatchesDist(t *testing.T) {
+	var samples []store.Sample
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{
+			Offset: int64(i), Power: []int{0, 30, 120, 170, 220, 260, 320}[i%7], HasPwr: true,
+		})
+	}
+	const ftp = 200
+	d := distributions(samples, ftp)
+	zones, coast := ridedata.PowerTime(samples, ftp)
+	power := d.Buckets["power"]
+	if got := power[0].Secs; got != int(math.Round(coast)) {
+		t.Errorf("накат: /dist %d, PowerTime %d", got, int(math.Round(coast)))
+	}
+	for j, z := range zones {
+		if got := power[j+1].Secs; got != int(math.Round(z)) {
+			t.Errorf("Z%d: /dist %d, PowerTime %d", j+1, got, int(math.Round(z)))
+		}
 	}
 }
