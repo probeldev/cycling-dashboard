@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -174,6 +175,17 @@ func TestTrainerToggleRecalculatesMetrics(t *testing.T) {
 		t.Fatalf("исходно: FTP=%d kind=%s IF=%v TSS=%v, хочу 250/outdoor/0.56/31.36", ftp, kind, iff, tss)
 	}
 
+	// та же валидация, что у флага теста: только 0 или 1
+	for _, v := range []string{"", "2", "true"} {
+		if code := toggle(id, v); code != http.StatusBadRequest {
+			t.Errorf("value=%q: код %d, хочу 400", v, code)
+		}
+	}
+	ftp, kind, iff, tss = metrics()
+	if ftp != 250 || kind != "outdoor" || math.Abs(iff-0.56) > 1e-9 || math.Abs(tss-31.36) > 0.01 {
+		t.Errorf("мусор в value изменил тип: FTP=%d kind=%s IF=%v TSS=%v", ftp, kind, iff, tss)
+	}
+
 	if code := toggle(id, "1"); code != http.StatusOK {
 		t.Fatalf("включение станка: код %d", code)
 	}
@@ -192,5 +204,67 @@ func TestTrainerToggleRecalculatesMetrics(t *testing.T) {
 
 	if code := toggle(99999, "1"); code != http.StatusNotFound {
 		t.Errorf("несуществующий id: код %d, хочу 404", code)
+	}
+}
+
+// TestProfileEntryRejectsNonFinite — NaN и ±Inf не проходят разбор значения:
+// иначе +Inf сохранялся бы в историю и ломал JSON-ряд профиля.
+func TestProfileEntryRejectsNonFinite(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"NaN", "Inf", "+Inf", "-Inf"} {
+		body := url.Values{
+			"kind":  {"weight"},
+			"value": {v},
+			"date":  {"2026-10-30"},
+		}.Encode()
+		req := httptest.NewRequest(http.MethodPost, "/profile/entry", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("value=%q: код %d, хочу 400", v, rec.Code)
+		}
+	}
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 0 {
+		t.Errorf("нефинитные значения попали в историю: %+v", history)
+	}
+}
+
+// TestProfileSeriesEncodeError — ошибка json.Encode (например, +Inf из битой
+// строки профиля) — это 500 с телом, а не 200 с пустым ответом.
+func TestProfileSeriesEncodeError(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// литерал 1e999 SQLite хранит как +Inf; через параметр так не гарантируется
+	if _, err := db.Exec(`INSERT INTO profile_history (kind, value, recorded_at)
+	    VALUES ('weight', 1e999, '2026-10-30T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/profile/series?days=7", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("код %d, хочу 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ошибка кодирования JSON") {
+		t.Errorf("тело ошибки: %q", rec.Body.String())
 	}
 }

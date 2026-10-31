@@ -20,7 +20,8 @@ func TestProfileSeriesSteps(t *testing.T) {
 	db := openTestDB(t)
 	at := func(day int, hour int) time.Time { return time.Date(2026, 10, day, hour, 0, 0, 0, loc) }
 
-	// 23:30 и 00:30 — проверяем, что день берётся локальный, а не UTC
+	// обе записи — 1 октября: вес вечером (23:00), FTP в полночь (00:00);
+	// в окне с 3-го они уже действуют как значения с первого дня
 	if err := AddProfileEntry(db, "weight", 75, at(1, 23)); err != nil {
 		t.Fatal(err)
 	}

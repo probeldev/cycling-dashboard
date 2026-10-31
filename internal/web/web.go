@@ -111,7 +111,12 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 
 	r.Post("/workout/{id}/test", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
-		if err := store.SetWorkoutTest(db, id, req.FormValue("value") == "1"); err != nil {
+		isTest, ok := parseFlagValue(req.FormValue("value"))
+		if !ok {
+			http.Error(w, "value: нужно 0 или 1", http.StatusBadRequest)
+			return
+		}
+		if err := store.SetWorkoutTest(db, id, isTest); err != nil {
 			notFoundOr500(w, req, err)
 			return
 		}
@@ -120,13 +125,18 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 
 	r.Post("/workout/{id}/trainer", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		trainer, ok := parseFlagValue(req.FormValue("value"))
+		if !ok {
+			http.Error(w, "value: нужно 0 или 1", http.StatusBadRequest)
+			return
+		}
 		tx, err := db.Begin()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer tx.Rollback()
-		if err := store.SetTrainerOverrideTx(tx, id, req.FormValue("value") == "1"); err != nil {
+		if err := store.SetTrainerOverrideTx(tx, id, trainer); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.NotFound(w, req)
 				return
@@ -435,6 +445,19 @@ func notFoundOr500(w http.ResponseWriter, req *http.Request, err error) {
 	http.Error(w, err.Error(), http.StatusInternalServerError)
 }
 
+// parseFlagValue — форма переключателя принимает только 0 или 1: пустое
+// значение или мусор не должны молча снимать флаг.
+func parseFlagValue(raw string) (value bool, ok bool) {
+	switch raw {
+	case "0":
+		return false, true
+	case "1":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
 // render рендерит шаблон в буфер и отдаёт его только при успехе: иначе ошибка
 // на середине шаблона оставляла бы клиенту 200 с обрезанным телом.
 func render(w http.ResponseWriter, name string, data any) {
@@ -448,8 +471,15 @@ func render(w http.ResponseWriter, name string, data any) {
 	w.Write(buf.Bytes())
 }
 
+// writeJSON кодирует ответ в буфер: иначе ошибка json.Encode (например, +Inf
+// из битых данных профиля) уходила бы клиенту как 200 с пустым телом.
 func writeJSON(w http.ResponseWriter, v any) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+		log.Printf("JSON: %v", err)
+		http.Error(w, "ошибка кодирования JSON", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	enc.Encode(v)
+	w.Write(buf.Bytes())
 }

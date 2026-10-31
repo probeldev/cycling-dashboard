@@ -12,13 +12,13 @@
 
 {{ if .CP.HasFit }}
 <div class="stats">
-  <div class="stat"><div class="v">{{ printf "%.0f" .CP.CP }} Вт</div><div class="k">CP · огибающая MMP (за всё время)</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .CP.CP }} Вт</div><div class="k">CP · огибающая MMP (за всё время, без замеров)</div></div>
   <div class="stat"><div class="v">{{ printf "%.1f" .CP.WPrime }} кДж</div><div class="k">W' · запас над CP</div></div>
   {{ with .CP.FTP }}<div class="stat"><div class="v">{{ printf "%.0f" . }} Вт</div><div class="k">FTP оценка (0.95·20 мин)</div></div>{{ end }}
   <div class="stat"><div class="v">{{ printf "%.3f" .CP.R2 }}</div><div class="k">R² фита</div></div>
   <div class="stat"><div class="v">{{ .CP.Points }}</div><div class="k">точек MMP 120–1200 с</div></div>
 </div>
-<p class="sub" style="color:var(--dim)">CP и W' — оценка по огибающей MMP (best-of по тренировкам, регрессия W = CP + W'/t), а не физиологический тест; W' по огибающей может быть завышен. {{ if .CP.Low }}Низкая достоверность (R² &lt; 0.95).{{ else }}Достоверность ок (R² ≥ 0.95).{{ end }}</p>
+<p class="sub" style="color:var(--dim)">CP и W' — оценка по огибающей MMP (best-of по тренировкам, регрессия W = CP + W'/t), а не физиологический тест; W' по огибающей может быть завышен. Замеры (тестовые тренировки) в огибающую не входят. {{ if .CP.Low }}Низкая достоверность (R² &lt; 0.95).{{ else }}Достоверность ок (R² ≥ 0.95).{{ end }}</p>
 {{ else }}
 <p class="sub" style="color:var(--dim)">{{ if eq .CP.Reason "few" }}CP/W' не посчитать: нужно ≥3 окна MMP 120–1200 с (сейчас {{ .CP.Points }}).{{ else }}Кривая MMP не описывается моделью CP/W' — CP или W' неположительные либо фит слишком шумный.{{ end }}{{ with .CP.FTP }} FTP-оценка по 20 мин: {{ printf "%.0f" . }} Вт.{{ end }}</p>
 {{ end }}

@@ -13,6 +13,7 @@
 <h2>Вес и FTP</h2>
 <canvas id="profile-ftp" style="width:100%; height:240px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
 <p id="profile-empty" style="display:none; color:var(--dim)">Данных профиля пока нет — добавьте вес или FTP.</p>
+<p id="profile-few" style="display:none; color:var(--dim)">Мало данных для графика — добавьте ещё записи профиля.</p>
 <h2>Вт/кг</h2>
 <canvas id="profile-wkg" style="width:100%; height:240px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
 
@@ -66,41 +67,64 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
 (async () => {
-  const data = await (await fetch("/api/profile/series?days=365")).json();
   const empty = document.getElementById("profile-empty");
+  const few = document.getElementById("profile-few");
   const ftpCanvas = document.getElementById("profile-ftp");
   const wkgCanvas = document.getElementById("profile-wkg");
+  let data;
+  try {
+    const res = await fetch("/api/profile/series?days=365");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch (err) {
+    ftpCanvas.hidden = true;
+    wkgCanvas.hidden = true;
+    empty.textContent = "Не удалось загрузить ряд профиля.";
+    empty.style.display = "";
+    return;
+  }
   if (!data.length) {
     ftpCanvas.hidden = true;
     wkgCanvas.hidden = true;
     empty.style.display = "";
     return;
   }
+  few.style.display = data.length < 2 ? "" : "none";
   const labels = data.map(d => {
     const [y, m, dd] = d.date.slice(0, 10).split("-");
     return `${dd}.${m}.${y.slice(2)}`;
   });
   const any = key => data.some(d => d[key] !== null);
+  // одна точка — рисуем маркер, иначе линия без маркеров не видна
+  const pointRadius = data.length === 1 ? 4 : 0;
   const line = (label, key, color, axis) => ({
     label, data: data.map(d => d[key]), borderColor: color, backgroundColor: color,
-    pointRadius: 0, borderWidth: 2, spanGaps: true, yAxisID: axis,
+    pointRadius, pointHoverRadius: 4, borderWidth: 2, spanGaps: true, yAxisID: axis,
   });
 
   const ftpSets = [];
   if (any("weight")) ftpSets.push(line("вес, кг", "weight", "#8250df", "y"));
   if (any("ftpTrainer")) ftpSets.push(line("FTP станок, Вт", "ftpTrainer", "#d73a49", "y1"));
   if (any("ftpOutdoor")) ftpSets.push(line("FTP улица, Вт", "ftpOutdoor", "#1a7f37", "y1"));
+  const hasWeight = any("weight");
+  const hasFTP = any("ftpTrainer") || any("ftpOutdoor");
+  const ftpScales = { x: { ticks: { maxTicksLimit: 10 } } };
+  if (hasWeight) {
+    ftpScales.y = { position: "left", title: { display: true, text: "вес, кг" } };
+  }
+  if (hasFTP) {
+    ftpScales.y1 = { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "FTP, Вт" } };
+  }
+  if (!hasWeight) {
+    ftpScales.y = { display: false };
+  }
   new Chart(ftpCanvas, {
     type: "line",
     data: { labels, datasets: ftpSets },
     options: {
       animation: false,
       plugins: { legend: { position: "bottom" } },
-      scales: {
-        x: { ticks: { maxTicksLimit: 10 } },
-        y: { position: "left", title: { display: true, text: "вес, кг" } },
-        y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "FTP, Вт" } },
-      },
+      scales: ftpScales,
     },
   });
 

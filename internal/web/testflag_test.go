@@ -186,6 +186,20 @@ func TestTestToggle(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "<span class=\"tag\">тест</span>") {
 		t.Errorf("на странице нет тега «тест»")
 	}
+	// пустое и мусорное значение — ошибка клиента, а не молчаливое снятие флага
+	for _, v := range []string{"", "2", "true", " 1"} {
+		if code := toggle(test, v); code != http.StatusBadRequest {
+			t.Errorf("value=%q: код %d, хочу 400", v, code)
+		}
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", test), nil))
+	if !strings.Contains(rec.Body.String(), "<span class=\"tag\">тест</span>") {
+		t.Errorf("мусор в value снял флаг «тест»")
+	}
+	if code := toggle(99999, "2"); code != http.StatusBadRequest {
+		t.Errorf("неизвестный id с мусором: код %d, хочу 400", code)
+	}
 	if code := toggle(99999, "1"); code != http.StatusNotFound {
 		t.Errorf("неизвестный id: код %d, хочу 404", code)
 	}

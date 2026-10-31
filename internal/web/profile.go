@@ -3,6 +3,7 @@ package web
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -61,7 +62,7 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			return
 		}
 		value, err := strconv.ParseFloat(req.FormValue("value"), 64)
-		if err != nil || value <= 0 {
+		if err != nil || value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 			http.Error(w, "некорректное значение", http.StatusBadRequest)
 			return
 		}
