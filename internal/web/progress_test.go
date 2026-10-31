@@ -43,7 +43,7 @@ func TestProgressCards(t *testing.T) {
 	}
 	defer db.Close()
 	ws := store.WeekStart(time.Now())
-	for i, w := range []struct {
+	for _, w := range []struct {
 		start time.Time
 		tss   float64
 		hash  string
@@ -51,7 +51,6 @@ func TestProgressCards(t *testing.T) {
 		{ws.Add(12 * time.Hour), 100, "hash-prog-cur"},
 		{ws.AddDate(0, 0, -7).Add(12 * time.Hour), 50, "hash-prog-prev"},
 	} {
-		_ = i
 		if _, err := store.InsertWorkout(db, &store.Workout{
 			StartTime: w.start, Duration: time.Hour, TSS: w.tss,
 		}, w.hash, filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
@@ -84,5 +83,44 @@ func TestProgressCards(t *testing.T) {
 	tsb := days[0].TSB
 	if !strings.Contains(body, ">"+format1(round1(tsb))+"</div><div class=\"k\">TSB · "+tsbLabel(round1(tsb))) {
 		t.Errorf("карточка TSB не совпадает с расчётом %v", tsb)
+	}
+}
+
+// TestProgressFourWeekBounds — в «4 недели» входит начало недели ws-21,
+// а ws-28 — уже нет.
+func TestProgressFourWeekBounds(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ws := store.WeekStart(time.Now())
+	for _, w := range []struct {
+		start time.Time
+		tss   float64
+		hash  string
+	}{
+		{ws.Add(12 * time.Hour), 10, "hash-b-cur"},                         // текущая
+		{ws.AddDate(0, 0, -21).Add(12 * time.Hour), 20, "hash-b-edge-in"},  // ровно ws-21 — входит
+		{ws.AddDate(0, 0, -28).Add(12 * time.Hour), 40, "hash-b-edge-out"}, // ws-28 — не входит
+	} {
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: w.start, Duration: time.Hour, TSS: w.tss,
+		}, w.hash, filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/progress", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	// 10 + 20 = 30: включаем ровно 4 недели (текущая + 3), без ws-28
+	if !strings.Contains(rec.Body.String(), ">30</div><div class=\"k\">TSS за 4 недели") {
+		t.Errorf("границы 4 недель неверные (жду 30, без 40)")
 	}
 }
