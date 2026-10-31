@@ -66,6 +66,10 @@ func TestWeeksAPI(t *testing.T) {
 	if err := store.SetWorkoutZones(db, id, [7]int{100, 200, 300, 400, 0, 0, 0}, 1); err != nil {
 		t.Fatal(err)
 	}
+	rpe := 6 // 6 × 60 мин = 360
+	if err := store.SetWorkoutContext(db, id, store.WorkoutContextUpdate{RPE: &rpe}); err != nil {
+		t.Fatal(err)
+	}
 	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +104,20 @@ func TestWeeksAPI(t *testing.T) {
 	// total 1000: low 300, gray 300, high 400
 	if cur.LowPct != 30 || cur.GrayPct != 30 || cur.HighPct != 40 {
 		t.Errorf("проценты: %v/%v/%v", cur.LowPct, cur.GrayPct, cur.HighPct)
+	}
+
+	// srpeSum проверяем по ключу JSON, а не через симметричный store.Week:
+	// иначе пропавшее из ответа поле осталось бы незамеченным.
+	var raw []map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	var srpe float64
+	if err := json.Unmarshal(raw[1]["srpeSum"], &srpe); err != nil {
+		t.Fatalf("в JSON нет srpeSum: %v", err)
+	}
+	if srpe != 360 {
+		t.Errorf("srpeSum = %v, хочу 360", srpe)
 	}
 
 	if rec, _ := get("?n=abc"); rec.Code != http.StatusBadRequest {

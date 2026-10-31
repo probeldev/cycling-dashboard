@@ -86,6 +86,57 @@ func TestProgressCards(t *testing.T) {
 	}
 }
 
+// TestProgressBikeStats — блок велосипедов: часы включают станок, километры —
+// только реальную дистанцию (у станковой тренировки distance = 0).
+func TestProgressBikeStats(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bikes, err := store.Bikes(db)
+	if err != nil || len(bikes) == 0 {
+		t.Fatalf("велосипеды: %v, %v", bikes, err)
+	}
+	bike := bikes[0].ID
+	for _, w := range []struct {
+		hash    string
+		km      float64
+		dur     time.Duration
+		trainer bool
+	}{
+		{"hash-progress-bike-road", 30, 2 * time.Hour, false},
+		{"hash-progress-bike-trainer", 0, time.Hour, true},
+	} {
+		id, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: time.Now(), Duration: w.dur, DistanceKm: w.km, Trainer: w.trainer,
+		}, w.hash, filepath.Join(t.TempDir(), "x.fit"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetWorkoutBike(db, id, &bike); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/progress", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Пробег по велосипедам") {
+		t.Fatalf("нет блока велосипедов")
+	}
+	want := "<td>" + bikes[0].Name + "</td><td>2</td><td>30.0</td><td>3.0</td>"
+	if !strings.Contains(body, want) {
+		t.Errorf("строка велосипеда не совпала: хочу %q", want)
+	}
+}
+
 // TestProgressFourWeekBounds — в «4 недели» входит начало недели ws-21,
 // а ws-28 — уже нет.
 func TestProgressFourWeekBounds(t *testing.T) {
