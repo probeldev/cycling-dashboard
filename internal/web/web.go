@@ -1,11 +1,13 @@
 package web
 
 import (
+	"bytes"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"html/template"
 	"io/fs"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -186,11 +188,17 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	return r, nil
 }
 
+// render рендерит шаблон в буфер и отдаёт его только при успехе: иначе ошибка
+// на середине шаблона оставляла бы клиенту 200 с обрезанным телом.
 func render(w http.ResponseWriter, name string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		log.Printf("шаблон %s: %v", name, err)
+		http.Error(w, "ошибка рендера страницы", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes())
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

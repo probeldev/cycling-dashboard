@@ -55,7 +55,7 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
           {{ else }}
             <span>{{ km .DistanceKm }} км</span><span>{{ sec2h .DurationSec }} ч</span>
           {{ end }}
-          {{ if .AvgPower }}<span class="sub">ср. {{ .AvgPower }} Вт{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .AvgIF }} · IF {{ printf "%.2f" .AvgIF }}{{ end }}</span>{{ else if .TSS }}<span class="sub">{{ trimFloat .TSS }} TSS</span>{{ end }}
+          {{ if .AvgPower }}<span class="sub">ср. {{ .AvgPower }} Вт{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .IF }} · IF {{ printf "%.2f" .IF }}{{ end }}</span>{{ else if .TSS }}<span class="sub">{{ trimFloat .TSS }} TSS</span>{{ end }}
           {{ if .AvgCadence }}<span class="sub">кад. {{ .AvgCadence }}</span>{{ end }}
           {{ if .Calories }}<span class="sub">{{ .Calories }} ккал</span>{{ end }}
         </div>
