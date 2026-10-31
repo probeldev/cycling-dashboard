@@ -649,22 +649,40 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 	return &w, nil
 }
 
-// Samples возвращает сэмплы, уменьшая количество до ~maxN точек бакет-усреднением
+// CountSamples — число сэмплов тренировки. Нужно для проверки потолка ?raw=1
+// и для расчёта размера бакета в Samples.
+func CountSamples(db *sql.DB, id int64) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE workout_id = ?`, id).Scan(&n)
+	return n, err
+}
+
+// Samples возвращает сэмплы, уменьшая количество до maxN точек бакет-усреднением
 // (а не выборкой каждой N-й — иначе графики страдают от алиасинга).
-// При maxN >= количества сэмплов возвращает их как есть, по одной секунде.
+// Точек возвращается не больше maxN: бакет = ceil(total/maxN), поэтому число
+// групп ceil(total/бакет) ≤ maxN. При maxN >= количества сэмплов — все как есть.
 func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 	if maxN < 1 {
 		maxN = 1 // иначе деление на ноль при расчёте бакета
 	}
-	var total int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE workout_id = ?`, id).Scan(&total); err != nil {
+	total, err := CountSamples(db, id)
+	if err != nil {
 		return nil, err
 	}
-	bucket := total/maxN + 1
+	if total == 0 {
+		return nil, nil
+	}
+	bucket := (total + maxN - 1) / maxN
+	// группируем по номеру записи, а не по ts_offset: иначе одинаковые offset
+	// (запись 2 Гц) склеиваются и точек получается больше, чем просили
 	rows, err := db.Query(`SELECT MIN(ts_offset), AVG(lat), AVG(lon),
 	    CAST(AVG(power) AS INTEGER), CAST(AVG(cadence) AS INTEGER), CAST(AVG(hr) AS INTEGER),
 	    AVG(speed_ms), AVG(altitude_m), MAX(distance_m)
-	    FROM samples WHERE workout_id = ? GROUP BY ts_offset / ? ORDER BY 1`, id, bucket)
+	    FROM (
+	      SELECT ts_offset, lat, lon, power, cadence, hr, speed_ms, altitude_m, distance_m,
+	             ROW_NUMBER() OVER (ORDER BY ts_offset, rowid) - 1 AS rn
+	      FROM samples WHERE workout_id = ?
+	    ) GROUP BY rn / ? ORDER BY 1`, id, bucket)
 	if err != nil {
 		return nil, err
 	}

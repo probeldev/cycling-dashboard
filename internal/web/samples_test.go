@@ -13,6 +13,61 @@ import (
 	"cycling-dashboard/internal/store"
 )
 
+// TestSamplesMaxBound — ?max=N возвращает не больше N точек. Объём как
+// у тренировки 418: 5281 сэмпл с шагом 1 с.
+func TestSamplesMaxBound(t *testing.T) {
+	const n = 5281
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: n * time.Second, AvgPower: 200, MaxPower: 400,
+	}, "hash-max-bound", filepath.Join(t.TempDir(), "test.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := make([]store.Sample, n)
+	for i := range samples {
+		samples[i] = store.Sample{Offset: int64(i), Power: 200, HasPwr: true}
+	}
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func(max int) int {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			fmt.Sprintf("/api/workout/%d/samples?max=%d", id, max), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("max=%d: код %d", max, rec.Code)
+		}
+		var got []store.Sample
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("max=%d: битый JSON: %v", max, err)
+		}
+		return len(got)
+	}
+
+	for _, max := range []int{1, 10, 100, 500, 5281, 6000} {
+		got := count(max)
+		if got > max {
+			t.Errorf("max=%d: вернулось %d точек — больше лимита", max, got)
+		}
+		if max <= n && got < max/2 {
+			t.Errorf("max=%d: вернулось %d точек — подозрительно мало", max, got)
+		}
+	}
+	if got := count(n); got < n-1 {
+		t.Errorf("max=%d: вернулось %d точек, хочу почти все исходные", n, got)
+	}
+}
+
 func TestParseSamplesQuery(t *testing.T) {
 	tests := []struct {
 		name    string
