@@ -322,8 +322,8 @@ func TestListTreeMonthMetrics(t *testing.T) {
 	if math.Abs(m.TSS-120) > 1e-9 {
 		t.Errorf("TSS за месяц = %v, хочу 120", m.TSS)
 	}
-	// (1.0·3600 + 0.8·1800) / 5400
-	wantIF := (1.0*3600 + 0.8*1800) / 5400.0
+	// sqrt(Σ(IF²·t)/Σt) = sqrt(120 / (1.5·100)) = sqrt(0.8)
+	wantIF := math.Sqrt((1.0*1.0*3600 + 0.8*0.8*1800) / 5400.0)
 	if math.Abs(m.AvgIF-wantIF) > 1e-9 {
 		t.Errorf("AvgIF = %v, хочу %v", m.AvgIF, wantIF)
 	}
@@ -331,5 +331,21 @@ func TestListTreeMonthMetrics(t *testing.T) {
 		if r.TSS == 0 || r.IF == 0 {
 			t.Errorf("в строке тренировки нет метрик: %+v", r)
 		}
+	}
+}
+
+// TestWorkoutDataGapsPct — процент пропусков считается от duration (не от
+// elapsed) и остаётся вещественным, чтобы 5.4% не терялись при округлении.
+func TestWorkoutDataGapsPct(t *testing.T) {
+	w := Workout{Duration: 1000 * time.Second, ElapsedSec: 5000, NoPowerSec: 54}
+	if got := w.DataGapsPct(); math.Abs(got-5.4) > 1e-9 {
+		t.Errorf("DataGapsPct = %v, хочу 5.4 (база — duration)", got)
+	}
+	w = Workout{Duration: 100 * time.Second, NoPowerSec: 6}
+	if got := w.DataGapsPct(); math.Abs(got-6) > 1e-9 {
+		t.Errorf("DataGapsPct = %v, хочу 6", got)
+	}
+	if got := (Workout{Duration: 0, NoPowerSec: 10}).DataGapsPct(); got != 0 {
+		t.Errorf("DataGapsPct без длительности = %v, хочу 0", got)
 	}
 }

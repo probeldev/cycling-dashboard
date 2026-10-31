@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -66,24 +67,14 @@ func (w Workout) GapsSec() int {
 	return w.NoPowerSec + w.SuspectDropoutSec
 }
 
-// DataGapsPct — доля времени с недостоверной мощностью, проценты. База —
-// общее время, а если оно неизвестно (старые строки) — время в движении.
-func (w Workout) DataGapsPct() int {
-	base := w.ElapsedSec
-	if base == 0 {
-		base = int(w.Duration.Seconds())
-	}
+// DataGapsPct — доля времени с недостоверной мощностью от времени в движении, %.
+// Считаем вещественным: 5.4% не должно превращаться в 5 и терять порог.
+func (w Workout) DataGapsPct() float64 {
+	base := w.Duration.Seconds()
 	if base <= 0 {
 		return 0
 	}
-	return int(float64(w.GapsSec())*100/float64(base) + 0.5)
-}
-
-type MonthAgg struct {
-	Year    int
-	Month   time.Month
-	Outdoor *Agg
-	Trainer *Agg
+	return float64(w.GapsSec()) * 100 / base
 }
 
 type Agg struct {
@@ -801,19 +792,21 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		return nil, err
 	}
 
-	// средний IF по месяцу — взвешенный по времени тренировок
+	// средний IF по месяцу: sqrt(Σ(IF²·t) / Σt) — при согласованных TSS это
+	// то же, что sqrt(TSS_месяца / (часы·100)). Линейное среднее IF завышало бы
+	// результат: IF — не аддитивная величина.
 	for yi := range years {
 		for mi := range years[yi].Months {
 			m := &years[yi].Months[mi]
 			var weighted, secs float64
 			for _, r := range m.Rides {
 				if r.IF > 0 && r.DurationSec > 0 {
-					weighted += r.IF * float64(r.DurationSec)
+					weighted += r.IF * r.IF * float64(r.DurationSec)
 					secs += float64(r.DurationSec)
 				}
 			}
 			if secs > 0 {
-				m.AvgIF = weighted / secs
+				m.AvgIF = math.Sqrt(weighted / secs)
 			}
 		}
 	}
