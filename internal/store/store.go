@@ -58,6 +58,25 @@ type Workout struct {
 	MetricsVersion    int     // версия расчёта метрик, 0 — не считались
 }
 
+// GapsSec — время, где мощность недостоверна: нет данных или датчик молчит
+// при работающих педалях.
+func (w Workout) GapsSec() int {
+	return w.NoPowerSec + w.SuspectDropoutSec
+}
+
+// DataGapsPct — доля времени с недостоверной мощностью, проценты. База —
+// общее время, а если оно неизвестно (старые строки) — время в движении.
+func (w Workout) DataGapsPct() int {
+	base := w.ElapsedSec
+	if base == 0 {
+		base = int(w.Duration.Seconds())
+	}
+	if base <= 0 {
+		return 0
+	}
+	return int(float64(w.GapsSec())*100/float64(base) + 0.5)
+}
+
 type MonthAgg struct {
 	Year    int
 	Month   time.Month
@@ -646,6 +665,8 @@ type WorkoutRow struct {
 	AvgPower    int
 	AvgCadence  int
 	Calories    int
+	TSS         float64
+	IF          float64
 }
 
 type Year struct {
@@ -660,12 +681,14 @@ type Month struct {
 	Outdoor       Agg
 	Trainer       Agg
 	TotalCalories int
+	TSS           float64 // сумма TSS за месяц
+	AvgIF         float64 // IF, взвешенный по времени тренировок
 	Rides         []WorkoutRow
 }
 
 func ListTree(db *sql.DB) ([]Year, error) {
 	rows, err := db.Query(`SELECT id, start_time, name, duration_sec, distance_m, trainer,
-	    avg_power, avg_cadence, calories
+	    avg_power, avg_cadence, calories, tss, if
 	    FROM workouts ORDER BY start_time DESC`)
 	if err != nil {
 		return nil, err
@@ -681,8 +704,9 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		var start string
 		var dist sql.NullInt64
 		var ap, ac, kcal sql.NullInt64
+		var tss, iff sql.NullFloat64
 		if err := rows.Scan(&r.ID, &start, &r.Name, &r.DurationSec, &dist, &r.Trainer,
-			&ap, &ac, &kcal); err != nil {
+			&ap, &ac, &kcal, &tss, &iff); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339, start)
@@ -697,6 +721,8 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		r.AvgPower = int(ap.Int64)
 		r.AvgCadence = int(ac.Int64)
 		r.Calories = int(kcal.Int64)
+		r.TSS = tss.Float64
+		r.IF = iff.Float64
 
 		yi, ok := yearIdx[t.Year()]
 		if !ok {
@@ -729,9 +755,27 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		magg.Hours += hours
 		magg.Calories += r.Calories
 		m.TotalCalories += r.Calories
+		m.TSS += r.TSS
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	// средний IF по месяцу — взвешенный по времени тренировок
+	for yi := range years {
+		for mi := range years[yi].Months {
+			m := &years[yi].Months[mi]
+			var weighted, secs float64
+			for _, r := range m.Rides {
+				if r.IF > 0 && r.DurationSec > 0 {
+					weighted += r.IF * float64(r.DurationSec)
+					secs += float64(r.DurationSec)
+				}
+			}
+			if secs > 0 {
+				m.AvgIF = weighted / secs
+			}
+		}
 	}
 
 	// взвешенная средняя мощность по месяцам и годам

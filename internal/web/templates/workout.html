@@ -3,6 +3,7 @@
   <a href="/">←</a>
   {{ datetime .W.StartTime }}
   {{ if .W.Trainer }}<span class="tag">станок</span>{{ end }}
+  {{ if gt .W.DataGapsPct 5 }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
 </h1>
 
 <div style="margin:10px 0">
@@ -15,6 +16,8 @@
   <h3>Общее</h3>
   <div class="stats">
     <div class="stat"><div class="v">{{ dur .W.Duration }}</div><div class="k">время</div></div>
+    {{ if .W.ElapsedSec }}<div class="stat"><div class="v">{{ dur (secs .W.ElapsedSec) }}</div><div class="k">общее время</div></div>{{ end }}
+    {{ if .W.PauseSec }}<div class="stat"><div class="v">{{ dur (secs .W.PauseSec) }}</div><div class="k">паузы</div></div>{{ end }}
     {{ if not .W.Trainer }}<div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>{{ end }}
     {{ if and (not .W.Trainer) .W.AscentM }}<div class="stat"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор</div></div>{{ end }}
     {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
@@ -26,6 +29,10 @@
     <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс</div></div>
     {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">NP</div></div>{{ end }}
     {{ if .W.FTP }}<div class="stat"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату</div></div>{{ end }}
+    {{ if .W.AvgPowerActive }}<div class="stat"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">в работе</div></div>{{ end }}
+    {{ if .W.IF }}<div class="stat"><div class="v">{{ trimFloat .W.IF }}</div><div class="k">IF</div></div>{{ end }}
+    {{ if .W.TSS }}<div class="stat"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS</div></div>{{ end }}
+    {{ if .W.VI }}<div class="stat"><div class="v">{{ trimFloat .W.VI }}</div><div class="k">VI</div></div>{{ end }}
     {{ if and .W.WeightKg .W.AvgPower }}<div class="stat"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг{{ if .W.WeightKg }} (вес {{ km .W.WeightKg }}){{ end }}</div></div>{{ end }}
   </div>
   {{ end }}

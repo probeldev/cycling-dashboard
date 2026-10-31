@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -290,5 +291,45 @@ func TestSetNormPowersRollback(t *testing.T) {
 	}
 	if got.NormPower != 0 || got.NPVersion != 0 {
 		t.Errorf("первая тренировка не откатилась: NP=%d версия=%d", got.NormPower, got.NPVersion)
+	}
+}
+
+// TestListTreeMonthMetrics — месячный агрегат суммирует TSS и считает средний IF,
+// взвешенный по времени тренировок.
+func TestListTreeMonthMetrics(t *testing.T) {
+	db := openTestDB(t)
+	jan := func(day int) time.Time { return time.Date(2026, 1, day, 10, 0, 0, 0, time.Local) }
+	for _, w := range []struct {
+		hash string
+		w    Workout
+	}{
+		{"hash-m1", Workout{StartTime: jan(10), Duration: time.Hour, TSS: 100, IF: 1}},
+		{"hash-m2", Workout{StartTime: jan(20), Duration: 30 * time.Minute, TSS: 20, IF: 0.8}},
+	} {
+		if _, err := InsertWorkout(db, &w.w, w.hash, "/tmp/"+w.hash+".fit", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	years, err := ListTree(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(years) != 1 || len(years[0].Months) != 1 {
+		t.Fatalf("дерево: %d лет, хочу 1 год с 1 месяцем", len(years))
+	}
+	m := years[0].Months[0]
+	if math.Abs(m.TSS-120) > 1e-9 {
+		t.Errorf("TSS за месяц = %v, хочу 120", m.TSS)
+	}
+	// (1.0·3600 + 0.8·1800) / 5400
+	wantIF := (1.0*3600 + 0.8*1800) / 5400.0
+	if math.Abs(m.AvgIF-wantIF) > 1e-9 {
+		t.Errorf("AvgIF = %v, хочу %v", m.AvgIF, wantIF)
+	}
+	for _, r := range m.Rides {
+		if r.TSS == 0 || r.IF == 0 {
+			t.Errorf("в строке тренировки нет метрик: %+v", r)
+		}
 	}
 }

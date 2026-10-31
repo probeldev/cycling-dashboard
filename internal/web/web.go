@@ -22,6 +22,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"km":        func(v float64) string { return trimFloat(v) },
 	"hours":     func(h float64) string { return trimFloat(h) },
 	"sec2h":     func(sec int64) string { return trimFloat(float64(sec) / 3600) },
+	"secs":      func(s int) time.Duration { return time.Duration(s) * time.Second },
 	"date":      func(t time.Time) string { return t.Format("02.01.2006") },
 	"trimFloat": trimFloat,
 	"divf":      func(a int, b float64) float64 { return float64(a) / b },
