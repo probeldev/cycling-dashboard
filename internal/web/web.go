@@ -259,6 +259,20 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		writeJSON(w, prs)
 	})
 
+	r.Get("/api/cp", func(w http.ResponseWriter, req *http.Request) {
+		from, to, _, err := parseRecordsPeriod(req.URL.Query(), time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		records, err := store.BestRecords(db, from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, fitCP(powerPoints(records)))
+	})
+
 	r.Get("/api/workout/{id}/mmp", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
 		if _, err := store.GetWorkout(db, id); err != nil {

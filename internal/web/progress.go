@@ -38,7 +38,15 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			}
 		}
 		tsb := round1(today.TSB)
+		// CP/W' по всем данным: окна MMP за всё время
+		allRecords, err := store.BestRecords(db, time.Time{}, to.AddDate(0, 0, 1))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		cp := fitCP(powerPoints(allRecords))
 		render(w, "progress.html", map[string]any{
+			"CP":        cpView(cp),
 			"Today":     today,
 			"WeekTSS":   weekTSS,
 			"Last4TSS":  last4,

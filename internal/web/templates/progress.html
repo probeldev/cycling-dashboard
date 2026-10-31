@@ -9,6 +9,18 @@
   <div class="stat"><div class="v">{{ printf "%.0f" .Last4TSS }}</div><div class="k">TSS за 4 недели</div></div>
 </div>
 
+{{ if .CP.HasFit }}
+<div class="stats">
+  <div class="stat"><div class="v">{{ printf "%.0f" .CP.CP }} Вт</div><div class="k">CP · критическая мощность</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .CP.WPrime }} кДж</div><div class="k">W' · запас над CP</div></div>
+  {{ with .CP.FTP }}<div class="stat"><div class="v">{{ printf "%.0f" . }} Вт</div><div class="k">FTP оценка (0.95·20 мин)</div></div>{{ end }}
+  <div class="stat"><div class="v">{{ .CP.Points }}</div><div class="k">точек MMP 120–1200 с</div></div>
+</div>
+<p class="sub" style="color:var(--dim)">CP и W' — оценка по MMP (регрессия W = CP + W'/t), а не тест; {{ if .CP.Low }}низкая достоверность (R² &lt; 0.9){{ else }}достоверность ок{{ end }}.</p>
+{{ else }}
+<p class="sub" style="color:var(--dim)">CP/W' не посчитать: нужно ≥3 окна MMP 120–1200 с (сейчас {{ .CP.Points }}).{{ with .CP.FTP }} FTP-оценка по 20 мин: {{ printf "%.0f" . }} Вт.{{ end }}</p>
+{{ end }}
+
 <h2>Нагрузка</h2>
 <div class="tabs" id="periodBtns">
   <button class="tab" data-days="30">30 дней</button>
