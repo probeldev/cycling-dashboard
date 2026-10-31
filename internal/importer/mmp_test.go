@@ -3,6 +3,7 @@ package importer
 import (
 	"math"
 	"os"
+	"sort"
 	"path/filepath"
 	"testing"
 
@@ -197,11 +198,16 @@ func TestMMPFillForward(t *testing.T) {
 func TestMMPMonotonic(t *testing.T) {
 	check := func(t *testing.T, m map[int]float64) {
 		t.Helper()
-		for _, w := range mmpWindows {
-			long := w * 2
-			if v, ok := m[long]; ok {
-				if m[w]+1e-9 < v {
-					t.Errorf("MMP(%d)=%v < MMP(%d)=%v", w, m[w], long, v)
+		// все пары окон: более короткое окно не может быть слабее длинного
+		windows := make([]int, 0, len(m))
+		for w := range m {
+			windows = append(windows, w)
+		}
+		sort.Ints(windows)
+		for i := 0; i < len(windows); i++ {
+			for j := i + 1; j < len(windows); j++ {
+				if m[windows[i]]+1e-9 < m[windows[j]] {
+					t.Errorf("MMP(%d)=%v < MMP(%d)=%v", windows[i], m[windows[i]], windows[j], m[windows[j]])
 				}
 			}
 		}
@@ -236,8 +242,8 @@ func TestMMPMonotonic(t *testing.T) {
 		}
 		m := mmpOf(samples)
 		check(t, m)
-		if m[1200] != 98.3 || m[1800] != 97.2 {
-			t.Errorf("308: MMP 1200=%v 1800=%v, хочу 98.3 и 97.2", m[1200], m[1800])
+		if m[1200] != 98.3 || m[1800] != 97.2 || m[2700] != 97.1 {
+			t.Errorf("308: MMP 1200=%v 1800=%v 2700=%v, хочу 98.3/97.2/97.1", m[1200], m[1800], m[2700])
 		}
 	}
 }
@@ -272,8 +278,9 @@ func TestMMPLongRecordInsideWindow(t *testing.T) {
 	}
 }
 
-// TestMMPShortWindow — запись длиннее окна не может его представлять:
-// «1-секундный пик» не должен становиться средним за 60 с.
+// TestMMPShortWindow — известное ограничение: запись длиннее окна не может
+// начинать окно (иначе «1-секундный пик» стал бы средним за 60 с). Тест
+// фиксирует поведение, чтобы его не потеряли при будущих правках.
 func TestMMPShortWindow(t *testing.T) {
 	samples := []store.Sample{
 		{Offset: 0, Power: 300, HasPwr: true},  // длительность 60 с

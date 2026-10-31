@@ -45,6 +45,7 @@ func fitCP(records []store.PowerRecord) cpResult {
 	}
 	res.Points = len(xs)
 	if len(xs) < 3 {
+		res.LowConfidence = true
 		return res
 	}
 

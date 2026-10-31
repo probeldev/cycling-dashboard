@@ -52,6 +52,9 @@ func TestFitCPNotEnough(t *testing.T) {
 	if res.FTPEst != nil {
 		t.Errorf("FTP-оценка без 20 мин: %v", res.FTPEst)
 	}
+	if !res.LowConfidence {
+		t.Errorf("при <3 точках lowConfidence должен быть true")
+	}
 }
 
 // TestFitCPNoisy — шумные данные помечаются низкой достоверностью.

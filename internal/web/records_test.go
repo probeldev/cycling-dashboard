@@ -171,7 +171,7 @@ func TestRecordsAPIPrevious(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for i, w := range []struct {
+	for _, w := range []struct {
 		start time.Time
 		hash  string
 		watts float64
@@ -188,7 +188,6 @@ func TestRecordsAPIPrevious(t *testing.T) {
 		if err := store.SetWorkoutMMP(db, id, []store.PowerRecord{{WindowSec: 5, Watts: w.watts}}, 1); err != nil {
 			t.Fatal(err)
 		}
-		_ = i
 	}
 	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
 	if err != nil {
