@@ -129,20 +129,46 @@ func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, work
 // FIT-сессии, поэтому для них дочитываем сессию — если файла нет, останутся NULL.
 // TSS считается от duration_sec, поэтому заполняется и без сэмплов (когда NP и
 // FTP известны). Идемпотентен: после прогона metrics_version == metricsVersion.
+// BackfillMetrics пересчитывает метрики в одной транзакции.
 func BackfillMetrics(db *sql.DB) (int, error) {
-	refs, err := store.WorkoutsNeedingMetrics(db, metricsVersion)
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	n, err := BackfillMetricsTx(tx)
+	if err != nil {
+		return 0, err
+	}
+	return n, tx.Commit()
+}
+
+// BackfillMetricsTx — пересчёт в переданной транзакции: правка профиля и
+// зависящие от неё метрики коммитятся вместе, ошибка откатывает всё.
+func BackfillMetricsTx(tx *sql.Tx) (int, error) {
+	return backfillMetrics(tx)
+}
+
+func backfillMetrics(q store.DBTX) (int, error) {
+	refs, err := store.WorkoutsNeedingMetrics(q, metricsVersion)
 	if err != nil {
 		return 0, err
 	}
 	updates := make([]*store.Workout, 0, len(refs))
 	for _, ref := range refs {
-		w, err := store.GetWorkout(db, ref.ID)
+		w, err := store.GetWorkout(q, ref.ID)
 		if err != nil {
 			return 0, err
 		}
-		// elapsed и работу из сэмплов не восстановить — берём из сессии, если файл на месте
+		samples, err := store.RawSamples(q, ref.ID)
+		if err != nil {
+			return 0, err
+		}
+		// elapsed и работу из сэмплов не восстановить — берём из сессии, если
+		// файл на месте. Для тренировок без мощности FIT не читаем: TSS им не
+		// нужен, а чтение 50 файлов на каждую правку профиля — лишняя работа.
 		elapsed, work := w.ElapsedSec, w.WorkKJ
-		if elapsed == 0 || work == 0 {
+		if (elapsed == 0 || work == 0) && sampleMetricsOf(samples).HasPowerSample {
 			if activity, err := readActivity(ref.Path); err == nil {
 				e, wk := sessionTotals(activity.Sessions[0])
 				if elapsed == 0 {
@@ -156,14 +182,10 @@ func BackfillMetrics(db *sql.DB) (int, error) {
 				fmt.Fprintf(os.Stderr, "бэкфилл метрик: сессия недоступна, elapsed/work будут NULL: %s\n", ref.Path)
 			}
 		}
-		samples, err := store.RawSamples(db, ref.ID)
-		if err != nil {
-			return 0, err
-		}
 		applyMetrics(w, samples, elapsed, work)
 		updates = append(updates, w)
 	}
-	if err := store.SetWorkoutMetricsBatch(db, updates); err != nil {
+	if err := store.SetWorkoutMetricsBatch(q, updates); err != nil {
 		return 0, err
 	}
 	return len(updates), nil

@@ -2,7 +2,6 @@ package web
 
 import (
 	"database/sql"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -53,30 +52,49 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			}
 			at = t
 		}
-		if err := store.AddProfileEntry(db, kind, value, at); err != nil {
+		tx, err := db.Begin()
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		recalcMetrics(db)
+		defer tx.Rollback()
+		if err := store.AddProfileEntryTx(tx, kind, value, at); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// метрики зависят от FTP: считаем их в той же транзакции, чтобы не
+		// сохранить профиль с устаревшими IF/TSS
+		if _, err := importer.BackfillMetricsTx(tx); err != nil {
+			http.Error(w, "не удалось пересчитать метрики: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("HX-Redirect", "/profile")
 	})
 
 	r.Post("/profile/entry/{id}/delete", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
-		if err := store.DeleteProfileEntry(db, id); err != nil {
+		tx, err := db.Begin()
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		recalcMetrics(db)
+		defer tx.Rollback()
+		if err := store.DeleteProfileEntryTx(tx, id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := importer.BackfillMetricsTx(tx); err != nil {
+			http.Error(w, "не удалось пересчитать метрики: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("HX-Redirect", "/profile")
 	})
-}
-
-// recalcMetrics пересчитывает метрики, у которых изменился штамп профиля:
-// IF/TSS/VI зависят от FTP, и без этого API отдавал бы старые значения
-// до следующего старта сервера.
-func recalcMetrics(db *sql.DB) {
-	if _, err := importer.BackfillMetrics(db); err != nil {
-		log.Printf("пересчёт метрик после изменения профиля: %v", err)
-	}
 }

@@ -11,6 +11,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// DBTX — общее для *sql.DB и *sql.Tx: запросы, которые должны работать и
+// внутри транзакции (например, пересчёт метрик вместе с изменением профиля).
+type DBTX interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 type Workout struct {
 	ID         int64
 	StartTime  time.Time
@@ -471,19 +479,46 @@ type ProfileEntry struct {
 
 // AddProfileEntry добавляет запись истории и пересчитывает штампы тренировок.
 func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error {
-	if _, err := db.Exec(`INSERT INTO profile_history (kind, value, recorded_at) VALUES (?,?,?)`,
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := AddProfileEntryTx(tx, kind, value, at); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// AddProfileEntryTx добавляет запись и пересчитывает штампы в переданной
+// транзакции: запись профиля и её последствия коммитятся вместе.
+func AddProfileEntryTx(tx *sql.Tx, kind string, value float64, at time.Time) error {
+	if _, err := tx.Exec(`INSERT INTO profile_history (kind, value, recorded_at) VALUES (?,?,?)`,
 		kind, value, at.UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
-	return BackfillProfileStamps(db)
+	return backfillProfileStampsTx(tx)
 }
 
 // DeleteProfileEntry удаляет запись истории и пересчитывает штампы тренировок.
 func DeleteProfileEntry(db *sql.DB, id int64) error {
-	if _, err := db.Exec(`DELETE FROM profile_history WHERE id = ?`, id); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
 		return err
 	}
-	return BackfillProfileStamps(db)
+	defer tx.Rollback()
+	if err := DeleteProfileEntryTx(tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteProfileEntryTx удаляет запись и пересчитывает штампы в переданной транзакции.
+func DeleteProfileEntryTx(tx *sql.Tx, id int64) error {
+	if _, err := tx.Exec(`DELETE FROM profile_history WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return backfillProfileStampsTx(tx)
 }
 
 // ProfileHistory возвращает всю историю, новые записи первыми.
@@ -536,20 +571,34 @@ func BackfillProfileStamps(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, m := range []struct{ kind, column string }{
-		{"ftp", "ftp_w"},
-		{"weight", "weight_kg"},
+	if err := backfillProfileStampsTx(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// backfillProfileStampsTx проставляет штампы FTP/веса в переданной транзакции.
+// IF/TSS зависят только от FTP (VI — вообще не от профиля): при реальной смене
+// FTP у строк с мощностью обнуляем версию метрик. Вес на метрики не влияет —
+// зоны считаются из штампов на лету, поэтому его изменение метрики не трогает.
+func backfillProfileStampsTx(tx *sql.Tx) error {
+	for _, m := range []struct {
+		kind, column string
+		invalidates  bool
+	}{
+		{"ftp", "ftp_w", true},
+		{"weight", "weight_kg", false},
 	} {
-		// IF/TSS/VI зависят от FTP (и для консистентности — от веса): если штамп
-		// реально меняется, обнуляем версию метрик — бэкфилл их пересчитает.
-		if _, err := tx.Exec(`UPDATE workouts SET metrics_version = 0
-		    WHERE metrics_version <> 0 AND `+m.column+` IS NOT COALESCE(
-		      (SELECT value FROM profile_history
-		       WHERE kind = ? AND recorded_at <= start_time
-		       ORDER BY recorded_at DESC LIMIT 1),
-		      (SELECT value FROM profile_history
-		       WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1))`, m.kind, m.kind); err != nil {
-			return err
+		if m.invalidates {
+			if _, err := tx.Exec(`UPDATE workouts SET metrics_version = 0
+			    WHERE metrics_version <> 0 AND norm_power > 0 AND `+m.column+` IS NOT COALESCE(
+			      (SELECT value FROM profile_history
+			       WHERE kind = ? AND recorded_at <= start_time
+			       ORDER BY recorded_at DESC LIMIT 1),
+			      (SELECT value FROM profile_history
+			       WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1))`, m.kind, m.kind); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(`UPDATE workouts SET `+m.column+` = COALESCE(
 			(SELECT value FROM profile_history
@@ -560,7 +609,7 @@ func BackfillProfileStamps(db *sql.DB) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func SetName(db *sql.DB, id int64, name string) error {
@@ -652,7 +701,7 @@ type NormPowerUpdate struct {
 
 // WorkoutsNeedingMetrics — тренировки, у которых метрики нагрузки посчитаны
 // версией старше version.
-func WorkoutsNeedingMetrics(db *sql.DB, version int) ([]FileRef, error) {
+func WorkoutsNeedingMetrics(db DBTX, version int) ([]FileRef, error) {
 	rows, err := db.Query(`SELECT id, file_path FROM workouts
 	    WHERE metrics_version < ? ORDER BY id`, version)
 	if err != nil {
@@ -670,20 +719,13 @@ func WorkoutsNeedingMetrics(db *sql.DB, version int) ([]FileRef, error) {
 	return out, rows.Err()
 }
 
-// SetWorkoutMetricsBatch записывает метрики нагрузки пачкой в одной транзакции.
-// Пользовательские поля (name, trainer_override) и сами данные тренировки
-// не трогает — только метрики.
-func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
-	if len(works) == 0 {
-		return nil
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+// SetWorkoutMetricsBatch записывает метрики нагрузки пачкой. Транзакцией
+// управляет вызывающий: бэкфилл при старте открывает свою, а правка профиля —
+// общую с записью в profile_history.
+// Пользовательские поля (name, trainer_override) не трогает.
+func SetWorkoutMetricsBatch(db DBTX, works []*Workout) error {
 	for _, w := range works {
-		if _, err := tx.Exec(`UPDATE workouts SET
+		if _, err := db.Exec(`UPDATE workouts SET
 		    if=?, tss=?, vi=?, avg_power_active=?, coasting_sec=?, no_power_sec=?,
 		    suspect_dropout_sec=?, elapsed_sec=?, pause_sec=?, work_kj=?, avg_temp=?, metrics_version=?
 		    WHERE id = ?`,
@@ -695,7 +737,7 @@ func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // SetNormPowers записывает NP и версии пачкой в одной транзакции: бэкфилл
@@ -901,7 +943,7 @@ func ListWorkouts(db *sql.DB) ([]Workout, error) {
 	return out, rows.Err()
 }
 
-func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
+func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var w Workout
 	var start string
 	var durSec int64
@@ -1023,7 +1065,7 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 
 // RawSamples возвращает все сэмплы тренировки как есть, без бакет-усреднения:
 // для внешнего анализа нужны честные медиана и пики, а не средние по бакетам.
-func RawSamples(db *sql.DB, id int64) ([]Sample, error) {
+func RawSamples(db DBTX, id int64) ([]Sample, error) {
 	rows, err := db.Query(`SELECT ts_offset, lat, lon, power, cadence, hr,
 	    speed_ms, altitude_m, distance_m, temperature
 	    FROM samples WHERE workout_id = ? ORDER BY ts_offset, rowid`, id)

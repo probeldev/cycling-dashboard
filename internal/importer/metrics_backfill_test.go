@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"fmt"
 	"math"
 	"path/filepath"
 	"testing"
@@ -214,6 +215,10 @@ func TestBackfillMetricsFromFIT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// FIT читаем только для тренировок с мощностью — добавим сэмплы
+	if err := store.InsertSamples(db, id, series(100, 1, func(int) int { return 200 })); err != nil {
+		t.Fatal(err)
+	}
 	if n, err := BackfillMetrics(db); err != nil || n != 1 {
 		t.Fatalf("бэкфилл: %d, %v; хочу 1", n, err)
 	}
@@ -324,5 +329,39 @@ func TestMetricsClearedWhenNPZero(t *testing.T) {
 	}
 	if w.IF != 0 || w.TSS != 0 || w.VI != 0 {
 		t.Errorf("при NP=0 метрики не NULL: IF=%v TSS=%v VI=%v", w.IF, w.TSS, w.VI)
+	}
+}
+
+// TestBackfillMetricsRollback — ошибка на середине пачки откатывает всю
+// транзакцию: ни одна тренировка не получает частично обновлённые метрики.
+func TestBackfillMetricsRollback(t *testing.T) {
+	db := openTestDB(t)
+	a, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 3600 * time.Second, NormPower: 140, AvgPower: 123, FTP: 156,
+	}, "hash-rb-a", "/nonexistent/a.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 3600 * time.Second, NormPower: 130, AvgPower: 120, FTP: 156,
+	}, "hash-rb-b", "/nonexistent/b.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(fmt.Sprintf(`CREATE TRIGGER fail_metrics BEFORE UPDATE ON workouts
+	    WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'boom'); END`, b)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err == nil {
+		t.Fatal("жду ошибку от триггера")
+	}
+	for _, id := range []int64{a, b} {
+		w, err := store.GetWorkout(db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w.MetricsVersion != 0 || w.TSS != 0 || w.IF != 0 {
+			t.Errorf("id=%d не откатился: IF=%v TSS=%v version=%d", id, w.IF, w.TSS, w.MetricsVersion)
+		}
 	}
 }

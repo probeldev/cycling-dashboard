@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,5 +71,44 @@ func TestWorkoutJSONNullMetrics(t *testing.T) {
 		if !ok || v != want {
 			t.Errorf("%s = %v, хочу %v", key, got[key], want)
 		}
+	}
+}
+
+// TestProfileEntryRollbackOnMetricsError — ошибка пересчёта метрик откатывает
+// запись профиля и отдаёт 500, а не «успешно сохранено».
+func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour, NormPower: 140, AvgPower: 123, FTP: 156,
+	}, "hash-prof-fail", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	// падаем только на записи метрик (metrics_version=1), штампы проходят
+	if _, err := db.Exec(`CREATE TRIGGER fail_metrics BEFORE UPDATE ON workouts
+	    WHEN NEW.metrics_version = 1 BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/profile/entry",
+		strings.NewReader("kind=ftp&value=200&date=2026-10-30"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("код %d, хочу 500 (метрики не пересчитались)", rec.Code)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM profile_history`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("в profile_history %d записей, хочу 0 (транзакция должна откатиться)", n)
 	}
 }

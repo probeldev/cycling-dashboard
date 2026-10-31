@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -42,12 +43,17 @@ func countSamples(t *testing.T, db *sql.DB, where string, args ...any) int {
 	return n
 }
 
+// seq делает хеши файлов уникальными: два insertWorkout в одном тесте должны
+// создавать две тренировки, а не перезаписывать одну.
+var seq int
+
 // insertWorkout — тренировка с n сэмплами по 1 с; power задаёт мощность записи.
 func insertWorkout(t *testing.T, db *sql.DB, n int, power func(i int) int) int64 {
 	t.Helper()
+	seq++
 	id, err := InsertWorkout(db, &Workout{
 		StartTime: time.Now(), Duration: time.Duration(n) * time.Second,
-	}, "hash-"+t.Name(), filepath.Join(t.TempDir(), "x.fit"), 1)
+	}, "hash-"+t.Name()+"-"+strconv.Itoa(seq), filepath.Join(t.TempDir(), "x.fit"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,29 +356,23 @@ func TestWorkoutDataGapsPct(t *testing.T) {
 	}
 }
 
-// TestSetWorkoutMetricsBatchRollback — ошибка на середине пачки откатывает
-// всю транзакцию: первая строка остаётся с прежними метриками.
-func TestSetWorkoutMetricsBatchRollback(t *testing.T) {
+// TestProfileRollbackOnStampError — ошибка при пересчёте штампов откатывает
+// и саму запись профиля: в profile_history ничего не остаётся.
+func TestProfileRollbackOnStampError(t *testing.T) {
 	db := openTestDB(t)
-	first := insertWorkout(t, db, 1, func(int) int { return 100 })
-	second := insertWorkout(t, db, 1, func(int) int { return 100 })
-	if _, err := db.Exec(fmt.Sprintf(`CREATE TRIGGER fail_metrics BEFORE UPDATE ON workouts
-	    WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'boom'); END`, second)); err != nil {
+	insertWorkout(t, db, 1, func(int) int { return 100 })
+	if _, err := db.Exec(`CREATE TRIGGER fail_stamp BEFORE UPDATE ON workouts
+	    BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
 		t.Fatal(err)
 	}
-	err := SetWorkoutMetricsBatch(db, []*Workout{
-		{ID: first, IF: 0.9, TSS: 50, MetricsVersion: 1},
-		{ID: second, IF: 0.8, TSS: 40, MetricsVersion: 1},
-	})
-	if err == nil {
+	if err := AddProfileEntry(db, "ftp", 200, time.Now()); err == nil {
 		t.Fatal("жду ошибку от триггера")
 	}
-	got, err := GetWorkout(db, first)
-	if err != nil {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM profile_history`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if got.MetricsVersion != 0 || got.TSS != 0 || got.IF != 0 {
-		t.Errorf("первая строка не откатилась: IF=%v TSS=%v version=%d",
-			got.IF, got.TSS, got.MetricsVersion)
+	if n != 0 {
+		t.Errorf("в profile_history %d записей, хочу 0 (откат)", n)
 	}
 }
