@@ -29,7 +29,7 @@
     <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя</div></div>
     <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс</div></div>
     {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">NP</div></div>{{ end }}
-    {{ if .W.FTP }}<div class="stat"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату{{ if eq .W.FTPKind "outdoor" }} (улица){{ else if eq .W.FTPKind "trainer" }} (станок){{ end }}</div></div>{{ end }}
+    {{ if .W.FTP }}<div class="stat"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату{{ if .W.FTPFallback }} (станок, уличный не задан){{ else if eq .W.FTPKind "outdoor" }} (улица){{ else if eq .W.FTPKind "trainer" }} (станок){{ end }}</div></div>{{ end }}
     {{ if .W.AvgPowerActive }}<div class="stat"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">в работе</div></div>{{ end }}
     {{ if .W.HasIF }}<div class="stat"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF</div></div>{{ end }}
     {{ if .W.HasTSS }}<div class="stat"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS</div></div>{{ end }}

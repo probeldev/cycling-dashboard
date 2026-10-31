@@ -44,6 +44,18 @@ func TestProfileKinds(t *testing.T) {
 		return rec.Code
 	}
 
+	// пока уличного FTP нет — профиль честно говорит про fallback
+	{
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /profile без уличного FTP: код %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "используется станковый") {
+			t.Errorf("на /profile нет подсказки про fallback уличного FTP")
+		}
+	}
+
 	if code := post("garbage", "200"); code != http.StatusBadRequest {
 		t.Errorf("kind=garbage: код %d, хочу 400", code)
 	}
@@ -64,31 +76,46 @@ func TestProfileKinds(t *testing.T) {
 	}
 }
 
-// TestWorkoutPageFTPKind — рядом с FTP подписан источник значения.
+// TestWorkoutPageFTPKind — рядом с FTP подписан источник значения, в том числе
+// fallback улицы на станковый FTP.
 func TestWorkoutPageFTPKind(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	id, err := store.InsertWorkout(db, &store.Workout{
-		StartTime: time.Now(), Duration: time.Hour, FTP: 170, FTPKind: "outdoor",
-		HasPower: true, AvgPower: 200, MaxPower: 400,
-	}, "hash-page-kind", filepath.Join(t.TempDir(), "x.fit"), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
 	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/workout/"+strconv.FormatInt(id, 10), nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("код %d", rec.Code)
+	cases := []struct {
+		name string
+		w    store.Workout
+		want string
+	}{
+		{"улица", store.Workout{FTP: 170, FTPKind: "outdoor"}, "FTP на дату (улица)"},
+		{"станок", store.Workout{Trainer: true, FTP: 156, FTPKind: "trainer"}, "FTP на дату (станок)"},
+		{"fallback улицы", store.Workout{FTP: 156, FTPKind: "trainer"}, "FTP на дату (станок, уличный не задан)"},
 	}
-	if !strings.Contains(rec.Body.String(), "FTP на дату (улица)") {
-		t.Errorf("нет подписи источника FTP")
+	for i, c := range cases {
+		c.w.StartTime = time.Now()
+		c.w.Duration = time.Hour
+		c.w.HasPower = true
+		c.w.AvgPower = 200
+		c.w.MaxPower = 400
+		id, err := store.InsertWorkout(db, &c.w, "hash-page-kind-"+strconv.Itoa(i),
+			filepath.Join(t.TempDir(), "x.fit"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/workout/"+strconv.FormatInt(id, 10), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: код %d", c.name, rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), c.want) {
+			t.Errorf("%s: нет подписи %q", c.name, c.want)
+		}
 	}
 }
 

@@ -443,7 +443,7 @@ func TestProfileStampsByKind(t *testing.T) {
 }
 
 // TestFTPChangeInvalidatesOnlyOwnKind — смена уличного FTP инвалидирует только
-// уличные тренировки, смена станкового — только станковые.
+// уличные тренировки, смена станкового при явном уличном — только станковые.
 func TestFTPChangeInvalidatesOnlyOwnKind(t *testing.T) {
 	db := openTestDB(t)
 	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
@@ -454,7 +454,6 @@ func TestFTPChangeInvalidatesOnlyOwnKind(t *testing.T) {
 		"hash-inv-tr", "/tmp/tr.fit", 1)
 	outdoor, _ := InsertWorkout(db, &Workout{StartTime: day(6, 2), Duration: time.Hour},
 		"hash-inv-out", "/tmp/out.fit", 1)
-	// штампуем обе (пока только станковый FTP) и помечаем метрики посчитанными
 	if err := BackfillProfileStamps(db); err != nil {
 		t.Fatal(err)
 	}
@@ -462,6 +461,7 @@ func TestFTPChangeInvalidatesOnlyOwnKind(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// появился уличный FTP — инвалидируется только улица
 	if err := AddProfileEntry(db, "ftp_outdoor", 180, day(2, 1)); err != nil {
 		t.Fatal(err)
 	}
@@ -472,14 +472,126 @@ func TestFTPChangeInvalidatesOnlyOwnKind(t *testing.T) {
 		t.Errorf("станок: metrics_version=%d, хочу 1 (уличный FTP не влияет)", got)
 	}
 
-	if err := AddProfileEntry(db, "ftp", 160, day(2, 1)); err != nil {
+	// пересчёт возвращает актуальность обеим (здесь — эмуляция успешного
+	// бэкфилла); смена станкового FTP при явном уличном не должна трогать улицу
+	if _, err := db.Exec(`UPDATE workouts SET metrics_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	if got := metricsVersionOf(t, db, trainer); got != 1 {
+		t.Fatalf("после бэкфилла станок: metrics_version=%d, хочу 1", got)
+	}
+	if err := AddProfileEntry(db, "ftp", 160, day(3, 1)); err != nil {
 		t.Fatal(err)
 	}
 	if got := metricsVersionOf(t, db, trainer); got != 0 {
 		t.Errorf("станок: metrics_version=%d, хочу 0 (FTP изменился)", got)
 	}
+	if got := metricsVersionOf(t, db, outdoor); got != 1 {
+		t.Errorf("улица: metrics_version=%d, хочу 1 (у неё свой FTP 180)", got)
+	}
+}
+
+// TestFTPFallbackInvalidation — улица без своего FTP живёт на станковом:
+// его изменение инвалидирует и уличные тренировки.
+func TestFTPFallbackInvalidation(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	if err := AddProfileEntry(db, "ftp", 156, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	outdoor, _ := InsertWorkout(db, &Workout{StartTime: day(6, 1), Duration: time.Hour},
+		"hash-fb-out", "/tmp/out.fit", 1)
+	if err := BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET metrics_version = 1, norm_power = 140`); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfileEntry(db, "ftp", 200, day(2, 1)); err != nil {
+		t.Fatal(err)
+	}
 	if got := metricsVersionOf(t, db, outdoor); got != 0 {
-		t.Errorf("улица: metrics_version=%d, хочу 0 (уже была сброшена)", got)
+		t.Errorf("улица на fallback: metrics_version=%d, хочу 0", got)
+	}
+	w, _ := GetWorkout(db, outdoor)
+	if w.FTP != 200 || w.FTPKind != "trainer" {
+		t.Errorf("после fallback: FTP=%d kind=%q, хочу 200/trainer", w.FTP, w.FTPKind)
+	}
+}
+
+// TestFTPKindOnlyChangeKeepsMetrics — уличный FTP равен станковому: меняется
+// только источник (kind), значение то же — метрики не инвалидируются.
+func TestFTPKindOnlyChangeKeepsMetrics(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	if err := AddProfileEntry(db, "ftp", 156, day(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	outdoor, _ := InsertWorkout(db, &Workout{StartTime: day(6, 1), Duration: time.Hour},
+		"hash-kind-only", "/tmp/out.fit", 1)
+	if err := BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET metrics_version = 1, norm_power = 140`); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfileEntry(db, "ftp_outdoor", 156, day(2, 1)); err != nil {
+		t.Fatal(err)
+	}
+	w, _ := GetWorkout(db, outdoor)
+	if w.FTP != 156 || w.FTPKind != "outdoor" {
+		t.Errorf("FTP=%d kind=%q, хочу 156/outdoor (источник обновился)", w.FTP, w.FTPKind)
+	}
+	if got := metricsVersionOf(t, db, outdoor); got != 1 {
+		t.Errorf("metrics_version=%d, хочу 1: значение FTP не изменилось", got)
+	}
+}
+
+// TestBothFTPsRemoved — удалили оба вида FTP: штамп NULL, kind пустой,
+// метрики обнуляются.
+func TestBothFTPsRemoved(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	for _, e := range []struct {
+		kind  string
+		value float64
+	}{{"ftp", 156}, {"ftp_outdoor", 170}} {
+		if err := AddProfileEntry(db, e.kind, e.value, day(1, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	trainer, _ := InsertWorkout(db, &Workout{StartTime: day(6, 1), Duration: time.Hour, Trainer: true,
+		NormPower: 140, AvgPower: 123}, "hash-both-tr", "/tmp/tr.fit", 1)
+	outdoor, _ := InsertWorkout(db, &Workout{StartTime: day(6, 2), Duration: time.Hour,
+		NormPower: 140, AvgPower: 123}, "hash-both-out", "/tmp/out.fit", 1)
+	if err := BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET metrics_version = 1`); err != nil {
+		t.Fatal(err)
+	}
+
+	history, err := ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range history {
+		if err := DeleteProfileEntry(db, e.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []int64{trainer, outdoor} {
+		var ftpNull int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM workouts WHERE id = ? AND ftp_w IS NULL`, id).Scan(&ftpNull); err != nil {
+			t.Fatal(err)
+		}
+		if ftpNull != 1 {
+			t.Errorf("id=%d: ftp_w не NULL после удаления обоих FTP", id)
+		}
+		w, _ := GetWorkout(db, id)
+		if w.FTPKind != "" || w.MetricsVersion != 0 {
+			t.Errorf("id=%d: kind=%q version=%d, хочу пустой kind и 0", id, w.FTPKind, w.MetricsVersion)
+		}
 	}
 }
 

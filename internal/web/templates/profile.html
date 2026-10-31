@@ -5,8 +5,9 @@
   {{ if .HasWeight }}<div class="stat"><div class="v">{{ km .Weight }} кг</div><div class="k">вес</div></div>{{ end }}
   {{ if .HasFTP }}<div class="stat"><div class="v">{{ .FTP }} Вт</div><div class="k">FTP (станок)</div></div>{{ end }}
   {{ if .HasFTPOutdoor }}<div class="stat"><div class="v">{{ .FTPOutdoor }} Вт</div><div class="k">FTP (улица)</div></div>{{ end }}
-  {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divf .FTP .Weight) }}</div><div class="k">Вт/кг</div></div>{{ end }}
+  {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divf .FTP .Weight) }}</div><div class="k">Вт/кг (станок)</div></div>{{ end }}
 </div>
+{{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="color:var(--dim); font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ .FTP }} Вт.</p>{{ end }}
 
 <h2>Добавить запись</h2>
 <div style="display:flex; gap:24px; flex-wrap:wrap; margin:10px 0">

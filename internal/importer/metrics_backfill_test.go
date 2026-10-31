@@ -499,3 +499,53 @@ func TestReimportRespectsTrainerOverride(t *testing.T) {
 		t.Errorf("IF = %v, хочу %v (от станкового FTP)", w.IF, 200.0/156)
 	}
 }
+
+// TestMetricsClearedWhenAllFTPRemoved — удаление обоих видов FTP: после
+// бэкфилла IF/TSS обнуляются, а не остаются от прежней базы.
+func TestMetricsClearedWhenAllFTPRemoved(t *testing.T) {
+	db := openTestDB(t)
+	day := func(m time.Month, d int) time.Time { return time.Date(2026, m, d, 12, 0, 0, 0, time.UTC) }
+	for _, e := range []struct {
+		kind  string
+		value float64
+	}{{"ftp", 156}, {"ftp_outdoor", 170}} {
+		if err := store.AddProfileEntry(db, e.kind, e.value, day(1, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: day(6, 1), Duration: time.Hour, NormPower: 140, AvgPower: 123,
+	}, "hash-all-ftp", "/nonexistent/x.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	if w, _ := store.GetWorkout(db, id); w.IF == 0 || w.TSS == 0 {
+		t.Fatalf("метрики не посчитались: %+v", w)
+	}
+
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range history {
+		if err := store.DeleteProfileEntry(db, e.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.IF != 0 || w.TSS != 0 {
+		t.Errorf("после удаления FTP метрики не обнулились: IF=%v TSS=%v", w.IF, w.TSS)
+	}
+}

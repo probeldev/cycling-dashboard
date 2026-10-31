@@ -128,6 +128,12 @@ func (w Workout) HasDataGaps() bool {
 	return w.HasPower && w.DataGapsPct() > 5
 }
 
+// FTPFallback — уличная тренировка без своего FTP: зоны посчитаны от
+// станкового. Нужно, чтобы в UI подписать базу честно.
+func (w Workout) FTPFallback() bool {
+	return !w.Trainer && w.FTP > 0 && w.FTPKind == "trainer"
+}
+
 type Agg struct {
 	DistanceKm float64
 	Hours      float64
@@ -207,7 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_samples_w ON samples(workout_id, ts_offset);
 
 CREATE TABLE IF NOT EXISTS profile_history (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind        TEXT NOT NULL, -- 'weight' (кг) или 'ftp' (Вт)
+    kind        TEXT NOT NULL, -- 'weight' (кг), 'ftp' (Вт, станок) или 'ftp_outdoor' (Вт, улица)
     value       REAL NOT NULL,
     recorded_at TEXT NOT NULL, -- с какой даты значение действует
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -586,8 +592,9 @@ func ProfileHistory(db *sql.DB) ([]ProfileEntry, error) {
 	return out, rows.Err()
 }
 
-// ProfileAt возвращает значение ('weight'/'ftp'), действовавшее на момент t:
-// последнее до t, а если такого нет — самое раннее известное.
+// ProfileAt возвращает значение вида ('weight'/'ftp'/'ftp_outdoor'),
+// действовавшее на момент t: последнее до t, а если такого нет — самое раннее
+// известное.
 func ProfileAt(db DBTX, kind string, t time.Time) (float64, bool) {
 	return profileAt(db, kind, t)
 }
