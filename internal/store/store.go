@@ -477,6 +477,13 @@ func SetSubSport(db *sql.DB, id int64, subsport string) error {
 	return err
 }
 
+// MarkSubSportChecked помечает строку проверенной, не трогая значение subsport:
+// файл недоступен, но уже известный subsport терять нельзя.
+func MarkSubSportChecked(db *sql.DB, id int64) error {
+	_, err := db.Exec(`UPDATE workouts SET subsport_checked = 1 WHERE id = ?`, id)
+	return err
+}
+
 // HasPowerSamples — есть ли у тренировки хоть один сэмпл с валидной мощностью.
 // Дешёвая проверка, чтобы бэкфилл не вычитывал сэмплы тренировок без поверметра.
 func HasPowerSamples(db *sql.DB, id int64) (bool, error) {

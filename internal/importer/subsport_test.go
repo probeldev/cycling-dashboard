@@ -282,3 +282,59 @@ func subsportChecked(t *testing.T, db *sql.DB, id int64) int {
 	}
 	return checked
 }
+
+// TestBackfillSubSportMissingFileKeepsValue — пропавший файл не должен затирать
+// уже известный subsport: помечаем только checked.
+func TestBackfillSubSportMissingFileKeepsValue(t *testing.T) {
+	dir := t.TempDir()
+	writeFIT(t, filepath.Join(dir, "road.fit"), fit.SubSportRoad, 30)
+	db := openTestDB(t)
+	if _, _, err := ImportDir(db, dir); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.LatestWorkout(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET subsport = 'road', subsport_checked = 0 WHERE id = ?`, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "road.fit")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := BackfillSubSport(db); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetWorkout(db, w.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SubSport != "road" {
+		t.Errorf("subsport = %q, хочу road (файл пропал, значение не трогаем)", got.SubSport)
+	}
+	if got := subsportChecked(t, db, w.ID); got != 1 {
+		t.Errorf("subsport_checked = %d, хочу 1", got)
+	}
+}
+
+// TestBackfillSubSportWrongDir — если нет и каталога (похоже на неверный -dir),
+// строку не помечаем: иначе бэкфилл потеряется навсегда до -reimport.
+func TestBackfillSubSportWrongDir(t *testing.T) {
+	db := openTestDB(t)
+	id, err := store.InsertWorkout(db, &store.Workout{StartTime: time.Now()},
+		"hash-wrong-dir", filepath.Join(t.TempDir(), "no-such-dir", "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// имитируем строку из старой базы: импорт ставит checked=1
+	if _, err := db.Exec(`UPDATE workouts SET subsport_checked = 0 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillSubSport(db); err != nil || n != 0 {
+		t.Fatalf("бэкфилл: %d, %v; хочу 0, nil", n, err)
+	}
+	if got := subsportChecked(t, db, id); got != 0 {
+		t.Errorf("subsport_checked = %d, хочу 0 (неверный -dir не должен помечать)", got)
+	}
+}

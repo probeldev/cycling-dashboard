@@ -88,12 +88,16 @@ func BackfillSubSport(db *sql.DB) (int, error) {
 	for _, ref := range refs {
 		activity, err := readActivity(ref.Path)
 		if err != nil {
-			// старт сервера из-за одного файла не падаем; пропавший файл
-			// помечаем проверенным, чтобы не читать его каждый старт
+			// старт сервера из-за одного файла не падаем
 			fmt.Fprintf(os.Stderr, "бэкфилл subsport %s: %v\n", ref.Path, err)
 			if errors.Is(err, fs.ErrNotExist) {
-				if err := store.SetSubSport(db, ref.ID, ""); err != nil {
-					return filled, err
+				// Файла нет — помечаем проверенным, чтобы не читать каждый старт,
+				// но значение subsport не трогаем. Если нет и каталога, это похоже
+				// на неверный -dir: тогда не помечаем, пусть попробует в следующий раз.
+				if _, dirErr := os.Stat(filepath.Dir(ref.Path)); dirErr == nil {
+					if err := store.MarkSubSportChecked(db, ref.ID); err != nil {
+						return filled, err
+					}
 				}
 			}
 			continue
