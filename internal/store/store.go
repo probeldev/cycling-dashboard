@@ -495,11 +495,27 @@ func ProfileAt(db *sql.DB, kind string, t time.Time) (float64, bool) {
 // BackfillProfileStamps проставляет тренировкам вес и FTP по истории профиля
 // на дату каждой тренировки. Идемпотентен, вызывается после изменения истории.
 func BackfillProfileStamps(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	for _, m := range []struct{ kind, column string }{
 		{"ftp", "ftp_w"},
 		{"weight", "weight_kg"},
 	} {
-		if _, err := db.Exec(`UPDATE workouts SET `+m.column+` = COALESCE(
+		// IF/TSS/VI зависят от FTP (и для консистентности — от веса): если штамп
+		// реально меняется, обнуляем версию метрик — бэкфилл их пересчитает.
+		if _, err := tx.Exec(`UPDATE workouts SET metrics_version = 0
+		    WHERE metrics_version <> 0 AND `+m.column+` IS NOT COALESCE(
+		      (SELECT value FROM profile_history
+		       WHERE kind = ? AND recorded_at <= start_time
+		       ORDER BY recorded_at DESC LIMIT 1),
+		      (SELECT value FROM profile_history
+		       WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1))`, m.kind, m.kind); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE workouts SET `+m.column+` = COALESCE(
 			(SELECT value FROM profile_history
 			 WHERE kind = ? AND recorded_at <= start_time
 			 ORDER BY recorded_at DESC LIMIT 1),
@@ -508,7 +524,7 @@ func BackfillProfileStamps(db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func SetName(db *sql.DB, id int64, name string) error {
@@ -646,7 +662,8 @@ func SetWorkoutMetricsBatch(db *sql.DB, works []*Workout) error {
 }
 
 // SetNormPowers записывает NP и версии пачкой в одной транзакции: бэкфилл
-// не должен оставлять базу в промежуточном состоянии.
+// не должен оставлять базу в промежуточном состоянии. При изменении NP
+// сбрасывает metrics_version — IF/TSS/VI считаются от NP.
 func SetNormPowers(db *sql.DB, updates []NormPowerUpdate) error {
 	if len(updates) == 0 {
 		return nil
@@ -657,8 +674,10 @@ func SetNormPowers(db *sql.DB, updates []NormPowerUpdate) error {
 	}
 	defer tx.Rollback()
 	for _, u := range updates {
-		if _, err := tx.Exec(`UPDATE workouts SET norm_power = ?, np_version = ? WHERE id = ?`,
-			u.NP, u.Version, u.ID); err != nil {
+		// если NP реально меняется — метрики (IF/TSS/VI) устарели
+		if _, err := tx.Exec(`UPDATE workouts SET norm_power = ?, np_version = ?,
+		    metrics_version = CASE WHEN norm_power IS NOT ? THEN 0 ELSE metrics_version END
+		    WHERE id = ?`, u.NP, u.Version, u.NP, u.ID); err != nil {
 			return err
 		}
 	}

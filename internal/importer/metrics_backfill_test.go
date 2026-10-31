@@ -77,3 +77,124 @@ func TestBackfillMetrics(t *testing.T) {
 		t.Errorf("повторный бэкфилл изменил данные: %+v → %+v", *w, *again)
 	}
 }
+
+// TestMetricsInvalidatedByFTP — смена FTP сбрасывает метрики, бэкфилл их
+// пересчитывает; удаление записи профиля возвращает прежний FTP и метрики.
+func TestMetricsInvalidatedByFTP(t *testing.T) {
+	db := openTestDB(t)
+	start := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: start, Duration: 3600 * time.Second, NormPower: 140, AvgPower: 123, FTP: 156,
+	}, "hash-ftp-inval", "/nonexistent/x.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillMetrics(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл: %d, %v; хочу 1", n, err)
+	}
+	before, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 140.0 / 156; math.Abs(before.IF-want) > 1e-9 {
+		t.Fatalf("IF = %v, хочу %v", before.IF, want)
+	}
+
+	// FTP 200 с мая — у июньской тренировки штамп меняется, метрики устаревают
+	if err := store.AddProfileEntry(db, "ftp", 200, time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.FTP != 200 {
+		t.Fatalf("FTP = %d, хочу 200", stale.FTP)
+	}
+	if stale.MetricsVersion != 0 {
+		t.Fatalf("метрики не инвалидированы: metrics_version=%d", stale.MetricsVersion)
+	}
+	if n, err := BackfillMetrics(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл после FTP: %d, %v; хочу 1", n, err)
+	}
+	after, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(after.IF-0.7) > 1e-9 {
+		t.Errorf("IF = %v, хочу 0.7", after.IF)
+	}
+	if math.Abs(after.TSS-49) > 0.01 {
+		t.Errorf("TSS = %v, хочу 49", after.TSS)
+	}
+
+	// удаляем запись профиля — FTP возвращается, метрики пересчитываются обратно
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry int64
+	for _, e := range history {
+		if e.Kind == "ftp" && e.Value == 200 {
+			entry = e.ID
+		}
+	}
+	if entry == 0 {
+		t.Fatal("не нашёл запись FTP=200")
+	}
+	if err := store.DeleteProfileEntry(db, entry); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := BackfillMetrics(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл после удаления: %d, %v; хочу 1", n, err)
+	}
+	restored, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.FTP != 156 {
+		t.Errorf("FTP = %d, хочу 156", restored.FTP)
+	}
+	if math.Abs(restored.IF-before.IF) > 1e-9 || math.Abs(restored.TSS-before.TSS) > 0.01 {
+		t.Errorf("метрики не вернулись: IF=%v TSS=%v, было %v/%v",
+			restored.IF, restored.TSS, before.IF, before.TSS)
+	}
+}
+
+// TestMetricsInvalidatedByNP — смена NP в SetNormPowers сбрасывает метрики,
+// бэкфилл считает их от нового NP.
+func TestMetricsInvalidatedByNP(t *testing.T) {
+	db := openTestDB(t)
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 3600 * time.Second, NormPower: 140, AvgPower: 123, FTP: 156,
+	}, "hash-np-inval", "/nonexistent/np.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetNormPowers(db, []store.NormPowerUpdate{{ID: id, NP: 100, Version: 99}}); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.MetricsVersion != 0 {
+		t.Fatalf("метрики не инвалидированы: version=%d", w.MetricsVersion)
+	}
+	if n, err := BackfillMetrics(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл: %d, %v; хочу 1", n, err)
+	}
+	w, err = store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(w.IF-100.0/156) > 1e-9 {
+		t.Errorf("IF = %v, хочу %v", w.IF, 100.0/156)
+	}
+}

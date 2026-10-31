@@ -2,12 +2,14 @@ package web
 
 import (
 	"database/sql"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"cycling-dashboard/internal/importer"
 	"cycling-dashboard/internal/store"
 )
 
@@ -55,6 +57,7 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		recalcMetrics(db)
 		w.Header().Set("HX-Redirect", "/profile")
 	})
 
@@ -64,6 +67,16 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		recalcMetrics(db)
 		w.Header().Set("HX-Redirect", "/profile")
 	})
+}
+
+// recalcMetrics пересчитывает метрики, у которых изменился штамп профиля:
+// IF/TSS/VI зависят от FTP, и без этого API отдавал бы старые значения
+// до следующего старта сервера.
+func recalcMetrics(db *sql.DB) {
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		log.Printf("пересчёт метрик после изменения профиля: %v", err)
+	}
 }
