@@ -133,7 +133,17 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 
 	r.Get("/api/workout/{id}/samples", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
-		samples, err := store.Samples(db, id, 500)
+		q, err := parseSamplesQuery(req.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var samples []store.Sample
+		if q.Raw {
+			samples, err = store.RawSamples(db, id)
+		} else {
+			samples, err = store.Samples(db, id, q.Max)
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

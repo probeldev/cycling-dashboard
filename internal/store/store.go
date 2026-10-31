@@ -619,6 +619,9 @@ func GetWorkout(db *sql.DB, id int64) (*Workout, error) {
 // (а не выборкой каждой N-й — иначе графики страдают от алиасинга).
 // При maxN >= количества сэмплов возвращает их как есть, по одной секунде.
 func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
+	if maxN < 1 {
+		maxN = 1 // иначе деление на ноль при расчёте бакета
+	}
 	var total int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE workout_id = ?`, id).Scan(&total); err != nil {
 		return nil, err
@@ -632,6 +635,25 @@ func Samples(db *sql.DB, id int64, maxN int) ([]Sample, error) {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanSamples(rows)
+}
+
+// RawSamples возвращает все сэмплы тренировки как есть, без бакет-усреднения:
+// для внешнего анализа нужны честные медиана и пики, а не средние по бакетам.
+func RawSamples(db *sql.DB, id int64) ([]Sample, error) {
+	rows, err := db.Query(`SELECT ts_offset, lat, lon, power, cadence, hr,
+	    speed_ms, altitude_m, distance_m
+	    FROM samples WHERE workout_id = ? ORDER BY ts_offset, rowid`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSamples(rows)
+}
+
+// scanSamples разбирает строки сэмплов; набор и порядок колонок у Samples
+// и RawSamples одинаковые.
+func scanSamples(rows *sql.Rows) ([]Sample, error) {
 	var out []Sample
 	for rows.Next() {
 		var s Sample
