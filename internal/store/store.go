@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -134,7 +135,17 @@ type Agg struct {
 }
 
 func Open(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	// busy_timeout ставим через DSN: драйвер применяет _pragma к каждому
+	// соединению пула, а не только к первому. Без него параллельные записи
+	// (например, два POST профиля) получают SQLITE_BUSY вместо ожидания.
+	dsn := path
+	if strings.Contains(dsn, "?") {
+		dsn += "&"
+	} else {
+		dsn += "?"
+	}
+	dsn += "_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
