@@ -397,8 +397,9 @@ const (
 	// impNPVersion — версия алгоритма NP. Поднимать при изменении normalizedPower:
 	// тогда бэкфилл при старте пересчитает тренировки с np_version < impNPVersion.
 	// 2 — паузы определяются общим правилом ridedata (дистанция/скорость/педали),
-	// а не любым разрывом больше 5 с; 3 — окна взвешиваются по длительности записи.
-	impNPVersion = 3
+	// а не любым разрывом больше 5 с; 3 — окна взвешиваются по длительности записи;
+	// 4 — среднее внутри окна тоже по времени (sum(power*Secs)/sum(Secs)).
+	impNPVersion = 4
 )
 
 // normalizedPower считает NP по Коггану: скользящее среднее мощности,
@@ -408,8 +409,9 @@ const (
 // Дропауты датчика заполняем последним значением (fill-forward) —
 // иначе провалы связи занижают и avg, и NP. Паузы (и только они) обрывают
 // окно; определяет их общее правило ridedata — то же, что у распределений.
-// Окна взвешиваются по длительности записи (Timings.Secs): при неравномерной
-// записи среднее по сэмплам смещает NP в сторону плотно записанных участков.
+// И окно, и итоговое среднее взвешены по длительности записи (Timings.Secs):
+// при неравномерной записи среднее по сэмплам смещает NP в сторону плотно
+// записанных участков.
 func normalizedPower(samples []store.Sample) int {
 	if len(samples) == 0 {
 		return 0
@@ -426,21 +428,20 @@ func normalizedPower(samples []store.Sample) int {
 	}
 
 	timings := ridedata.Timings(samples)
-	var sum4, weight, roll float64
-	var n int  // сэмплов в окне
+	var sum4, weight, roll, wsum float64
 	start := 0 // первый сэмпл окна
 	for i := range samples {
 		if i > 0 && timings[i-1].Pause {
-			start, roll, n = i, 0, 0 // авто-пауза: данные до неё в окно не тянем
+			start, roll, wsum = i, 0, 0 // авто-пауза: данные до неё в окно не тянем
 		}
 		for start < i && samples[i].Offset-samples[start].Offset >= npWindowSec {
-			roll -= float64(pwr[start])
+			roll -= float64(pwr[start]) * timings[start].Secs
+			wsum -= timings[start].Secs
 			start++
-			n--
 		}
-		roll += float64(pwr[i])
-		n++
-		avg := roll / float64(n)
+		roll += float64(pwr[i]) * timings[i].Secs
+		wsum += timings[i].Secs
+		avg := roll / wsum // средняя по времени, а не по числу сэмплов
 		avg2 := avg * avg
 		sum4 += avg2 * avg2 * timings[i].Secs
 		weight += timings[i].Secs

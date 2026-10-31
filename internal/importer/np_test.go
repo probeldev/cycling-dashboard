@@ -37,10 +37,10 @@ func fillForward(samples []store.Sample) []int {
 // больше pauseSec. Нужен, чтобы сверять скользящую реализацию.
 func refNP(samples []store.Sample, windowSec, pauseSec int64) float64 {
 	pwr := fillForward(samples)
-	var sum4 float64
+	times := ridedata.Timings(samples)
+	var sum4, weight float64
 	for i := range samples {
-		var roll float64
-		var n int
+		var roll, wsum float64
 		for j := i; j >= 0; j-- {
 			if samples[i].Offset-samples[j].Offset >= windowSec {
 				break
@@ -48,14 +48,15 @@ func refNP(samples []store.Sample, windowSec, pauseSec int64) float64 {
 			if pauseSec > 0 && j < i && samples[j+1].Offset-samples[j].Offset > pauseSec {
 				break
 			}
-			roll += float64(pwr[j])
-			n++
+			roll += float64(pwr[j]) * times[j].Secs
+			wsum += times[j].Secs
 		}
-		avg := roll / float64(n)
+		avg := roll / wsum
 		avg2 := avg * avg
-		sum4 += avg2 * avg2
+		sum4 += avg2 * avg2 * times[i].Secs
+		weight += times[i].Secs
 	}
-	return math.Pow(sum4/float64(len(samples)), 0.25)
+	return math.Pow(sum4/weight, 0.25)
 }
 
 // TestNormalizedPowerWindowIsSeconds — серия 2 Гц: старая реализация брала
@@ -235,8 +236,9 @@ func TestNormalizedPowerUniformSampleRate(t *testing.T) {
 }
 
 // TestNormalizedPowerMixedSampleRate — плотный и редкий участки равной
-// длительности вносят равный вклад. Эталон 219 посчитан независимым скриптом;
-// без взвешивания получилось бы 188.
+// длительности вносят равный вклад. Эталон 226 посчитан независимым скриптом
+// (среднее внутри окна — по времени); без взвешивания окна получилось бы 188,
+// только с внешним взвешиванием — 219.
 func TestNormalizedPowerMixedSampleRate(t *testing.T) {
 	var samples []store.Sample
 	for i := 0; i < 60; i++ { // 60 с по 100 Вт с шагом 1 с
@@ -245,7 +247,7 @@ func TestNormalizedPowerMixedSampleRate(t *testing.T) {
 	for i := 0; i < 20; i++ { // 60 с по 300 Вт с шагом 3 с
 		samples = append(samples, store.Sample{Offset: int64(60 + 3*i), Power: 300, HasPwr: true})
 	}
-	if got := normalizedPower(samples); math.Abs(float64(got)-219) > 1 {
-		t.Errorf("NP = %d, хочу 219 (взвешивание по длительности)", got)
+	if got := normalizedPower(samples); math.Abs(float64(got)-226) > 1 {
+		t.Errorf("NP = %d, хочу 226 (взвешивание по времени внутри окна)", got)
 	}
 }
