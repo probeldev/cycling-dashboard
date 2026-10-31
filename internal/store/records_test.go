@@ -27,7 +27,7 @@ func TestBestRecords(t *testing.T) {
 	a := mk("hash-rec-1", day(1), PowerRecord{WindowSec: 5, Watts: 300}, PowerRecord{WindowSec: 60, Watts: 200})
 	b := mk("hash-rec-2", day(2), PowerRecord{WindowSec: 5, Watts: 350}, PowerRecord{WindowSec: 60, Watts: 150})
 
-	recs, err := BestRecords(db, time.Time{}, day(10))
+	recs, err := BestRecords(db, time.Time{}, day(10), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestBestRecords(t *testing.T) {
 
 	// равное значение позже — рекорд остаётся у более ранней
 	c := mk("hash-rec-3", day(3), PowerRecord{WindowSec: 5, Watts: 350})
-	recs, err = BestRecords(db, time.Time{}, day(10))
+	recs, err = BestRecords(db, time.Time{}, day(10), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestBestRecords(t *testing.T) {
 	}
 
 	// период: в [day(3), day(10)) остаётся только c
-	recs, err = BestRecords(db, day(3), day(10))
+	recs, err = BestRecords(db, day(3), day(10), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +62,10 @@ func TestBestRecords(t *testing.T) {
 
 	// границы: [from, to) — запись ровно на from входит, ровно на to — нет
 	d := mk("hash-rec-edge", day(5), PowerRecord{WindowSec: 5, Watts: 400})
-	if recs, err := BestRecords(db, day(5), day(6)); err != nil || len(recs) != 1 || recs[0].WorkoutID != d {
+	if recs, err := BestRecords(db, day(5), day(6), false); err != nil || len(recs) != 1 || recs[0].WorkoutID != d {
 		t.Errorf("from включительно: %+v, %v", recs, err)
 	}
-	if recs, err := BestRecords(db, day(4), day(5)); err != nil || len(recs) != 0 {
+	if recs, err := BestRecords(db, day(4), day(5), false); err != nil || len(recs) != 0 {
 		t.Errorf("to исключительно: %+v, %v", recs, err)
 	}
 }
@@ -84,7 +84,7 @@ func TestWorkoutPRs(t *testing.T) {
 	}, 1); err != nil {
 		t.Fatal(err)
 	}
-	prs, err := WorkoutPRs(db, id, now)
+	prs, err := WorkoutPRs(db, id, now, false)
 	if err != nil {
 		t.Fatal(err)
 	}

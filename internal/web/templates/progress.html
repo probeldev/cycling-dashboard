@@ -150,8 +150,9 @@ async function loadHeatmap() {
       e.title = `${key} · ещё не наступило`;
     } else {
       e.className = "hm lvl" + level(tss) + (key === todayKey ? " today" : "");
+      const test = day && day.testNames ? " · тест: " + day.testNames : "";
       e.title = day && day.rides
-        ? `${key} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}`
+        ? `${key} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}${test}`
         : `${key} · отдых`;
     }
     root.appendChild(e);

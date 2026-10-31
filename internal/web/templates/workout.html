@@ -3,6 +3,7 @@
   <a href="/">←</a>
   {{ datetime .W.StartTime }}
   {{ if .W.Trainer }}<span class="tag">станок</span>{{ end }}
+  {{ if .W.IsTest }}<span class="tag">тест</span>{{ end }}
   {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
 </h1>
 
@@ -75,6 +76,13 @@
   <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"0"}' hx-swap="none">улица</button>
   <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"1"}' hx-swap="none">станок</button>
   {{ if .W.Override }}<span class="tag">вручную</span>{{ end }}
+</div>
+
+<div style="margin-bottom:16px">
+  Замер (тестовая тренировка):
+  <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"0"}' hx-swap="none">тренировка</button>
+  <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"1"}' hx-swap="none">тест</button>
+  {{ if .W.IsTest }}<span class="tag">не в рекордах</span>{{ end }}
 </div>
 
 <div style="margin-bottom:16px">

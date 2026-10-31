@@ -14,13 +14,15 @@ type Record struct {
 
 // BestRecords — лучшие значения по окнам MMP за [from, to). При равенстве
 // побеждает более ранняя тренировка: рекорд принадлежит тому, кто установил
-// его первым. Результат отсортирован по окну.
-func BestRecords(db DBTX, from, to time.Time) ([]Record, error) {
+// его первым. Тестовые тренировки (is_test=1) по умолчанию не участвуют:
+// пик из ramp-теста — не рабочее достижение; includeTests возвращает их в
+// выборку. Результат отсортирован по окну.
+func BestRecords(db DBTX, from, to time.Time, includeTests bool) ([]Record, error) {
 	rows, err := db.Query(`SELECT r.window_sec, r.watts, w.id, w.start_time, COALESCE(w.name, '')
 	    FROM power_records r JOIN workouts w ON w.id = r.workout_id
-	    WHERE w.start_time >= ? AND w.start_time < ?
+	    WHERE w.start_time >= ? AND w.start_time < ? AND (? OR w.is_test = 0)
 	    ORDER BY r.window_sec, r.watts DESC, w.start_time ASC`,
-		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), includeTests)
 	if err != nil {
 		return nil, err
 	}
@@ -49,10 +51,11 @@ func BestRecords(db DBTX, from, to time.Time) ([]Record, error) {
 
 // WorkoutPRs — для каждого окна тренировки список периодов, где она держит
 // рекорд: all, 365d, 90d, 30d (по убыванию значимости; равенство — у более
-// ранней тренировки).
+// ранней тренировки). Тестовые тренировки по умолчанию не получают PR-флагов
+// (и не отнимают рекорд у рабочих): includeTests меняет это для обоих сторон.
 // Четыре скана таблицы (по одному на период) — осознанно: power_records
 // маленькая (окна × тренировки с мощностью), а запрос только на деталке.
-func WorkoutPRs(db DBTX, id int64, now time.Time) (map[int][]string, error) {
+func WorkoutPRs(db DBTX, id int64, now time.Time, includeTests bool) (map[int][]string, error) {
 	to := StartOfDay(now).AddDate(0, 0, 1)
 	periods := []struct {
 		label string
@@ -65,7 +68,7 @@ func WorkoutPRs(db DBTX, id int64, now time.Time) (map[int][]string, error) {
 	}
 	out := map[int][]string{}
 	for _, p := range periods {
-		best, err := BestRecords(db, p.from, to)
+		best, err := BestRecords(db, p.from, to, includeTests)
 		if err != nil {
 			return nil, err
 		}

@@ -20,7 +20,8 @@ type Day struct {
 	CTL          float64   `json:"ctl"`
 	ATL          float64   `json:"atl"`
 	TSB          float64   `json:"tsb"`
-	Names        string    `json:"names,omitempty"` // названия тренировок дня для подсказок
+	Names        string    `json:"names,omitempty"`     // названия тренировок дня для подсказок
+	TestNames    string    `json:"testNames,omitempty"` // названия тестовых тренировок: в подсказке «тест»
 }
 
 // Timeline — дневной ряд [from, to] включительно.
@@ -44,7 +45,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 	qFrom := warmFrom.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	qTo := to.AddDate(0, 0, 3).UTC().Format(time.RFC3339)
 	rows, err := db.Query(`SELECT start_time, duration_sec, COALESCE(distance_m, 0),
-	    trainer, COALESCE(tss, 0), COALESCE(name, '')
+	    trainer, is_test, COALESCE(tss, 0), COALESCE(name, '')
 	    FROM workouts WHERE start_time >= ? AND start_time < ?`, qFrom, qTo)
 	if err != nil {
 		return nil, err
@@ -54,16 +55,16 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 	type agg struct {
 		tss, hours, dist float64
 		rides, trainer   int
-		names            []string
+		names, testNames []string
 	}
 	byDay := map[time.Time]*agg{}
 	for rows.Next() {
 		var start string
 		var dur int64
 		var dist, tss float64
-		var trainer bool
+		var trainer, isTest bool
 		var name string
-		if err := rows.Scan(&start, &dur, &dist, &trainer, &tss, &name); err != nil {
+		if err := rows.Scan(&start, &dur, &dist, &trainer, &isTest, &tss, &name); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339, start)
@@ -90,6 +91,11 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 		if name != "" {
 			a.names = append(a.names, name)
 		}
+		if isTest {
+			// в PMC тест остаётся (нагрузка реальная) — в подсказке календаря
+			// только помечаем его, чтобы не путать с рабочей тренировкой
+			a.testNames = append(a.testNames, name)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -107,6 +113,7 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 			day.TrainerRides = a.trainer
 			day.OutdoorRides = a.rides - a.trainer
 			day.Names = strings.Join(a.names, ", ")
+			day.TestNames = strings.Join(a.testNames, ", ")
 		}
 		// TSB — вчерашние CTL/ATL, до нагрузки текущего дня
 		day.TSB = ctl - atl

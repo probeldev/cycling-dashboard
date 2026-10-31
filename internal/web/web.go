@@ -94,7 +94,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		prs, err := store.WorkoutPRs(db, id, time.Now())
+		prs, err := store.WorkoutPRs(db, id, time.Now(), false)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -107,6 +107,15 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes, "RPEOptions": rpeOptions,
 		})
+	})
+
+	r.Post("/workout/{id}/test", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		if err := store.SetWorkoutTest(db, id, req.FormValue("value") == "1"); err != nil {
+			notFoundOr500(w, req, err)
+			return
+		}
+		w.Header().Set("HX-Redirect", "/workout/"+strconv.FormatInt(id, 10))
 	})
 
 	r.Post("/workout/{id}/trainer", func(w http.ResponseWriter, req *http.Request) {
@@ -301,13 +310,18 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		records, err := store.BestRecords(db, from, to)
+		includeTests, err := parseIncludeTests(req.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		records, err := store.BestRecords(db, from, to, includeTests)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if prevDays > 0 {
-			prev, err := store.BestRecords(db, from.AddDate(0, 0, -prevDays), from)
+			prev, err := store.BestRecords(db, from.AddDate(0, 0, -prevDays), from, includeTests)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -331,7 +345,12 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			notFoundOr500(w, req, err)
 			return
 		}
-		prs, err := store.WorkoutPRs(db, id, time.Now())
+		includeTests, err := parseIncludeTests(req.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		prs, err := store.WorkoutPRs(db, id, time.Now(), includeTests)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -345,7 +364,12 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		records, err := store.BestRecords(db, from, to)
+		includeTests, err := parseIncludeTests(req.URL.Query())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		records, err := store.BestRecords(db, from, to, includeTests)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

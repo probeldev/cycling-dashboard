@@ -29,3 +29,16 @@ func parseRecordsPeriod(q url.Values, now time.Time) (from, to time.Time, prevDa
 	}
 	return from, to, prevDays, nil
 }
+
+// parseIncludeTests разбирает ?includeTests: по умолчанию тестовые тренировки
+// исключены из рекордов, CP-фита и PR-флагов; includeTests=1 возвращает их.
+func parseIncludeTests(q url.Values) (bool, error) {
+	switch q.Get("includeTests") {
+	case "", "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("includeTests=%q: ожидается 0 или 1", q.Get("includeTests"))
+	}
+}

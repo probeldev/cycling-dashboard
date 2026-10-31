@@ -32,6 +32,11 @@ type Workout struct {
 	Override   *bool
 	SubSport   string // подсорт из FIT: generic, indoor_cycling, road, mountain…
 
+	// тестовая тренировка — замер (ramp/FTP-тест), а не работа. Нагрузка
+	// (TSS, PMC) остаётся, но рекорды MMP, PR-флаги и CP-фит по умолчанию
+	// её не видят: пик из теста — не рабочее достижение.
+	IsTest bool
+
 	AvgSpeedKmh float64
 	MaxSpeedKmh float64
 	AvgCadence  int
@@ -291,6 +296,7 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "work_kj", `ALTER TABLE workouts ADD COLUMN work_kj REAL`},
 		{"workouts", "metrics_version", `ALTER TABLE workouts ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "avg_temp", `ALTER TABLE workouts ADD COLUMN avg_temp REAL`},
+		{"workouts", "is_test", `ALTER TABLE workouts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -399,6 +405,9 @@ func Changed(db *sql.DB, hash string, mtime int64) (bool, error) {
 	return stored != mtime, nil
 }
 
+// InsertWorkout вставляет тренировку или обновляет её по file_hash.
+// is_test в INSERT/ON CONFLICT не входит: это пользовательский флаг, ре-импорт
+// его не трогает (новая строка получает 0 из DEFAULT).
 func InsertWorkout(db DBTX, w *Workout, hash, path string, mtime int64) (int64, error) {
 	tr := 0
 	if w.Trainer {
@@ -1174,15 +1183,16 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
+	var isTest int
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
-	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
+	    trainer_override, is_test, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version, bike_id,
 	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), ''),
 	    rpe, notes
 	    FROM workouts WHERE id = ?`, id).Scan(
-		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
+		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov, &isTest,
 		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion,
 		&bikeID, &bikeName, &rpe, &notes)
@@ -1197,6 +1207,7 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.StartTime = t.Local()
 	w.HasGPS = gps == 1
 	w.Trainer = tr == 1
+	w.IsTest = isTest == 1
 	if ov.Valid {
 		b := ov.Int64 == 1
 		w.Override = &b
