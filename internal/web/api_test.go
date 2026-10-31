@@ -113,7 +113,7 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 	}
 }
 
-// TestWorkoutsListJSON — список отдаёт массив; у объекта 39 полей, Override
+// TestWorkoutsListJSON — список отдаёт массив; у объекта 44 поля, Override
 // присутствует (контракт JSON не должен незаметно меняться).
 func TestWorkoutsListJSON(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -144,12 +144,12 @@ func TestWorkoutsListJSON(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("%d элементов, хочу 2", len(list))
 	}
-	if got := len(list[0]); got != 39 {
+	if got := len(list[0]); got != 44 {
 		keys := make([]string, 0, got)
 		for k := range list[0] {
 			keys = append(keys, k)
 		}
-		t.Errorf("полей в объекте %d, хочу 39: %v", got, keys)
+		t.Errorf("полей в объекте %d, хочу 44: %v", got, keys)
 	}
 	if _, ok := list[0]["Override"]; !ok {
 		t.Errorf("в объекте нет поля Override")

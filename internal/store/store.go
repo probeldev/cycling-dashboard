@@ -56,6 +56,11 @@ type Workout struct {
 	BikeID int64
 	Bike   string
 
+	// контекст тренировки: RPE 1–10 (0 — не указан), заметка и sRPE на лету
+	RPE   int     `json:"RPE"`
+	Notes string  `json:"Notes"`
+	SRPE  float64 `json:"-"` // RPE × минуты
+
 	// версия алгоритма, которым посчитан NormPower (0 — старый, до окна 30 с);
 	// по ней бэкфилл понимает, что тренировку надо пересчитать
 	NPVersion int
@@ -95,6 +100,7 @@ func (w Workout) MarshalJSON() ([]byte, error) {
 		TSS    *float64 `json:"TSS"`
 		VI     *float64 `json:"VI"`
 		WorkKJ *float64 `json:"WorkKJ"`
+		SRPE   *float64 `json:"SRPE"`
 	}{plain: plain(w)}
 	if w.HasIF {
 		out.IF = &out.plain.IF
@@ -107,6 +113,9 @@ func (w Workout) MarshalJSON() ([]byte, error) {
 	}
 	if w.HasWork {
 		out.WorkKJ = &out.plain.WorkKJ
+	}
+	if w.RPE > 0 {
+		out.SRPE = &out.plain.SRPE
 	}
 	return json.Marshal(out)
 }
@@ -265,6 +274,8 @@ CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded
 		{"workouts", "zones_version", `ALTER TABLE workouts ADD COLUMN zones_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "mmp_version", `ALTER TABLE workouts ADD COLUMN mmp_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "bike_id", `ALTER TABLE workouts ADD COLUMN bike_id INTEGER`},
+		{"workouts", "rpe", `ALTER TABLE workouts ADD COLUMN rpe INTEGER`},
+		{"workouts", "notes", `ALTER TABLE workouts ADD COLUMN notes TEXT`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},
@@ -1140,6 +1151,8 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var ftpKind sql.NullString
 	var bikeID sql.NullInt64
 	var bikeName string
+	var rpe sql.NullInt64
+	var notes sql.NullString
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
@@ -1148,12 +1161,13 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version, bike_id,
-	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), '')
+	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), ''),
+	    rpe, notes
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
 		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion,
-		&bikeID, &bikeName)
+		&bikeID, &bikeName, &rpe, &notes)
 	if err != nil {
 		return nil, err
 	}
@@ -1194,6 +1208,11 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.WeightKg = wkg.Float64
 	w.BikeID = bikeID.Int64
 	w.Bike = bikeName
+	w.RPE = int(rpe.Int64)
+	w.Notes = notes.String
+	if w.RPE > 0 {
+		w.SRPE = float64(w.RPE) * w.Duration.Minutes()
+	}
 	w.IF = ifv.Float64
 	w.TSS = tss.Float64
 	w.VI = vi.Float64

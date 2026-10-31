@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -103,7 +104,9 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		render(w, "workout.html", map[string]any{"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes})
+		render(w, "workout.html", map[string]any{
+			"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes, "RPEOptions": rpeOptions,
+		})
 	})
 
 	r.Post("/workout/{id}/trainer", func(w http.ResponseWriter, req *http.Request) {
@@ -129,6 +132,33 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		if err := tx.Commit(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("HX-Redirect", "/workout/"+strconv.FormatInt(id, 10))
+	})
+
+	r.Post("/workout/{id}/context", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		if _, err := store.GetWorkout(db, id); err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		rpe := 0
+		if raw := req.FormValue("rpe"); raw != "" {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < 1 || v > 10 {
+				http.Error(w, "RPE: нужно целое число от 1 до 10", http.StatusBadRequest)
+				return
+			}
+			rpe = v
+		}
+		notes := strings.TrimSpace(req.FormValue("notes"))
+		if len([]rune(notes)) > maxNotesLen {
+			http.Error(w, "заметка длиннее 2000 символов", http.StatusBadRequest)
+			return
+		}
+		if err := store.SetWorkoutContext(db, id, rpe, notes); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

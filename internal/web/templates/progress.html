@@ -226,7 +226,7 @@ async function loadWeeks(n) {
     row.innerHTML = `<span class="wk">${fmtWeek(w.start)}</span>
       <span class="wk-num">${w.rides} тр.</span>
       <span class="wk-num">${w.hours.toFixed(1)} ч</span>
-      <span class="wk-num">${w.tss.toFixed(0)} TSS</span>${bar}
+      <span class="wk-num">${w.tss.toFixed(0)} TSS</span>${w.srpeSum ? `<span class="wk-num">sRPE ${Math.round(w.srpeSum)}</span>` : ""}${bar}
       <span class="wk-num">${total > 0 ? "низ " + w.lowPct.toFixed(0) + "%" : ""}</span>`;
     root.appendChild(row);
   });
