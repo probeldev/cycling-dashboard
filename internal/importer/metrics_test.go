@@ -28,7 +28,7 @@ func TestApplyMetricsSynthetic(t *testing.T) {
 	w := &store.Workout{
 		Duration: 3600 * time.Second, NormPower: 200, AvgPower: 200, FTP: 200, ElapsedSec: 3600,
 	}
-	applyMetrics(w, samples)
+	applyMetrics(w, samples, 3600, 0)
 
 	if math.Abs(w.IF-1) > 1e-9 {
 		t.Errorf("IF = %v, хочу 1", w.IF)
@@ -66,7 +66,7 @@ func TestApplyMetricsNoPower(t *testing.T) {
 		samples = append(samples, store.Sample{Offset: int64(i)})
 	}
 	w := &store.Workout{Duration: 10 * time.Second, FTP: 156}
-	applyMetrics(w, samples)
+	applyMetrics(w, samples, 0, 0)
 
 	if w.IF != 0 || w.TSS != 0 || w.VI != 0 {
 		t.Errorf("без мощности метрики не NULL: IF=%v TSS=%v VI=%v", w.IF, w.TSS, w.VI)
@@ -82,7 +82,7 @@ func TestApplyMetricsNoPower(t *testing.T) {
 func TestApplyMetricsNoFTP(t *testing.T) {
 	samples := series(60, 1, func(int) int { return 200 })
 	w := &store.Workout{Duration: 60 * time.Second, NormPower: 200, AvgPower: 200}
-	applyMetrics(w, samples)
+	applyMetrics(w, samples, 0, 0)
 
 	if w.IF != 0 || w.TSS != 0 {
 		t.Errorf("без FTP: IF=%v TSS=%v, хочу 0", w.IF, w.TSS)
@@ -96,7 +96,7 @@ func TestApplyMetricsNoFTP(t *testing.T) {
 // TestApplyMetricsZeroAvgPower — нулевая средняя мощность: VI не считается.
 func TestApplyMetricsZeroAvgPower(t *testing.T) {
 	w := &store.Workout{Duration: time.Minute, NormPower: 140, FTP: 156}
-	applyMetrics(w, nil)
+	applyMetrics(w, nil, 0, 0)
 	if w.VI != 0 {
 		t.Errorf("VI = %v, хочу 0 при avg_power=0", w.VI)
 	}
@@ -106,7 +106,7 @@ func TestApplyMetricsZeroAvgPower(t *testing.T) {
 // TestApplyMetricsPauseClamp — elapsed меньше duration: паузы не отрицательные.
 func TestApplyMetricsPauseClamp(t *testing.T) {
 	w := &store.Workout{Duration: 100 * time.Second, ElapsedSec: 90}
-	applyMetrics(w, nil)
+	applyMetrics(w, nil, 90, 0)
 	if w.PauseSec != 0 {
 		t.Errorf("PauseSec = %d, хочу 0", w.PauseSec)
 	}
@@ -124,7 +124,7 @@ func TestMetrics418Golden(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.FTP = 156
-	applyMetrics(w, samples)
+	applyMetrics(w, samples, w.ElapsedSec, w.WorkKJ)
 
 	checks := []struct {
 		name string
@@ -247,7 +247,7 @@ func TestImportInvalidTimerTime(t *testing.T) {
 		t.Errorf("Duration = %v, хочу 120 с (из elapsed)", w.Duration)
 	}
 	w.FTP = 200
-	applyMetrics(w, nil)
+	applyMetrics(w, nil, w.ElapsedSec, w.WorkKJ)
 	if w.TSS > 1000 {
 		t.Errorf("TSS = %v — похоже, duration взорвался", w.TSS)
 	}
@@ -266,7 +266,7 @@ func TestApplyMetricsAsymmetric(t *testing.T) {
 		Duration: 90 * time.Second, ElapsedSec: 120,
 		NormPower: 210, AvgPower: 200, FTP: 300,
 	}
-	applyMetrics(w, samples)
+	applyMetrics(w, samples, 120, 0)
 
 	if math.Abs(w.IF-0.7) > 1e-9 { // 210/300
 		t.Errorf("IF = %v, хочу 0.7", w.IF)

@@ -59,7 +59,7 @@ func ImportDir(db *sql.DB, dir string, force ...bool) (imported, skipped int, er
 		if kg, ok := store.ProfileAt(db, "weight", w.StartTime); ok {
 			w.WeightKg = kg
 		}
-		applyMetrics(w, samples)
+		applyMetrics(w, samples, w.ElapsedSec, w.WorkKJ)
 		id, err := store.InsertWorkout(db, w, hash, full, fi.ModTime().Unix())
 		if err != nil {
 			return err

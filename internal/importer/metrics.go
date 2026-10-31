@@ -67,17 +67,26 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 	return sm
 }
 
-// applyMetrics заполняет метрики нагрузки тренировки. Вызывается после штампов
-// профиля (IF/TSS зависят от FTP). elapsed_sec и work_kj уже стоят из FIT-сессии
-// (0 — неизвестно); работу при отсутствии данных считаем по сэмплам.
-// Делим только на положительные знаменатели — NaN/Inf в базу и JSON не попадут.
-func applyMetrics(w *store.Workout, samples []store.Sample) {
+// applyMetrics пересчитывает метрики нагрузки. elapsedSec/workKJ — входные
+// данные из FIT-сессии (0 — неизвестны), а не результат прошлого расчёта.
+// Все пересчитываемые поля сначала обнуляются: если FTP/NP сняли, значения
+// прошлого расчёта не должны остаться. Делим только на положительные
+// знаменатели — NaN/Inf в базу и JSON не попадут.
+func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, workKJ float64) {
+	w.IF, w.TSS, w.VI = 0, 0, 0
+	w.AvgPowerActive, w.CoastingSec, w.NoPowerSec, w.SuspectDropoutSec = 0, 0, 0, 0
+	w.ElapsedSec, w.PauseSec, w.WorkKJ = 0, 0, 0
+	w.AvgTemp, w.HasTemp = 0, false
+	w.MetricsVersion = 0
+
 	sm := sampleMetricsOf(samples)
 	w.AvgPowerActive = sm.AvgPowerActive
 	w.CoastingSec = sm.CoastingSec
 	w.NoPowerSec = sm.NoPowerSec
 	w.SuspectDropoutSec = sm.SuspectDropoutSec
-	if w.WorkKJ <= 0 {
+	if workKJ > 0 {
+		w.WorkKJ = workKJ
+	} else {
 		w.WorkKJ = sm.WorkKJ
 	}
 	if sm.HasTemp {
@@ -85,8 +94,11 @@ func applyMetrics(w *store.Workout, samples []store.Sample) {
 		w.HasTemp = true
 	}
 	// паузы — разница между общим временем и временем в движении; отрицательную не пишем
-	if pause := w.ElapsedSec - int(w.Duration.Seconds()); w.ElapsedSec > 0 && pause > 0 {
-		w.PauseSec = pause
+	if elapsedSec > 0 {
+		w.ElapsedSec = elapsedSec
+		if pause := elapsedSec - int(w.Duration.Seconds()); pause > 0 {
+			w.PauseSec = pause
+		}
 	}
 	if w.NormPower > 0 && w.FTP > 0 {
 		w.IF = float64(w.NormPower) / float64(w.FTP)
@@ -118,16 +130,17 @@ func BackfillMetrics(db *sql.DB) (int, error) {
 			return 0, err
 		}
 		// elapsed и работу из сэмплов не восстановить — берём из сессии, если файл на месте
-		if w.ElapsedSec == 0 || w.WorkKJ == 0 {
+		elapsed, work := w.ElapsedSec, w.WorkKJ
+		if elapsed == 0 || work == 0 {
 			if activity, err := readActivity(ref.Path); err == nil {
-				elapsed, work := sessionTotals(activity.Sessions[0])
-				if w.ElapsedSec == 0 {
-					w.ElapsedSec = elapsed
+				e, wk := sessionTotals(activity.Sessions[0])
+				if elapsed == 0 {
+					elapsed = e
 				}
-				if w.WorkKJ == 0 {
-					w.WorkKJ = work
+				if work == 0 {
+					work = wk
 				}
-			} else if w.ElapsedSec == 0 {
+			} else if elapsed == 0 {
 				// без FIT общее время и работа неизвестны — останутся NULL
 				fmt.Fprintf(os.Stderr, "бэкфилл метрик: сессия недоступна, elapsed/work будут NULL: %s\n", ref.Path)
 			}
@@ -136,7 +149,7 @@ func BackfillMetrics(db *sql.DB) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		applyMetrics(w, samples)
+		applyMetrics(w, samples, elapsed, work)
 		updates = append(updates, w)
 	}
 	if err := store.SetWorkoutMetricsBatch(db, updates); err != nil {

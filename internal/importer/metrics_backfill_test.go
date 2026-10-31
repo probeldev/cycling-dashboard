@@ -231,3 +231,98 @@ func TestBackfillMetricsFromFIT(t *testing.T) {
 		t.Errorf("PauseSec = %d, хочу 0", w.PauseSec)
 	}
 }
+
+// TestMetricsClearedWhenFTPRemoved — удаление последней записи FTP обнуляет
+// IF/TSS (VI от FTP не зависит и пересчитывается), повторный прогон старые
+// значения не воскрешает.
+func TestMetricsClearedWhenFTPRemoved(t *testing.T) {
+	db := openTestDB(t)
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC),
+		Duration:  3600 * time.Second, NormPower: 140, AvgPower: 123, FTP: 156,
+	}, "hash-ftp-removed", "/nonexistent/x.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range history {
+		if e.Kind == "ftp" {
+			if err := store.DeleteProfileEntry(db, e.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var ftpNull int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workouts WHERE id = ? AND ftp_w IS NULL`, id).Scan(&ftpNull); err != nil {
+		t.Fatal(err)
+	}
+	if ftpNull != 1 {
+		t.Fatalf("ftp_w не NULL после удаления последней записи FTP")
+	}
+
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.IF != 0 || w.TSS != 0 {
+		t.Errorf("IF/TSS не обнулились: %v/%v", w.IF, w.TSS)
+	}
+	if math.Abs(w.VI-140.0/123) > 1e-9 {
+		t.Errorf("VI = %v, хочу %v (от FTP не зависит)", w.VI, 140.0/123)
+	}
+	if w.MetricsVersion != metricsVersion {
+		t.Errorf("metrics_version = %d, хочу %d", w.MetricsVersion, metricsVersion)
+	}
+
+	// повторный прогон не находит работы и не воскрешает старые значения
+	if n, err := BackfillMetrics(db); err != nil || n != 0 {
+		t.Fatalf("повторный бэкфилл: %d, %v; хочу 0", n, err)
+	}
+	w, err = store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.IF != 0 || w.TSS != 0 {
+		t.Errorf("старые значения воскресли: IF=%v TSS=%v", w.IF, w.TSS)
+	}
+}
+
+// TestMetricsClearedWhenNPZero — NP стал нулём: IF/TSS/VI обнуляются.
+func TestMetricsClearedWhenNPZero(t *testing.T) {
+	db := openTestDB(t)
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 3600 * time.Second, NormPower: 140, AvgPower: 123, FTP: 156,
+	}, "hash-np-zero", "/nonexistent/np0.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetNormPowers(db, []store.NormPowerUpdate{{ID: id, NP: 0, Version: 99}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.IF != 0 || w.TSS != 0 || w.VI != 0 {
+		t.Errorf("при NP=0 метрики не NULL: IF=%v TSS=%v VI=%v", w.IF, w.TSS, w.VI)
+	}
+}
