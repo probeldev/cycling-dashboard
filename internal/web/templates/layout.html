@@ -45,13 +45,15 @@
   .hm.today { outline:2px solid var(--acc); outline-offset:1px; }
   .hm-legend { display:flex; gap:4px; align-items:center; color:var(--dim); font-size:13px; margin-top:8px; }
   .weeks { display:flex; flex-direction:column; gap:4px; margin-top:8px; }
-  .week-row { display:flex; gap:10px; align-items:center; font-size:14px; }
+  .week-row { display:flex; gap:10px; align-items:center; font-size:14px; flex-wrap:wrap; }
   .week-row .wk { width:52px; color:var(--dim); }
   .week-row .wk-num { width:72px; color:var(--dim); }
-  .zbar { display:flex; width:220px; height:10px; background:#ebedf0; border-radius:4px; overflow:hidden; }
+  .zbar { display:flex; flex:1 1 160px; max-width:220px; min-width:120px; height:10px; background:#ebedf0; border-radius:4px; overflow:hidden; }
   .zbar i { display:block; height:100%; }
   .zlow { background:#2da44e; } .zgray { background:#8c959f; } .zhigh { background:#cf222e; }
-  .pol-good { color:#1a7f37 !important; } .pol-warn { color:#9a6700 !important; }
+  .hm-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:2px; }
+  .hm.future { background:transparent; outline:1px dashed var(--border); outline-offset:-1px; }
+  .pol-good { color:#1a7f37 !important; } .pol-dim { color:var(--dim) !important; }
   .chart-controls { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin:0 0 -1px 0; padding:0 4px; position:relative; z-index:1; }
   .tabs { display:flex; gap:4px; flex-wrap:wrap; }
   button.tab { font-size:14px; background:transparent; color:var(--dim); border:1px solid transparent; border-bottom:1px solid var(--border); border-radius:6px 6px 0 0; padding:6px 12px; cursor:pointer; }

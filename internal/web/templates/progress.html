@@ -1,12 +1,12 @@
 {{ template "head" . }}
-<h1>Прогресс <span class="sub" style="font-size:14px; font-weight:400; color:var(--dim)">на {{ .TodayDate }}</span></h1>
+<h1><a href="/">←</a> Прогресс <span class="sub" style="font-size:14px; font-weight:400; color:var(--dim)">на {{ .TodayDate }}</span></h1>
 
 <div class="stats">
   <div class="stat"><div class="v">{{ printf "%.0f" .Today.CTL }}</div><div class="k">CTL · форма</div></div>
   <div class="stat"><div class="v">{{ printf "%.0f" .Today.ATL }}</div><div class="k">ATL · усталость</div></div>
-  <div class="stat"><div class="v">{{ printf "%.0f" .Today.TSB }}</div><div class="k">TSB · {{ .TSBLabel }}</div></div>
+  <div class="stat"><div class="v">{{ .TSBText }}</div><div class="k">TSB · {{ .TSBLabel }}</div></div>
   <div class="stat"><div class="v">{{ printf "%.0f" .WeekTSS }}</div><div class="k">TSS за неделю</div></div>
-  <div class="stat"><div class="v">{{ printf "%.0f" .Prev4TSS }}</div><div class="k">TSS за 4 недели</div></div>
+  <div class="stat"><div class="v">{{ printf "%.0f" .Last4TSS }}</div><div class="k">TSS за 4 недели</div></div>
 </div>
 
 <h2>Нагрузка</h2>
@@ -34,6 +34,12 @@
   <button class="tab" data-n="52">52 недели</button>
 </div>
 <div id="weeks" class="weeks"></div>
+<div class="hm-legend">
+  <i class="zlow"></i><span>низко (Z1–Z2)</span>
+  <i class="zgray"></i><span>серо (Z3)</span>
+  <i class="zhigh"></i><span>высоко (Z4–Z7)</span>
+  <span>· ориентир поляризованной модели 80/20</span>
+</div>
 <p id="polarity" class="sub" style="color:var(--dim)"></p>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
@@ -54,7 +60,7 @@ async function loadChart(days) {
   const to = new Date(), from = new Date();
   from.setDate(from.getDate() - days + 1);
   const data = await (await fetch(`/api/timeline?from=${fmt(from)}&to=${fmt(to)}`)).json();
-  const has = data.some(d => d.tss > 0);
+  const has = data.some(d => d.rides > 0 || d.ctl > 0 || d.atl > 0);
   ctx.style.display = has ? "" : "none";
   empty.hidden = has;
   if (!has) {
@@ -107,10 +113,15 @@ async function loadHeatmap() {
   for (let d = new Date(first); d <= last; d.setDate(d.getDate() + 1)) {
     const key = fmt(d), day = byDate[key], tss = day ? day.tss : 0;
     const e = document.createElement("i");
-    e.className = "hm lvl" + level(tss) + (key === todayKey ? " today" : "");
-    e.title = day && day.rides
-      ? `${key} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}`
-      : `${key} · отдых`;
+    if (key > todayKey) {
+      e.className = "hm future";
+      e.title = `${key} · ещё не наступило`;
+    } else {
+      e.className = "hm lvl" + level(tss) + (key === todayKey ? " today" : "");
+      e.title = day && day.rides
+        ? `${key} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}`
+        : `${key} · отдых`;
+    }
     root.appendChild(e);
   }
 }
@@ -146,9 +157,10 @@ async function loadWeeks(n) {
     return;
   }
   const l = Math.round(low * 100 / total), g = Math.round(gray * 100 / total), h = 100 - l - g;
-  const ok = l >= 75 && l <= 85;
-  pol.className = "sub " + (ok ? "pol-good" : "pol-warn");
-  pol.textContent = `Полярность: низко ${l}% · серо ${g}% · высоко ${h}% (ориентир 80/20)`;
+  // поляризованная модель: ~80% низкой интенсивности и мало высокой
+  const ok = l >= 75 && h <= 20;
+  pol.className = "sub " + (ok ? "pol-good" : "pol-dim");
+  pol.textContent = `Доля низкой интенсивности ${l}% (Z1–Z2), серой ${g}%, высокой ${h}% — ориентир 80/20`;
 }
 
 document.querySelectorAll("#periodBtns .tab").forEach(b => b.addEventListener("click", () => {
