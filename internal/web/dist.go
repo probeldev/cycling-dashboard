@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 
 	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
@@ -12,7 +13,6 @@ import (
 type bucket struct {
 	Label string `json:"label"`
 	From  float64
-	Secs  int `json:"secs"`
 }
 
 // distEntry — бакет распределения. Проценты ненулевые только для мощности:
@@ -111,18 +111,31 @@ var powerZones = []struct {
 	{"Z5", 1.06}, {"Z6", 1.21}, {"Z7", 1.51},
 }
 
+// zoneBuckets — зоны Коггана в ваттах. Границы не округляем до целых:
+// 0.56*156 = 87.36, и подпись «87» врала бы. Целые пороги печатаем как целые,
+// дробные — с одним знаком. Правая граница зоны не включается.
 func zoneBuckets(ftp int) []bucket {
 	out := make([]bucket, len(powerZones))
 	for i, z := range powerZones {
 		from := z.From * float64(ftp)
-		label := fmt.Sprintf("%s · %d+", z.Name, int(from+0.5))
+		label := fmt.Sprintf("%s · %s+", z.Name, watts(from))
 		if i+1 < len(powerZones) {
 			to := powerZones[i+1].From * float64(ftp)
-			label = fmt.Sprintf("%s · %d–%d", z.Name, int(from+0.5), int(to+0.5)-1)
+			label = fmt.Sprintf("%s · %s–%s", z.Name, watts(from), watts(to))
 		}
 		out[i] = bucket{Label: label, From: from}
 	}
 	return out
+}
+
+// watts — порог зоны без ложной точности: 112, а не «112», если 112.0,
+// и 87.4, если порог 87.36.
+func watts(v float64) string {
+	// 0.56*200 в float64 — это 112.00000000000001, поэтому сравниваем с допуском
+	if r := math.Round(v); math.Abs(v-r) < 0.05 {
+		return strconv.Itoa(int(r))
+	}
+	return strconv.FormatFloat(v, 'f', 1, 64)
 }
 
 // powerBuckets — диапазоны мощности (зоны Коггана при заданном FTP, иначе
@@ -174,18 +187,6 @@ func bucketIndex(kind string, buckets []bucket, s store.Sample) int {
 	}
 	return -1
 }
-
-const (
-	// pauseGapSec — разрыв между записями больше этого может быть авто-паузой.
-	// Не путать с importer.npPauseSec: там тот же порог обрывает окно NP,
-	// здесь — решает, приписывать ли время разрыва бакету. Это разные допущения:
-	// окно NP должно начинаться заново, а время записи может остаться целым.
-	pauseGapSec = 5
-	// maxGapSec — потолок времени одной записи при движении (прореженная запись).
-	maxGapSec = 60
-	// minMovingMs — 1 км/ч в м/с: медленнее считаем, что велосипед стоял.
-	minMovingMs = 1.0 / 3.6
-)
 
 // distributions считает время в каждом диапазоне. Если задан FTP (штамп
 // тренировки), мощность режется на зоны Коггана, иначе — по фиксированным

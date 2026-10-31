@@ -76,7 +76,11 @@ func isPause(samples []store.Sample, start, end int) bool {
 	next := samples[end]
 	dt := float64(next.Offset - samples[start].Offset)
 	if samples[start].HasDist && next.HasDist && dt > 0 {
-		return (next.DistanceM-samples[start].DistanceM)/dt < MinMovingMs
+		// дистанция уменьшилась — это сбой GPS, а не стоянка: верить ей нельзя,
+		// падаем на скорость и педалирование
+		if grew := next.DistanceM - samples[start].DistanceM; grew >= 0 {
+			return grew/dt < MinMovingMs
+		}
 	}
 	for j := max(0, start-1); j <= end; j++ {
 		if samples[j].SpeedMs >= MinMovingMs {

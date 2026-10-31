@@ -169,7 +169,15 @@ func cleanupOrphanSamples(db *sql.DB) error {
 		return err
 	}
 	if !hasWorkouts {
-		log.Printf("миграция: чистка осиротевших сэмплов пропущена — таблица workouts пуста")
+		// предупреждаем, только если реально есть что чистить: на новой базе
+		// пустая workouts — это норма
+		var hasSamples bool
+		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM samples)`).Scan(&hasSamples); err != nil {
+			return err
+		}
+		if hasSamples {
+			log.Printf("миграция: чистка осиротевших сэмплов пропущена — таблица workouts пуста")
+		}
 		return nil
 	}
 	res, err := db.Exec(`DELETE FROM samples

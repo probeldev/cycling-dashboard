@@ -111,13 +111,13 @@ func TestDistributionsCoastWithZones(t *testing.T) {
 	if power[0].Label != coastLabel {
 		t.Errorf("первый бакет = %q, хочу %q", power[0].Label, coastLabel)
 	}
-	if got := secsOf(power, "Z1 · 0–111"); got != 0 {
+	if got := secsOf(power, "Z1 · 0–112"); got != 0 {
 		t.Errorf("в Z1 попало %d с наката, хочу 0", got)
 	}
-	if got := secsOf(power, "Z2 · 112–151"); got != 20 {
+	if got := secsOf(power, "Z2 · 112–152"); got != 20 {
 		t.Errorf("Z2 = %d с, хочу 20 (120 Вт)", got)
 	}
-	if got := secsOf(power, "Z6 · 242–301"); got != 10 {
+	if got := secsOf(power, "Z6 · 242–302"); got != 10 {
 		t.Errorf("Z6 = %d с, хочу 10 (250 Вт)", got)
 	}
 }
@@ -204,7 +204,7 @@ func TestDistributionsPauseAppliesToZones(t *testing.T) {
 		{Offset: 30, Power: 120, HasPwr: true, DistanceM: 500, HasDist: true},
 	}
 	d := distributions(samples, 200)
-	if got := secsOf(d.Buckets["power"], "Z2 · 112–151"); got != 2 {
+	if got := secsOf(d.Buckets["power"], "Z2 · 112–152"); got != 2 {
 		t.Errorf("Z2 = %d с, хочу 2 (по секунде за запись, без 30 с стоянки)", got)
 	}
 	if got := d.PowerBase.TotalSecs; got != 2 {

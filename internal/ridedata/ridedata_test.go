@@ -130,3 +130,39 @@ func TestTimingsPauseFlagOnGroupEnd(t *testing.T) {
 		t.Error("флаг паузы после стоянки не должен тянуться дальше")
 	}
 }
+
+// TestTimingsNegativeDistance — дистанция уменьшилась (сбой GPS): это не стоянка,
+// решают скорость и педалирование.
+func TestTimingsNegativeDistance(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 200, HasPwr: true, DistanceM: 100, HasDist: true},
+		{Offset: 30, Power: 200, HasPwr: true, DistanceM: 50, HasDist: true},
+	}
+	if got := Timings(samples)[0]; got.Pause || got.Secs != 30 {
+		t.Errorf("отрицательный прирост: %.1f с, пауза=%v; хочу 30 и false", got.Secs, got.Pause)
+	}
+}
+
+// TestTimingsDistanceOnOneSide — дистанция известна только с одной стороны:
+// на неё не опираемся, решают скорость и педалирование.
+func TestTimingsDistanceOnOneSide(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 200, HasPwr: true, DistanceM: 100, HasDist: true},
+		{Offset: 30, Power: 200, HasPwr: true}, // дистанции нет
+	}
+	if got := Timings(samples)[0]; got.Pause || got.Secs != 30 {
+		t.Errorf("дистанция с одной стороны: %.1f с, пауза=%v; хочу 30 и false", got.Secs, got.Pause)
+	}
+}
+
+// TestTimingsResidualSpeedNoDistance — без дистанции остаточная скорость
+// 7.5 км/ч считается движением, а не паузой.
+func TestTimingsResidualSpeedNoDistance(t *testing.T) {
+	samples := []store.Sample{
+		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 7.5 / 3.6},
+		{Offset: 10, Power: 0, HasPwr: true},
+	}
+	if got := Timings(samples)[0]; got.Pause || got.Secs != 10 {
+		t.Errorf("остаточная скорость: %.1f с, пауза=%v; хочу 10 и false", got.Secs, got.Pause)
+	}
+}
