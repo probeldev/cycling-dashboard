@@ -36,6 +36,14 @@
     {{ if .W.HasVI }}<div class="stat"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI</div></div>{{ end }}
     {{ if and .W.WeightKg .W.AvgPower }}<div class="stat"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг{{ if .W.WeightKg }} (вес {{ km .W.WeightKg }}){{ end }}</div></div>{{ end }}
   </div>
+  {{ if .MMP }}
+  <h3>Лучшие усилия</h3>
+  <div class="stats">
+    {{ range .MMP }}
+    <div class="stat"><div class="v">{{ trimFloat .Watts }} Вт</div><div class="k">{{ .Label }}{{ if .PR }} · <span class="tag pr">{{ .PR }}</span>{{ end }}</div></div>
+    {{ end }}
+  </div>
+  {{ end }}
   {{ end }}
   {{ if not .W.Trainer }}
   <h3>Скорость</h3>

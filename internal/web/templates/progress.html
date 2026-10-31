@@ -27,6 +27,15 @@
   <span>больше</span>
 </div>
 
+<h2>MMP · лучшее усилие</h2>
+<div class="tabs" id="mmpBtns">
+  <button class="tab" data-n="30">30 дней</button>
+  <button class="tab active" data-n="90">90 дней</button>
+  <button class="tab" data-n="365">365 дней</button>
+</div>
+<canvas id="mmp" style="width:100%; height:260px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
+<p id="mmp-empty" hidden class="sub" style="color:var(--dim)">Нет данных за выбранный период.</p>
+
 <h2>Зоны по неделям</h2>
 <div class="tabs" id="weeksBtns">
   <button class="tab active" data-n="12">12 недель</button>
@@ -126,6 +135,53 @@ async function loadHeatmap() {
   }
 }
 
+const mmpCtx = document.getElementById("mmp");
+const mmpEmpty = document.getElementById("mmp-empty");
+let mmpChart = null;
+async function loadMMP(days) {
+  const recs = await (await fetch(`/api/records?period=${days}d`)).json();
+  const has = recs.length > 0;
+  mmpCtx.style.display = has ? "" : "none";
+  mmpEmpty.hidden = has;
+  if (!has) {
+    if (mmpChart) { mmpChart.destroy(); mmpChart = null; }
+    return;
+  }
+  const sets = [{
+    label: `последние ${days} дн.`,
+    data: recs.map(r => ({ x: r.secs, y: r.watts })),
+    borderColor: "#d73a49", backgroundColor: "#d73a49", showLine: true, pointRadius: 3,
+  }];
+  if (recs.some(r => r.previous)) {
+    sets.push({
+      label: "предыдущий период",
+      data: recs.filter(r => r.previous).map(r => ({ x: r.secs, y: r.previous.watts })),
+      borderColor: "#8c959f", backgroundColor: "#8c959f", showLine: true, pointRadius: 3, borderDash: [4, 4],
+    });
+  }
+  const cfg = {
+    type: "line",
+    data: { datasets: sets },
+    options: {
+      animation: false,
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${Math.round(c.raw.y)} Вт (${c.raw.x} с)` } },
+      },
+      scales: {
+        x: { type: "logarithmic", title: { display: true, text: "окно, с" }, ticks: { callback: v => v + " с" } },
+        y: { title: { display: true, text: "Вт" } },
+      },
+    },
+  };
+  if (!mmpChart) {
+    mmpChart = new Chart(mmpCtx, cfg);
+  } else {
+    mmpChart.data.datasets = sets;
+    mmpChart.update();
+  }
+}
+
 const fmtWeek = s => s.slice(8, 10) + "." + s.slice(5, 7);
 async function loadWeeks(n) {
   const weeks = await (await fetch(`/api/weeks?n=${n}`)).json();
@@ -171,9 +227,14 @@ document.querySelectorAll("#weeksBtns .tab").forEach(b => b.addEventListener("cl
   document.querySelectorAll("#weeksBtns .tab").forEach(x => x.classList.toggle("active", x === b));
   loadWeeks(+b.dataset.n);
 }));
+document.querySelectorAll("#mmpBtns .tab").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("#mmpBtns .tab").forEach(x => x.classList.toggle("active", x === b));
+  loadMMP(+b.dataset.n);
+}));
 loadChart(180);
 loadHeatmap();
 loadWeeks(12);
+loadMMP(90);
 })();
 </script>
 {{ template "foot" . }}

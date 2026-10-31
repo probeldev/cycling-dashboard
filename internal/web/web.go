@@ -88,7 +88,17 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.NotFound(w, req)
 			return
 		}
-		render(w, "workout.html", map[string]any{"W": wo})
+		mmp, err := store.WorkoutMMP(db, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		prs, err := store.WorkoutPRs(db, id, time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		render(w, "workout.html", map[string]any{"W": wo, "MMP": mmpCards(mmp, prs)})
 	})
 
 	r.Post("/workout/{id}/trainer", func(w http.ResponseWriter, req *http.Request) {
@@ -203,6 +213,50 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		writeJSON(w, days)
+	})
+
+	r.Get("/api/records", func(w http.ResponseWriter, req *http.Request) {
+		from, to, prevDays, err := parseRecordsPeriod(req.URL.Query(), time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		records, err := store.BestRecords(db, from, to)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if prevDays > 0 {
+			prev, err := store.BestRecords(db, from.AddDate(0, 0, -prevDays), from)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			byWindow := make(map[int]store.Record, len(prev))
+			for _, r := range prev {
+				byWindow[r.WindowSec] = r
+			}
+			for i := range records {
+				if p, ok := byWindow[records[i].WindowSec]; ok {
+					records[i].Previous = &p
+				}
+			}
+		}
+		writeJSON(w, records)
+	})
+
+	r.Get("/api/workout/{id}/prs", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		if _, err := store.GetWorkout(db, id); err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		prs, err := store.WorkoutPRs(db, id, time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, prs)
 	})
 
 	r.Get("/api/workout/{id}/mmp", func(w http.ResponseWriter, req *http.Request) {
