@@ -3,7 +3,8 @@
 
 <div class="stats">
   {{ if .HasWeight }}<div class="stat"><div class="v">{{ km .Weight }} кг</div><div class="k">вес</div></div>{{ end }}
-  {{ if .HasFTP }}<div class="stat"><div class="v">{{ .FTP }} Вт</div><div class="k">FTP</div></div>{{ end }}
+  {{ if .HasFTP }}<div class="stat"><div class="v">{{ .FTP }} Вт</div><div class="k">FTP (станок)</div></div>{{ end }}
+  {{ if .HasFTPOutdoor }}<div class="stat"><div class="v">{{ .FTPOutdoor }} Вт</div><div class="k">FTP (улица)</div></div>{{ end }}
   {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divf .FTP .Weight) }}</div><div class="k">Вт/кг</div></div>{{ end }}
 </div>
 
@@ -19,13 +20,22 @@
             hx-vals="js:{kind:'weight', value: document.getElementById('wval').value, date: document.getElementById('wdate').value}">Сохранить</button>
   </div>
   <div>
-    <b>FTP, Вт</b><br>
+    <b>FTP (станок), Вт</b><br>
     <input id="fval" type="number" step="1" min="1" placeholder="250"
            style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
     <input id="fdate" type="date" value="{{ .Today }}"
            style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
     <button hx-post="/profile/entry" hx-swap="none"
             hx-vals="js:{kind:'ftp', value: document.getElementById('fval').value, date: document.getElementById('fdate').value}">Сохранить</button>
+  </div>
+  <div>
+    <b>FTP (улица), Вт</b><br>
+    <input id="foval" type="number" step="1" min="1" placeholder="280"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
+    <input id="fodate" type="date" value="{{ .Today }}"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
+    <button hx-post="/profile/entry" hx-swap="none"
+            hx-vals="js:{kind:'ftp_outdoor', value: document.getElementById('foval').value, date: document.getElementById('fodate').value}">Сохранить</button>
   </div>
 </div>
 <p class="sub" style="color:var(--dim); font-size:14px">Дата — с какого дня действует значение. Зоны тренировок считаются по истории на дату тренировки.</p>
@@ -37,7 +47,7 @@
   {{ range .History }}
   <tr>
     <td>{{ date .RecordedAt }}</td>
-    <td>{{ if eq .Kind "weight" }}вес{{ else }}FTP{{ end }}</td>
+    <td>{{ if eq .Kind "weight" }}вес{{ else if eq .Kind "ftp_outdoor" }}FTP (улица){{ else }}FTP (станок){{ end }}</td>
     <td>{{ if eq .Kind "weight" }}{{ km .Value }} кг{{ else }}{{ printf "%.0f" .Value }} Вт{{ end }}</td>
     <td><button hx-post="/profile/entry/{{ .ID }}/delete" hx-swap="none">✕</button></td>
   </tr>

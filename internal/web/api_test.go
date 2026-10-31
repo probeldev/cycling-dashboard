@@ -144,12 +144,12 @@ func TestWorkoutsListJSON(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("%d элементов, хочу 2", len(list))
 	}
-	if got := len(list[0]); got != 38 {
+	if got := len(list[0]); got != 39 {
 		keys := make([]string, 0, got)
 		for k := range list[0] {
 			keys = append(keys, k)
 		}
-		t.Errorf("полей в объекте %d, хочу 38: %v", got, keys)
+		t.Errorf("полей в объекте %d, хочу 39: %v", got, keys)
 	}
 	if _, ok := list[0]["Override"]; !ok {
 		t.Errorf("в объекте нет поля Override")

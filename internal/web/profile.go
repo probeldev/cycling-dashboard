@@ -22,19 +22,24 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 		now := time.Now()
 		weight, hasWeight := store.ProfileAt(db, "weight", now)
 		ftp, hasFTP := store.ProfileAt(db, "ftp", now)
+		ftpOutdoor, hasFTPOutdoor := store.ProfileAt(db, "ftp_outdoor", now)
 		render(w, "profile.html", map[string]any{
-			"History":   history,
-			"Weight":    weight,
-			"HasWeight": hasWeight,
-			"FTP":       int(ftp),
-			"HasFTP":    hasFTP,
-			"Today":     now.Format("2006-01-02"),
+			"History":       history,
+			"Weight":        weight,
+			"HasWeight":     hasWeight,
+			"FTP":           int(ftp),
+			"HasFTP":        hasFTP,
+			"FTPOutdoor":    int(ftpOutdoor),
+			"HasFTPOutdoor": hasFTPOutdoor,
+			"Today":         now.Format("2006-01-02"),
 		})
 	})
 
 	r.Post("/profile/entry", func(w http.ResponseWriter, req *http.Request) {
 		kind := req.FormValue("kind")
-		if kind != "weight" && kind != "ftp" {
+		switch kind {
+		case "weight", "ftp", "ftp_outdoor":
+		default:
 			http.Error(w, "неизвестный тип", http.StatusBadRequest)
 			return
 		}
