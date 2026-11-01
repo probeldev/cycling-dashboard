@@ -38,7 +38,7 @@ func TestRules(t *testing.T) {
 	}{
 		{
 			name: "0 мало данных",
-			in:   func() Input { in := baseInput(); in.DataDays = 10; in.TSB = -40; return in }(),
+			in:   func() Input { in := baseInput(); in.DataDays = 10; return in }(),
 			rule: 0, kind: "z2", zone: "Z2", dur: [2]int{60, 60}, pct: [2]int{60, 75},
 			want: "10 дн.",
 		},
@@ -153,10 +153,20 @@ func TestRulePriority(t *testing.T) {
 			in.DaysSinceHard = 1
 			return in
 		}(), 3},
-		{"мало данных важнее перегрузки", func() Input {
+		{"мало данных не отменяет безопасность", func() Input {
 			in := baseInput()
-			in.DataDays = 20
-			in.TSB = -40
+			in.DataDays = 4
+			in.LoadDays42 = 4
+			in.TSB = -22
+			in.DaysSinceHard = 1
+			return in
+		}(), 2},
+		{"мало данных важнее теста и объёма", func() Input {
+			in := baseInput()
+			in.DataDays = 4
+			in.LoadDays42 = 4
+			in.TSB = 20
+			in.DaysSinceTest = 30
 			return in
 		}(), 0},
 	} {
@@ -185,7 +195,7 @@ func TestBoundaries(t *testing.T) {
 			in := baseInput()
 			in.DataDays = 20
 			in.LoadDays42 = 30
-			in.TSB = -30
+			in.TSB = 0
 			return in
 		}(), 0},
 		{"TSB ровно −25 — ещё не отдых", func() Input {
@@ -305,21 +315,22 @@ func TestExplain(t *testing.T) {
 		t.Fatalf("RuleID = %d, хочу 7", rec.RuleID)
 	}
 	if len(checks) != 8 {
-		t.Fatalf("проверок %d, хочу 8 (правила 0..7): %+v", len(checks), checks)
+		t.Fatalf("проверок %d, хочу 8 (правила 1,2,3,0,4,5,6,7): %+v", len(checks), checks)
 	}
+	wantOrder := []int{1, 2, 3, 0, 4, 5, 6, 7}
 	for i, c := range checks {
-		if c.RuleID != i {
-			t.Errorf("проверка %d: RuleID = %d", i, c.RuleID)
+		if c.RuleID != wantOrder[i] {
+			t.Errorf("проверка %d: RuleID = %d, хочу %d", i, c.RuleID, wantOrder[i])
 		}
 		if c.Reason == "" {
-			t.Errorf("правило %d: пустая причина", i)
+			t.Errorf("правило %d: пустая причина", c.RuleID)
 		}
-		if c.Applied != (i == 7) {
-			t.Errorf("правило %d: Applied = %v", i, c.Applied)
+		if c.Applied != (i == len(checks)-1) {
+			t.Errorf("правило %d: Applied = %v", c.RuleID, c.Applied)
 		}
 	}
-	if !strings.Contains(checks[1].Reason, "нужно < −25") {
-		t.Errorf("причина правила 1 = %q", checks[1].Reason)
+	if !strings.Contains(checks[0].Reason, "нужно < −25") {
+		t.Errorf("причина правила 1 = %q", checks[0].Reason)
 	}
 
 	rec, checks = Explain(func() Input {
@@ -327,7 +338,19 @@ func TestExplain(t *testing.T) {
 		in.TSB = -30
 		return in
 	}())
-	if rec.RuleID != 1 || len(checks) != 2 || !checks[1].Applied {
+	if rec.RuleID != 1 || len(checks) != 1 || !checks[0].Applied {
 		t.Errorf("ранний выход: rec=%+v checks=%+v", rec, checks)
+	}
+}
+
+func TestSafetyBeforeLowData(t *testing.T) {
+	in := baseInput()
+	in.DataDays = 4
+	in.LoadDays42 = 4
+	in.TSB = -22
+	in.DaysSinceHard = 1
+	rec := Recommend(in)
+	if rec.RuleID != 2 || rec.Kind != "z1z2" || rec.DurationMin != [2]int{40, 60} {
+		t.Fatalf("rec = %+v, хочу правило 2 Z1–Z2 40–60, а не 60 мин Z2", rec)
 	}
 }
