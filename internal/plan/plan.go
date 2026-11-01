@@ -123,11 +123,12 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 	reject(0, fmt.Sprintf("данных %d дн. и %d дней с нагрузкой (нужно ≥%d и ≥%d)",
 		in.DataDays, in.LoadDays42, thresholds.MinDataDays, thresholds.MinLoadDays42))
 
-	if in.TSB > 15 && in.DaysSinceTest > 21 {
+	if in.TSB > 15 && (in.DaysSinceTest < 0 || in.DaysSinceTest > 21) &&
+		(in.DaysSinceHard < 0 || in.DaysSinceHard > 1) {
 		return apply(ftpTest(in))
 	}
-	reject(4, fmt.Sprintf("TSB %s (нужно > +15), тест %s (нужно > 21 дн.)",
-		num(in.TSB), daysOrNever(in.DaysSinceTest)))
+	reject(4, fmt.Sprintf("TSB %s (нужно > +15), тест %s (нужно > 21 дн. или не было), тяжёлая %s",
+		num(in.TSB), daysOrNever(in.DaysSinceTest), hardWhen(in.DaysSinceHard)))
 
 	if in.TSB > 5 && in.WeekTSS < 0.7*in.TargetTSS {
 		return apply(Recommendation{
@@ -216,13 +217,17 @@ func ftpTest(in Input) Recommendation {
 	if outdoor {
 		where = "20 минут на улице"
 	}
+	test := "теста не было"
+	if in.DaysSinceTest >= 0 {
+		test = fmt.Sprintf("тест был %d дн. назад", in.DaysSinceTest)
+	}
 	return Recommendation{
 		RuleID:      4,
 		Kind:        "ftp_test",
 		DurationMin: [2]int{20, 20},
 		Zone:        "",
-		Rationale: fmt.Sprintf("TSB %s и теста не было %s: пора проверить FTP — %s.",
-			num(in.TSB), daysOrNever(in.DaysSinceTest), where),
+		Rationale: fmt.Sprintf("TSB %s и %s: пора проверить FTP — %s.",
+			num(in.TSB), test, where),
 		Factors: []Factor{
 			{Label: "TSB", Value: num(in.TSB)},
 			{Label: "Без теста", Value: daysOrNever(in.DaysSinceTest)},

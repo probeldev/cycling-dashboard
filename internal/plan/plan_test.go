@@ -84,6 +84,17 @@ func TestRules(t *testing.T) {
 			want: "улиц",
 		},
 		{
+			name: "4 теста не было",
+			in: func() Input {
+				in := baseInput()
+				in.TSB = 20
+				in.DaysSinceTest = -1
+				return in
+			}(),
+			rule: 4, kind: "ftp_test", zone: "", dur: [2]int{20, 20}, pct: [2]int{0, 0},
+			want: "теста не было",
+		},
+		{
 			name: "5 недобор недели",
 			in:   func() Input { in := baseInput(); in.TSB = 8; in.WeekTSS = 100; in.DaysSinceTest = 10; return in }(),
 			rule: 5, kind: "z2long", zone: "Z2", dur: [2]int{90, 120}, pct: [2]int{60, 75},
@@ -223,6 +234,26 @@ func TestBoundaries(t *testing.T) {
 			in := baseInput()
 			in.TSB = 15.001
 			in.DaysSinceTest = 30
+			return in
+		}(), 4},
+		{"тест 22 дня назад — уже можно", func() Input {
+			in := baseInput()
+			in.TSB = 20
+			in.DaysSinceTest = 22
+			return in
+		}(), 4},
+		{"тяжёлая вчера блокирует тест", func() Input {
+			in := baseInput()
+			in.TSB = 20
+			in.DaysSinceTest = 30
+			in.DaysSinceHard = 1
+			return in
+		}(), 7},
+		{"тяжёлая 2 дня назад не блокирует тест", func() Input {
+			in := baseInput()
+			in.TSB = 20
+			in.DaysSinceTest = 30
+			in.DaysSinceHard = 2
 			return in
 		}(), 4},
 		{"тест ровно 21 день назад — рано", func() Input {

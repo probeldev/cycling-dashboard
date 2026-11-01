@@ -157,11 +157,6 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		FTPOutdoor:    outdoorFTP,
 		TrainerShare:  facts.trainerShare,
 	}
-	if in.DaysSinceTest < 0 {
-		// теста не было: для правила 4 это «очень давно», а не «сегодня».
-		in.DaysSinceTest = facts.dataDays
-	}
-
 	var rec plan.Recommendation
 	var checks []plan.RuleCheck
 	if debug {
