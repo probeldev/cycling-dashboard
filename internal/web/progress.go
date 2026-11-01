@@ -27,6 +27,12 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			return
 		}
 		today := days[len(days)-1]
+		// PMC показываем на конец предыдущего дня — как на главной: иначе
+		// сегодняшние CTL/ATL смешивались бы с TSB до нагрузки сегодняшнего дня.
+		pmcDay := today
+		if len(days) >= 2 {
+			pmcDay = days[len(days)-2]
+		}
 
 		// текущая неделя пн–вс и 4 недели вместе с ней (текущая + 3 полные)
 		ws := store.WeekStart(now)
@@ -41,7 +47,7 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 		}
 		// TSB считаем от округлённых CTL/ATL — тех же чисел, что в карточках:
 		// иначе на границе −10.04 число и подпись расходились бы со статусом.
-		tsb := round1(round1(today.CTL) - round1(today.ATL))
+		tsb := round1(round1(pmcDay.CTL) - round1(pmcDay.ATL))
 		// CP/W' по всем данным: окна MMP за всё время
 		allRecords, err := store.BestRecords(db, time.Time{}, to.AddDate(0, 0, 1), false)
 		if err != nil {
@@ -78,7 +84,8 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			"Bikes":     bikes,
 			"CP":        cpView(cp),
 			"Wkg":       buildWkgTrend(series, to),
-			"Today":     today,
+			"PMC":       pmcDay,
+			"PMCDate":   pmcDay.Date.Format("02.01.2006"),
 			"WeekTSS":   weekTSS,
 			"Last4TSS":  last4,
 			"TSBText":   format1(tsb),

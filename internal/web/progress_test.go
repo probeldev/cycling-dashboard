@@ -1,6 +1,8 @@
 package web
 
 import (
+	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -75,15 +77,69 @@ func TestProgressCards(t *testing.T) {
 		t.Errorf("карточка недели не показывает 100")
 	}
 
-	// число и подпись TSB согласованы между собой
-	today := store.StartOfDay(time.Now())
-	days, err := store.Timeline(db, today, today)
+	// число и подпись TSB согласованы между собой; PMC — на конец прошлого дня
+	now := time.Now()
+	today := store.StartOfDay(now)
+	days, err := store.TimelineUntil(db, today.AddDate(0, 0, -1), today, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tsb := round1(round1(days[0].CTL) - round1(days[0].ATL))
+	pmcDay := days[len(days)-1]
+	if len(days) >= 2 {
+		pmcDay = days[len(days)-2]
+	}
+	tsb := round1(round1(pmcDay.CTL) - round1(pmcDay.ATL))
 	if !strings.Contains(body, ">"+format1(tsb)+"</div><div class=\"k\">TSB · "+tsbLabel(tsb)) {
 		t.Errorf("карточка TSB не совпадает с расчётом %v", tsb)
+	}
+}
+
+// TestProgressPMCWatchesStatus — карточка PMC на /progress показывает тот же
+// момент, что и /api/status: конец предыдущего дня. Иначе CTL−ATL не равно TSB
+// (сегодняшние CTL/ATL смешивались бы со свежестью до нагрузки сегодня).
+func TestProgressPMCWatchesStatus(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	today := store.StartOfDay(now)
+	for i := 1; i <= 3; i++ {
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: today.AddDate(0, 0, -i).Add(12 * time.Hour),
+			Duration:  time.Hour,
+			TSS:       70,
+		}, fmt.Sprintf("hash-progress-pmc-%d", i), filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/progress", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	status, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		">" + trimFloat(status.State.CTL.Value) + "</div><div class=\"k\">CTL · форма",
+		">" + trimFloat(status.State.ATL.Value) + "</div><div class=\"k\">ATL · усталость",
+		">" + format1(status.State.TSB.Value) + "</div><div class=\"k\">TSB · " +
+			tsbLabel(status.State.TSB.Value),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на /progress нет %q", want)
+		}
+	}
+	if diff := math.Abs(status.State.CTL.Value - status.State.ATL.Value - status.State.TSB.Value); diff > 0.1 {
+		t.Errorf("CTL−ATL−TSB = %.1f, хочу 0", diff)
 	}
 }
 
