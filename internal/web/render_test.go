@@ -160,3 +160,39 @@ func TestRenderEmptyToday(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTodayWithTargetAndFTP(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	if err := store.AddProfileEntry(db, "ftp", 200, now.AddDate(0, 0, -7)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, -1), Duration: time.Hour, TSS: 100,
+		Trainer: true, AvgPower: 150,
+	}, "hash-today-target", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetWeeklyTarget(db, 300); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /: код %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"300", "вручную", "осталось", "≈", "110–150"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET / с целью: нет %q", want)
+		}
+	}
+}
