@@ -185,9 +185,6 @@ func Decoupling(samples []store.Sample) (float64, bool) {
 		}
 		elapsed += dt
 	}
-	if secs[0] < decouplingMinHalfSecs || secs[1] < decouplingMinHalfSecs {
-		return 0, false
-	}
 	// средние сокращаются: EF = (Σpower·dt / Σdt) / (Σhr·dt / Σdt)
 	ef1 := power[0] / hr[0]
 	ef2 := power[1] / hr[1]

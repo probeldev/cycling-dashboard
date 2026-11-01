@@ -332,6 +332,12 @@ func TestEmptyData(t *testing.T) {
 }
 
 func TestDecoupling(t *testing.T) {
+	t.Run("пусто", func(t *testing.T) {
+		if _, ok := Decoupling(nil); ok {
+			t.Error("decoupling посчитан без сэмплов")
+		}
+	})
+
 	t.Run("ровно", func(t *testing.T) {
 		var samples []store.Sample
 		for i := 0; i < 600; i++ {
@@ -374,4 +380,42 @@ func TestDecoupling(t *testing.T) {
 			t.Error("decoupling посчитан по 200 секундам")
 		}
 	})
+
+	t.Run("запись пересекает середину", func(t *testing.T) {
+		var samples []store.Sample
+		for off := 0; off <= 600; off += 5 {
+			samples = append(samples, store.Sample{Offset: int64(off), Power: 200, HasPwr: true, HR: 140})
+		}
+		if _, ok := Decoupling(samples); !ok {
+			t.Error("decoupling не посчитан, хотя по 5 минут на половину есть")
+		}
+	})
+
+	t.Run("нулевая мощность", func(t *testing.T) {
+		var samples []store.Sample
+		for i := 0; i < 600; i++ {
+			samples = append(samples, store.Sample{Offset: int64(i), Power: 0, HasPwr: true, HR: 140})
+		}
+		if _, ok := Decoupling(samples); ok {
+			t.Error("decoupling посчитан по нулевой мощности")
+		}
+	})
+
+	t.Run("дропаут без пульса пропускается", func(t *testing.T) {
+		var samples []store.Sample
+		for i := 0; i < 600; i++ {
+			samples = append(samples, store.Sample{Offset: int64(i), Power: 200, HasPwr: true, HR: 140})
+		}
+		samples = append(samples, store.Sample{Offset: 600, HasPwr: false})
+		dec, ok := Decoupling(samples)
+		if !ok || math.Abs(dec) > 1e-9 {
+			t.Errorf("дропаут сломал расчёт: dec=%v ok=%v", dec, ok)
+		}
+	})
+}
+
+func TestPctZeroTotal(t *testing.T) {
+	if got := pct(5, 0); got != 0 {
+		t.Errorf("pct(5, 0) = %v, хочу 0", got)
+	}
 }
