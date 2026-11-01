@@ -92,7 +92,8 @@ type historyFacts struct {
 	hasHistory    bool
 	firstDay      time.Time
 	lastDay       time.Time
-	dataDays      int
+	dataDays      int // дней от первой нагрузки в окне 42 дней
+	loadDays42    int // различных дней с TSS > 0 за 42 дня
 	daysSinceHard int // -1 — тяжёлой тренировки не было
 	daysSinceTest int // -1 — тестовой тренировки не было
 	trainerShare  float64
@@ -142,6 +143,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 
 	in := plan.Input{
 		DataDays:      facts.dataDays,
+		LoadDays42:    facts.loadDays42,
 		TSB:           cur.TSB,
 		CTL:           cur.CTL,
 		ATL:           cur.ATL,
@@ -346,9 +348,12 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	nonTest := map[time.Time]*hardDay{}
 	testDays := map[time.Time]bool{}
 	var first, last time.Time
+	var firstLoad time.Time
+	loadDays := map[time.Time]bool{}
 	var trainer, total int
 	shareFrom := store.WeekStart(now).AddDate(0, 0, -21)
 	shareTo := store.WeekStart(now).AddDate(0, 0, 7)
+	loadFrom := today.AddDate(0, 0, -(thresholds.DataWindowDays - 1))
 
 	for rows.Next() {
 		var start string
@@ -371,6 +376,12 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 		}
 		if last.IsZero() || day.After(last) {
 			last = day
+		}
+		if tss > 0 && !day.Before(loadFrom) && !day.After(today) {
+			loadDays[day] = true
+			if firstLoad.IsZero() || day.Before(firstLoad) {
+				firstLoad = day
+			}
 		}
 		if !day.Before(shareFrom) && day.Before(shareTo) {
 			total++
@@ -406,7 +417,10 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	out.hasHistory = true
 	out.firstDay = first
 	out.lastDay = last
-	out.dataDays = daysBetween(first, today)
+	out.loadDays42 = len(loadDays)
+	if !firstLoad.IsZero() {
+		out.dataDays = daysBetween(firstLoad, today)
+	}
 	if total > 0 {
 		out.trainerShare = float64(trainer) / float64(total)
 	}
@@ -435,7 +449,7 @@ func buildState(cur, pmcDay store.Day, facts historyFacts, days []store.Day) sta
 	tsb := ctl - atl
 	label := string(thresholds.TSBStateFor(tsb))
 	confidence := "ok"
-	if facts.dataDays < thresholds.MinDataDays {
+	if thresholds.LowData(facts.dataDays, facts.loadDays42) {
 		label = "lowdata"
 		confidence = "low"
 	}
@@ -604,11 +618,12 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 				kind, h.Estimate, h.Current, h.DeltaPct),
 		})
 	}
-	if facts.dataDays < 21 {
+	if thresholds.LowData(facts.dataDays, facts.loadDays42) {
 		alerts = append(alerts, statusAlert{
 			Level: "info",
 			Code:  "lowdata",
-			Text:  fmt.Sprintf("Мало данных: %d дн. истории, рекомендация осторожная.", facts.dataDays),
+			Text: fmt.Sprintf("Мало данных: %d дн. с нагрузкой, %d дней с TSS>0 за 42 дня — рекомендация осторожная.",
+				facts.dataDays, facts.loadDays42),
 		})
 	}
 	rank := map[string]int{"stale": 0, "data_gaps": 1, "no_hr": 2, "no_rpe": 3, "ftp_hint": 4, "lowdata": 5}

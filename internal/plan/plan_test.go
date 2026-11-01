@@ -9,6 +9,7 @@ import (
 func baseInput() Input {
 	return Input{
 		DataDays:      100,
+		LoadDays42:    30,
 		TSB:           0,
 		CTL:           40,
 		ATL:           40,
@@ -40,6 +41,17 @@ func TestRules(t *testing.T) {
 			in:   func() Input { in := baseInput(); in.DataDays = 10; in.TSB = -40; return in }(),
 			rule: 0, kind: "z2", zone: "Z2", dur: [2]int{60, 60}, pct: [2]int{60, 75},
 			want: "10 дн.",
+		},
+		{
+			name: "0 мало дней с нагрузкой",
+			in: func() Input {
+				in := baseInput()
+				in.DataDays = 100
+				in.LoadDays42 = 8
+				return in
+			}(),
+			rule: 0, kind: "z2", zone: "Z2", dur: [2]int{60, 60}, pct: [2]int{60, 75},
+			want: "8",
 		},
 		{
 			name: "1 перегрузка",
@@ -162,12 +174,20 @@ func TestBoundaries(t *testing.T) {
 		in   Input
 		want int
 	}{
-		{"данных ровно 21 день — уже не lowdata", func() Input {
+		{"данных ровно 21 день и 9 дней с нагрузкой — уже не lowdata", func() Input {
 			in := baseInput()
 			in.DataDays = 21
+			in.LoadDays42 = 9
 			in.TSB = -30
 			return in
 		}(), 1},
+		{"20 дней истории — lowdata", func() Input {
+			in := baseInput()
+			in.DataDays = 20
+			in.LoadDays42 = 30
+			in.TSB = -30
+			return in
+		}(), 0},
 		{"TSB ровно −25 — ещё не отдых", func() Input {
 			in := baseInput()
 			in.TSB = -25

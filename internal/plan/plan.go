@@ -15,6 +15,7 @@ import (
 // такой тренировки не было.
 type Input struct {
 	DataDays      int
+	LoadDays42    int // различных дней с TSS > 0 за последние 42 дня
 	TSB, CTL, ATL float64
 	DaysSinceHard int
 	DaysSinceTest int
@@ -72,11 +73,13 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 		return rec, checks
 	}
 
-	if in.DataDays < 21 {
+	if thresholds.LowData(in.DataDays, in.LoadDays42) {
 		return apply(z2(in, 0, [2]int{60, 60}, fmt.Sprintf(
-			"Данных пока мало: %d дн. истории. Работай ровно, без интервалов.", in.DataDays)))
+			"Данных пока мало: %d дн. с нагрузкой и %d дней с TSS>0 за 42 дня. Работай ровно, без интервалов.",
+			in.DataDays, in.LoadDays42)))
 	}
-	reject(0, fmt.Sprintf("данных %d дн. (нужно < 21)", in.DataDays))
+	reject(0, fmt.Sprintf("данных %d дн. и %d дней с нагрузкой (нужно ≥%d и ≥%d)",
+		in.DataDays, in.LoadDays42, thresholds.MinDataDays, thresholds.MinLoadDays42))
 
 	if in.TSB < thresholds.TSBLoadedMin {
 		return apply(Recommendation{

@@ -289,6 +289,9 @@ func TestStatusTestWorkoutNotHard(t *testing.T) {
 	if facts.dataDays != 5 {
 		t.Errorf("dataDays = %d, хочу 5", facts.dataDays)
 	}
+	if facts.loadDays42 != 2 {
+		t.Errorf("loadDays42 = %d, хочу 2", facts.loadDays42)
+	}
 }
 
 func TestStatusSeveralWorkoutsPerDay(t *testing.T) {
