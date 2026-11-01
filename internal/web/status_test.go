@@ -127,11 +127,23 @@ func TestStatusGolden(t *testing.T) {
 		t.Errorf("week start/dow = %q/%d", w.Start, w.DayOfWeek)
 	}
 	almostEqual(t, "week.tss", w.TSS, 220)
-	almostEqual(t, "week.target", w.Target, 220)
-	almostEqual(t, "targetToDate", w.TargetToDate, 125.7)
-	almostEqual(t, "remaining", w.Remaining, 0)
-	if w.RemainingMinZ2 != 0 {
-		t.Errorf("remainingMinZ2 = %d", w.RemainingMinZ2)
+	if w.Target == nil {
+		t.Fatal("week.target = null, хочу 220")
+	}
+	almostEqual(t, "week.target", *w.Target, 220)
+	if w.TargetSource != store.TargetSourceMedian4 {
+		t.Errorf("targetSource = %q, хочу median4", w.TargetSource)
+	}
+	if w.TargetToDate == nil {
+		t.Fatal("targetToDate = null")
+	}
+	almostEqual(t, "targetToDate", *w.TargetToDate, 157.1)
+	if w.Remaining == nil {
+		t.Fatal("remaining = null")
+	}
+	almostEqual(t, "remaining", *w.Remaining, 0)
+	if w.RemainingMinZ2Total == nil || *w.RemainingMinZ2Total != 0 {
+		t.Errorf("remainingMinZ2Total = %v", w.RemainingMinZ2Total)
 	}
 	almostEqual(t, "hours", w.Hours, 5)
 	almostEqual(t, "km", w.KM, 50)
@@ -148,7 +160,7 @@ func TestStatusGolden(t *testing.T) {
 	almostEqual(t, "grayPct", w.Zones.GrayPct, 8.9)
 	almostEqual(t, "highPct", w.Zones.HighPct, 8.9)
 
-	wantSummary := "Форма в норме. 5 тренировок за неделю, 220 из 220. Вчера — 60 TSS. Тренируйся по плану, следи за восстановлением."
+	wantSummary := "Форма в норме. 5 тренировок за неделю, 220 из 220 TSS. Вчера — 60 TSS. Тренируйся по плану, следи за восстановлением."
 	if got.Summary != wantSummary {
 		t.Errorf("summary = %q\nхочу      %q", got.Summary, wantSummary)
 	}
@@ -221,8 +233,8 @@ func TestStatusEmptyDB(t *testing.T) {
 	if got.Recommendation.RuleID != 0 || got.Recommendation.Kind != "z2" {
 		t.Errorf("recommendation = %+v", got.Recommendation)
 	}
-	if got.Week.Target != 150 {
-		t.Errorf("target = %v, хочу 150", got.Week.Target)
+	if got.Week.Target != nil || got.Week.TargetSource != store.TargetSourceNone {
+		t.Errorf("target = %v/%q, хочу null/none", got.Week.Target, got.Week.TargetSource)
 	}
 	if got.LastWorkout != nil {
 		t.Errorf("lastWorkout = %#v, хочу null", got.LastWorkout)

@@ -49,21 +49,23 @@ type statusMetric struct {
 }
 
 type statusWeek struct {
-	Start          string      `json:"start"`
-	DayOfWeek      int         `json:"dayOfWeek"`
-	TSS            float64     `json:"tss"`
-	Target         float64     `json:"target"`
-	TargetToDate   float64     `json:"targetToDate"`
-	Remaining      float64     `json:"remaining"`
-	RemainingMinZ2 int         `json:"remainingMinZ2"`
-	Hours          float64     `json:"hours"`
-	KM             float64     `json:"km"`
-	Rides          int         `json:"rides"`
-	TrainerHours   float64     `json:"trainerHours"`
-	OutdoorHours   float64     `json:"outdoorHours"`
-	PrevWeekTSS    float64     `json:"prevWeekTSS"`
-	DeltaPct       *float64    `json:"deltaPct"`
-	Zones          statusZones `json:"zones"`
+	Start               string             `json:"start"`
+	DayOfWeek           int                `json:"dayOfWeek"`
+	TSS                 float64            `json:"tss"`
+	Target              *float64           `json:"target"`
+	TargetSource        store.TargetSource `json:"targetSource"`
+	TargetToDate        *float64           `json:"targetToDate"`
+	Remaining           *float64           `json:"remaining"`
+	RemainingMinZ2Total *int               `json:"remainingMinZ2Total"`
+	Hours               float64            `json:"hours"`
+	KM                  float64            `json:"km"`
+	Rides               int                `json:"rides"`
+	TrainerHours        float64            `json:"trainerHours"`
+	OutdoorHours        float64            `json:"outdoorHours"`
+	PrevWeekTSS         float64            `json:"prevWeekTSS"`
+	DeltaPct            *float64           `json:"deltaPct"`
+	Zones               statusZones        `json:"zones"`
+	PolarityVerdict     string             `json:"polarityVerdict"`
 
 	rawTSS float64 // неокруглённый TSS для правил, не для JSON
 }
@@ -125,7 +127,10 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	if err != nil {
 		return nil, err
 	}
-	target := week.Target
+	target := 0.0
+	if week.Target != nil {
+		target = *week.Target
+	}
 	weekTSS := week.rawTSS
 
 	trainerFTP, _ := store.ProfileAt(db, "ftp", now)
@@ -218,43 +223,71 @@ func statusWeekFor(db *sql.DB, now time.Time) (statusWeek, float64, error) {
 	if err != nil {
 		return statusWeek{}, 0, err
 	}
-	cur := weeks[len(weeks)-1]
-	prev := weeks[len(weeks)-2]
+	cur := store.Week{Start: store.WeekStart(now)}
+	if len(weeks) > 0 {
+		cur = weeks[len(weeks)-1]
+	}
+	var prev store.Week
+	if len(weeks) > 1 {
+		prev = weeks[len(weeks)-2]
+	}
 
-	target, err := store.WeeklyTarget(db, now)
+	targetInfo, err := store.WeeklyTarget(db, now)
 	if err != nil {
 		return statusWeek{}, 0, err
 	}
 	dow := dayOfWeek(now)
 	tss := cur.TSS
-	remaining := math.Max(0, target-tss)
-	var delta *float64
-	if prev.TSS > 0 {
-		v := round1((tss - prev.TSS) / prev.TSS * 100)
-		delta = &v
-	}
-	return statusWeek{
-		Start:          cur.Start.Format("2006-01-02"),
-		DayOfWeek:      dow,
-		TSS:            round1(tss),
-		Target:         target,
-		TargetToDate:   round1(target * float64(dow-1) / 7),
-		Remaining:      math.Round(remaining),
-		RemainingMinZ2: z2Minutes(remaining),
-		Hours:          round2(cur.Hours),
-		KM:             round1(cur.DistanceKm),
-		Rides:          cur.Rides,
-		TrainerHours:   round2(cur.TrainerHours),
-		OutdoorHours:   round2(cur.OutdoorHours),
-		PrevWeekTSS:    round1(prev.TSS),
-		DeltaPct:       delta,
+	out := statusWeek{
+		Start:        cur.Start.Format("2006-01-02"),
+		DayOfWeek:    dow,
+		TSS:          round1(tss),
+		TargetSource: targetInfo.Source,
+		Hours:        round2(cur.Hours),
+		KM:           round1(cur.DistanceKm),
+		Rides:        cur.Rides,
+		TrainerHours: round2(cur.TrainerHours),
+		OutdoorHours: round2(cur.OutdoorHours),
+		PrevWeekTSS:  round1(prev.TSS),
 		Zones: statusZones{
 			LowPct:  cur.LowPct,
 			GrayPct: cur.GrayPct,
 			HighPct: cur.HighPct,
 		},
-		rawTSS: tss,
-	}, grayPct4(weeks), nil
+		PolarityVerdict: polarityVerdict(cur.LowPct, cur.GrayPct, cur.HighPct),
+		rawTSS:          tss,
+	}
+	if targetInfo.Source != store.TargetSourceNone {
+		target := round1(targetInfo.TSS)
+		toDate := round1(target * float64(dow) / 7)
+		remaining := math.Round(math.Max(0, target-tss))
+		minutes := z2Minutes(remaining)
+		out.Target = &target
+		out.TargetToDate = &toDate
+		out.Remaining = &remaining
+		out.RemainingMinZ2Total = &minutes
+	}
+	if prev.TSS > 0 {
+		v := round1((tss - prev.TSS) / prev.TSS * 100)
+		out.DeltaPct = &v
+	}
+	return out, grayPct4(weeks), nil
+}
+
+// polarityVerdict — короткий вывод по распределению времени в зонах.
+func polarityVerdict(low, gray, high float64) string {
+	switch {
+	case gray > 20:
+		return "много серой зоны"
+	case high > 20:
+		return "много интенсивности"
+	case low >= 80:
+		return "полярность хорошая"
+	case low > 0 || gray > 0 || high > 0:
+		return "смешанная нагрузка"
+	default:
+		return "нет данных о зонах"
+	}
 }
 
 // grayPct4 — доля Z3 за четыре недели: недельная серая зона шумная, правило
@@ -282,7 +315,7 @@ func z2Minutes(tss float64) int {
 	}
 	const z2IF = (0.60 + 0.75) / 2
 	minutes := tss / (z2IF * z2IF * 100) * 60
-	return int(math.Round(minutes/5) * 5)
+	return min(600, int(math.Round(minutes/5)*5))
 }
 
 func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
@@ -488,8 +521,12 @@ func tsbText(tsb float64) (verdict, action string) {
 }
 
 func statusSummary(state statusState, week statusWeek, yesterdayTSS float64) string {
-	return fmt.Sprintf("%s. %d %s за неделю, %.0f из %.0f. Вчера — %.0f TSS. %s.",
-		state.Verdict, week.Rides, pluralRides(week.Rides), week.TSS, week.Target,
+	weekText := fmt.Sprintf("%.0f TSS", week.TSS)
+	if week.Target != nil {
+		weekText = fmt.Sprintf("%.0f из %.0f TSS", week.TSS, *week.Target)
+	}
+	return fmt.Sprintf("%s. %d %s за неделю, %s. Вчера — %.0f TSS. %s.",
+		state.Verdict, week.Rides, pluralRides(week.Rides), weekText,
 		yesterdayTSS, state.Action)
 }
 

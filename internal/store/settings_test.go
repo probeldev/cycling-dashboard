@@ -19,6 +19,8 @@ func addWeekWorkout(t *testing.T, db DBTX, weekStart time.Time, day int, tss flo
 	}
 }
 
+
+
 func TestWeeklyTargetOverride(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
@@ -34,8 +36,8 @@ func TestWeeklyTargetOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 320 {
-		t.Errorf("WeeklyTarget = %v, хочу override 320", got)
+	if got.TSS != 320 || got.Source != TargetSourceManual {
+		t.Errorf("WeeklyTarget = %+v, хочу override 320/manual", got)
 	}
 }
 
@@ -54,8 +56,43 @@ func TestWeeklyTargetMedianFourWeeks(t *testing.T) {
 		t.Fatal(err)
 	}
 	// медиана чётного набора 100,200,300,400 = (200+300)/2
-	if got != 250 {
-		t.Errorf("WeeklyTarget = %v, хочу 250", got)
+	if got.TSS != 250 || got.Source != TargetSourceMedian4 {
+		t.Errorf("WeeklyTarget = %+v, хочу 250/median4", got)
+	}
+}
+
+func TestWeeklyTargetMedianSkewed(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	ws := WeekStart(now)
+	// один выброс не должен тянуть цель за собой
+	for i, tss := range []float64{100, 200, 300, 1000} {
+		addWeekWorkout(t, db, ws.AddDate(0, 0, -7*(4-i)), 1, tss, "hash-target-skew-"+string(rune('a'+i)))
+	}
+	got, err := WeeklyTarget(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TSS != 250 || got.Source != TargetSourceMedian4 {
+		t.Errorf("WeeklyTarget = %+v, хочу 250/median4", got)
+	}
+}
+
+func TestWeeklyTargetMedianIgnoresEmptyWeeks(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	ws := WeekStart(now)
+	// история четыре недели, но нагрузка только в двух из них
+	addWeekWorkout(t, db, ws.AddDate(0, 0, -28), 1, 0, "hash-target-gap-a")
+	addWeekWorkout(t, db, ws.AddDate(0, 0, -14), 1, 220, "hash-target-gap-b")
+	addWeekWorkout(t, db, ws.AddDate(0, 0, -7), 1, 220, "hash-target-gap-c")
+
+	got, err := WeeklyTarget(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TSS != 220 || got.Source != TargetSourceMedian4 {
+		t.Errorf("WeeklyTarget = %+v, хочу 220/median4: пустые недели не тянут медиану вниз", got)
 	}
 }
 
@@ -91,8 +128,8 @@ func TestWeeklyTargetFewerThanFourWeeks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 180 {
-		t.Errorf("WeeklyTarget = %v, хочу TSS последней полной недели 180", got)
+	if got.TSS != 180 || got.Source != TargetSourceLastFull {
+		t.Errorf("WeeklyTarget = %+v, хочу 180/lastFull", got)
 	}
 }
 
@@ -102,8 +139,8 @@ func TestWeeklyTargetNoHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != defaultWeeklyTarget {
-		t.Errorf("WeeklyTarget = %v, хочу %v", got, defaultWeeklyTarget)
+	if got.TSS != 0 || got.Source != TargetSourceNone {
+		t.Errorf("WeeklyTarget = %+v, хочу none", got)
 	}
 }
 
@@ -116,8 +153,8 @@ func TestWeeklyTargetOnlyCurrentWeek(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 220 {
-		t.Errorf("WeeklyTarget = %v, хочу 220: полных недель нет, но текущая уже нагружена", got)
+	if got.TSS != 0 || got.Source != TargetSourceNone {
+		t.Errorf("WeeklyTarget = %+v, хочу none: текущая неделя не может быть целью себе", got)
 	}
 }
 
@@ -133,8 +170,30 @@ func TestWeeklyTargetEmptyFullWeeksUsesCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 220 {
-		t.Errorf("WeeklyTarget = %v, хочу 220 из текущей недели", got)
+	if got.TSS != 0 || got.Source != TargetSourceNone {
+		t.Errorf("WeeklyTarget = %+v, хочу none: полных недель с нагрузкой нет", got)
+	}
+}
+
+func TestWeeklyTargetInvalidSettingFallsBack(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	ws := WeekStart(now)
+	for i, tss := range []float64{100, 300, 200, 400} {
+		addWeekWorkout(t, db, ws.AddDate(0, 0, -7*(4-i)), 1, tss, "hash-target-bad-"+string(rune('a'+i)))
+	}
+	for _, raw := range []string{"abc", "NaN", "Inf", "50", "2000"} {
+		if _, err := db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		    ON CONFLICT(key) DO UPDATE SET value = excluded.value`, weeklyTargetKey, raw); err != nil {
+			t.Fatal(err)
+		}
+		got, err := WeeklyTarget(db, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.TSS != 250 || got.Source != TargetSourceMedian4 {
+			t.Errorf("setting %q: WeeklyTarget = %+v, хочу 250/median4", raw, got)
+		}
 	}
 }
 
@@ -153,8 +212,42 @@ func TestSetWeeklyTargetBounds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != v {
-			t.Errorf("после SetWeeklyTarget(%v) WeeklyTarget = %v", v, got)
+		if got.TSS != v || got.Source != TargetSourceManual {
+			t.Errorf("после SetWeeklyTarget(%v) WeeklyTarget = %+v", v, got)
 		}
+	}
+}
+
+func TestClearWeeklyTarget(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	ws := WeekStart(now)
+	for i, tss := range []float64{100, 300, 200, 400} {
+		addWeekWorkout(t, db, ws.AddDate(0, 0, -7*(4-i)), 1, tss, "hash-target-clear-"+string(rune('a'+i)))
+	}
+	if err := SetWeeklyTarget(db, 320); err != nil {
+		t.Fatal(err)
+	}
+	if err := ClearWeeklyTarget(db); err != nil {
+		t.Fatal(err)
+	}
+	got, err := WeeklyTarget(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TSS != 250 || got.Source != TargetSourceMedian4 {
+		t.Errorf("после сброса WeeklyTarget = %+v, хочу авто 250/median4", got)
+	}
+}
+
+func TestCalendarDaysBetweenDST(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("нет tzdata")
+	}
+	from := time.Date(2026, 3, 1, 0, 0, 0, 0, loc)
+	to := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
+	if got := calendarDaysBetween(from, to); got != 31 {
+		t.Errorf("calendarDaysBetween = %d, хочу 31", got)
 	}
 }

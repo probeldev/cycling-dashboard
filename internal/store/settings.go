@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -19,85 +20,81 @@ const (
 	// не цель, а опечатка.
 	WeeklyTargetMin = 100.0
 	WeeklyTargetMax = 1500.0
-
-	// defaultWeeklyTarget — цель, когда истории нагрузки ещё нет.
-	defaultWeeklyTarget = 150.0
 )
 
+// TargetSource — откуда взялась недельная цель. none означает, что цели нет:
+// оценка текущей недели целью не считается.
+type TargetSource string
+
+const (
+	TargetSourceManual   TargetSource = "manual"
+	TargetSourceMedian4  TargetSource = "median4"
+	TargetSourceLastFull TargetSource = "lastFull"
+	TargetSourceNone     TargetSource = "none"
+)
+
+// WeeklyTargetInfo — цель недельного TSS и её источник.
+type WeeklyTargetInfo struct {
+	TSS    float64      `json:"tss"`
+	Source TargetSource `json:"source"`
+}
+
 // WeeklyTarget — цель недельного TSS. Приоритет: явная настройка в settings,
-// затем медиана последних четырёх полных недель (пн–вс, без текущей), затем
-// TSS последней полной недели, затем 150. Недели без тренировок участвуют
-// нулями: пропуск — это тоже факт истории. Если медиана вышла нулевой
-// (вся нагрузка только в текущей неделе), возвращаем дефолт, а не цель 0.
-func WeeklyTarget(db DBTX, now time.Time) (float64, error) {
+// затем медиана последних четырёх полных недель с нагрузкой (TSS > 0), затем
+// последняя полная неделя с нагрузкой, если истории меньше четырёх недель.
+// Полностью пустая история или пустые полные недели дают none: текущая неделя
+// не может быть целью сама себе.
+func WeeklyTarget(db DBTX, now time.Time) (WeeklyTargetInfo, error) {
 	if v, ok, err := weeklyTargetSetting(db); err != nil {
-		return 0, err
+		return WeeklyTargetInfo{}, err
 	} else if ok {
-		return v, nil
+		return WeeklyTargetInfo{TSS: v, Source: TargetSourceManual}, nil
 	}
 
 	first, ok, err := firstWorkoutDay(db)
 	if err != nil {
-		return 0, err
+		return WeeklyTargetInfo{}, err
 	}
 	if !ok {
-		return defaultWeeklyTarget, nil
+		return WeeklyTargetInfo{Source: TargetSourceNone}, nil
 	}
 
 	lastFull := WeekStart(now).AddDate(0, 0, -7)
 	firstWeek := WeekStart(first)
-	if firstWeek.After(lastFull) {
-		return currentWeekTarget(db, now)
+	if lastFull.Before(firstWeek) {
+		return WeeklyTargetInfo{Source: TargetSourceNone}, nil
 	}
-	weeks := int(lastFull.Sub(firstWeek).Hours()/24/7) + 1
-	if weeks > 4 {
-		weeks = 4
-	}
-
-	if weeks < 4 {
-		tss, err := weeklyTSS(db, lastFull)
-		if err != nil {
-			return 0, err
-		}
-		if tss <= 0 {
-			return currentWeekTarget(db, now)
-		}
-		return math.Round(tss), nil
-	}
+	weeks := calendarDaysBetween(firstWeek, lastFull)/7 + 1
 
 	values := make([]float64, 0, 4)
 	for i := 3; i >= 0; i-- {
 		tss, err := weeklyTSS(db, lastFull.AddDate(0, 0, -7*i))
 		if err != nil {
-			return 0, err
+			return WeeklyTargetInfo{}, err
 		}
-		values = append(values, tss)
+		if tss > 0 {
+			values = append(values, tss)
+		}
 	}
-	target := math.Round(median(values))
-	if target <= 0 {
-		return currentWeekTarget(db, now)
+	if len(values) == 0 {
+		return WeeklyTargetInfo{Source: TargetSourceNone}, nil
 	}
-	return target, nil
-}
-
-// currentWeekTarget — запасной вариант, когда полные недели пусты, а нагрузка
-// уже есть в текущей: цель 0 бессмысленна, а свежая неделя — единственный
-// ориентир. Пустая история по-прежнему даёт 150.
-func currentWeekTarget(db DBTX, now time.Time) (float64, error) {
-	tss, err := weeklyTSS(db, WeekStart(now))
-	if err != nil {
-		return 0, err
+	if weeks < 4 {
+		return WeeklyTargetInfo{
+			TSS:    math.Round(values[len(values)-1]),
+			Source: TargetSourceLastFull,
+		}, nil
 	}
-	if tss <= 0 {
-		return defaultWeeklyTarget, nil
-	}
-	return math.Round(tss), nil
+	return WeeklyTargetInfo{
+		TSS:    math.Round(median(values)),
+		Source: TargetSourceMedian4,
+	}, nil
 }
 
 // SetWeeklyTarget сохраняет ручную цель недельного TSS. Значение вне
 // 100…1500 отклоняется: цель 0 или 10000 сломала бы и сводку, и рекомендации.
 func SetWeeklyTarget(db DBTX, v float64) error {
-	if math.IsNaN(v) || math.IsInf(v, 0) || v < WeeklyTargetMin || v > WeeklyTargetMax {
+	if !validWeeklyTarget(v) {
 		return fmt.Errorf("недельная цель TSS: нужно %.0f…%.0f, получено %g",
 			WeeklyTargetMin, WeeklyTargetMax, v)
 	}
@@ -107,6 +104,19 @@ func SetWeeklyTarget(db DBTX, v float64) error {
 	return err
 }
 
+// ClearWeeklyTarget удаляет ручную цель: дальше WeeklyTarget снова считает
+// автоматическую.
+func ClearWeeklyTarget(db DBTX) error {
+	_, err := db.Exec(`DELETE FROM settings WHERE key = ?`, weeklyTargetKey)
+	return err
+}
+
+func validWeeklyTarget(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= WeeklyTargetMin && v <= WeeklyTargetMax
+}
+
+// weeklyTargetSetting читает ручную цель. Битое значение (не число, NaN, вне
+// диапазона) не роняет дашборд: пишем лог и переходим на автоматическую цель.
 func weeklyTargetSetting(db DBTX) (float64, bool, error) {
 	var raw string
 	err := db.QueryRow(`SELECT value FROM settings WHERE key = ?`, weeklyTargetKey).Scan(&raw)
@@ -117,8 +127,9 @@ func weeklyTargetSetting(db DBTX) (float64, bool, error) {
 		return 0, false, err
 	}
 	v, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return 0, false, fmt.Errorf("settings.%s=%q: %w", weeklyTargetKey, raw, err)
+	if err != nil || !validWeeklyTarget(v) {
+		log.Printf("settings.%s=%q: некорректная цель, использую автоматическую", weeklyTargetKey, raw)
+		return 0, false, nil
 	}
 	return v, true, nil
 }
@@ -150,6 +161,20 @@ func weeklyTSS(db DBTX, monday time.Time) (float64, error) {
 		return 0, err
 	}
 	return tss, nil
+}
+
+// calendarDaysBetween считает календарные дни, а не часы: в день перехода на
+// летнее время сутки длятся 23 часа, и деление длительности на 24 дало бы
+// неверное число недель.
+func calendarDaysBetween(from, to time.Time) int {
+	loc := from.Location()
+	from = time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
+	to = time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, loc)
+	n := 0
+	for d := from; d.Before(to); d = d.AddDate(0, 0, 1) {
+		n++
+	}
+	return n
 }
 
 // median — медиана набора; для чётного количества — среднее двух центральных.
