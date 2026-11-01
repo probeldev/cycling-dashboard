@@ -168,6 +168,15 @@ func TestFTPHintKindFTP(t *testing.T) {
 	})
 }
 
+// TestFTPHintIgnoresFutureWorkout — будущая тренировка не даёт подсказку.
+func TestFTPHintIgnoresFutureWorkout(t *testing.T) {
+	db, h := ftpHintServer(t, map[string]float64{"ftp": 200})
+	addHintWorkout(t, db, true, time.Now().Add(2*time.Hour), 300)
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("подсказка по будущей тренировке: %+v", got)
+	}
+}
+
 // TestFTPHintNoWindow — без окна 1200 с подсказки нет.
 func TestFTPHintNoWindow(t *testing.T) {
 	db, h := ftpHintServer(t, map[string]float64{"ftp": 200})

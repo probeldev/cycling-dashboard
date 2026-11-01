@@ -125,3 +125,45 @@ func TestReadinessEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestReadinessAPIIgnoresFutureWorkout — будущая тренировка не попадает ни в
+// рекорды, ни в скользящие окна готовности.
+func TestReadinessAPIIgnoresFutureWorkout(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	past, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.Add(-2 * time.Hour), Duration: 2 * time.Hour,
+		DistanceKm: 50, TSS: 80, Calories: 600, AscentM: 200,
+	}, "hash-readiness-api-past", filepath.Join(t.TempDir(), "p.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.Add(2 * time.Hour), Duration: 5 * time.Hour,
+		DistanceKm: 200, TSS: 1000, Calories: 4000, AscentM: 2000,
+	}, "hash-readiness-api-future", filepath.Join(t.TempDir(), "f.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r store.ReadinessStats
+	getJSON(t, h, "/api/readiness", &r)
+	if r.LongestEver == nil || r.LongestEver.WorkoutID != past || r.LongestEver.KM != 50 {
+		t.Errorf("longestEver = %+v, хочу 50 км (id %d)", r.LongestEver, past)
+	}
+	if r.Longest90d == nil || r.Longest90d.KM != 50 {
+		t.Errorf("longest90d = %+v, хочу 50 км", r.Longest90d)
+	}
+	if r.CenturyCount != 0 {
+		t.Errorf("centuryCount = %d, хочу 0", r.CenturyCount)
+	}
+	if r.Rolling7.Rides != 1 || r.Rolling7.KM != 50 || r.Rolling7.TSS != 80 {
+		t.Errorf("rolling7 = %+v, хочу 50 км / 80 TSS / 1 поездку", r.Rolling7)
+	}
+}

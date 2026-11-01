@@ -124,3 +124,50 @@ func TestWeeksAPI(t *testing.T) {
 		t.Errorf("n=abc: код %d, хочу 400", rec.Code)
 	}
 }
+
+// TestWeeksAPIIgnoresFutureWorkout — будущая тренировка не раздувает TSS и
+// число поездок ни в одной из отданных недель.
+func TestWeeksAPIIgnoresFutureWorkout(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now()
+	for _, w := range []struct {
+		hash  string
+		start time.Time
+		tss   float64
+	}{
+		{"hash-weeks-api-past", now.Add(-2 * time.Hour), 30},
+		{"hash-weeks-api-future", now.Add(2 * time.Hour), 1000},
+	} {
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: w.start, Duration: time.Hour, TSS: w.tss,
+		}, w.hash, filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/weeks?n=3", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	var weeks []store.Week
+	if err := json.Unmarshal(rec.Body.Bytes(), &weeks); err != nil {
+		t.Fatal(err)
+	}
+	var tss float64
+	rides := 0
+	for _, w := range weeks {
+		tss += w.TSS
+		rides += w.Rides
+	}
+	if tss != 30 || rides != 1 {
+		t.Errorf("недели = %.0f TSS / %d поездка, хочу 30 / 1", tss, rides)
+	}
+}

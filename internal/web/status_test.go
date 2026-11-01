@@ -665,6 +665,25 @@ func TestStatusIncludesBothFTPHints(t *testing.T) {
 	}
 }
 
+// TestStatusAlertsIgnoreFutureFTPHint — будущая тренировка не даёт ftp_hint
+// в alertsAll: подсказка должна появляться только по завершённой работе.
+func TestStatusAlertsIgnoreFutureFTPHint(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	if err := store.AddProfileEntry(db, "ftp", 200, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	addHintWorkout(t, db, true, now.Add(2*time.Hour), 300)
+
+	got, err := buildStatus(db, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasAlertCode(got.AlertsAll, "ftp_hint") {
+		t.Errorf("ftp_hint по будущей тренировке: %+v", got.AlertsAll)
+	}
+}
+
 func TestStateTSBBoundaries(t *testing.T) {
 	for _, tt := range []struct {
 		tsb   float64

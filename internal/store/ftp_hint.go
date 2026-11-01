@@ -31,8 +31,8 @@ type FTPHint struct {
 func FTPHints(db DBTX, now time.Time) ([]FTPHint, error) {
 	rows, err := db.Query(`SELECT w.trainer, r.watts, w.id, w.start_time
 	    FROM power_records r JOIN workouts w ON w.id = r.workout_id
-	    WHERE r.window_sec = 1200
-	    ORDER BY r.watts DESC, w.start_time ASC, w.id ASC`)
+	    WHERE r.window_sec = 1200 AND w.start_time <= ?
+	    ORDER BY r.watts DESC, w.start_time ASC, w.id ASC`, now.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
