@@ -14,6 +14,7 @@ import (
 
 	"cycling-dashboard/internal/advice"
 	"cycling-dashboard/internal/store"
+	"cycling-dashboard/internal/thresholds"
 )
 
 // statusFixture — 7 полных недель по 220 TSS и текущая неделя 220. Предыдущая
@@ -108,7 +109,7 @@ func TestStatusGolden(t *testing.T) {
 	if got.State.Confidence != "ok" {
 		t.Errorf("confidence = %q", got.State.Confidence)
 	}
-	if got.State.Verdict != "Форма в норме" {
+	if got.State.Verdict != "Норма" {
 		t.Errorf("verdict = %q", got.State.Verdict)
 	}
 	almostEqual(t, "tsb", got.State.TSB.Value, -5.3)
@@ -117,8 +118,8 @@ func TestStatusGolden(t *testing.T) {
 	almostEqual(t, "ctl.trend", got.State.CTL.Trend, 2.9)
 	almostEqual(t, "atl.trend", got.State.ATL.Trend, 11.3)
 	almostEqual(t, "tsb.trend", got.State.TSB.Trend, 8.9)
-	if got.State.CTL.Verdict != "Форма растёт" || got.State.ATL.Verdict != "Усталость умеренная" ||
-		got.State.TSB.Verdict != "Свежесть в норме" {
+	if got.State.CTL.Verdict != "Форма растёт" || got.State.ATL.Verdict != "В рабочем диапазоне" ||
+		got.State.TSB.Verdict != "Норма" {
 		t.Errorf("метрики: ctl=%q atl=%q tsb=%q", got.State.CTL.Verdict, got.State.ATL.Verdict, got.State.TSB.Verdict)
 	}
 
@@ -160,7 +161,7 @@ func TestStatusGolden(t *testing.T) {
 	almostEqual(t, "grayPct", w.Zones.GrayPct, 8.9)
 	almostEqual(t, "highPct", w.Zones.HighPct, 8.9)
 
-	wantSummary := "Форма в норме. 5 тренировок за неделю, 220 из 220 TSS. Вчера — 60 TSS. Тренируйся по плану, следи за восстановлением."
+	wantSummary := "Норма. 5 тренировок за неделю, 220 из 220 TSS. Вчера — 60 TSS. Тренируйся по плану, следи за восстановлением."
 	if got.Summary != wantSummary {
 		t.Errorf("summary = %q\nхочу      %q", got.Summary, wantSummary)
 	}
@@ -253,8 +254,16 @@ func TestStatusEmptyDB(t *testing.T) {
 	if !codes["stale"] || !codes["lowdata"] {
 		t.Errorf("коды алертов = %v", codes)
 	}
-	if !strings.Contains(got.Summary, "0 тренировок") {
+	if !strings.Contains(got.Summary, "0 тренировок") || !strings.Contains(got.Summary, "цель не задана") {
 		t.Errorf("summary = %q", got.Summary)
+	}
+	if !strings.Contains(got.Summary, "21 день истории") {
+		t.Errorf("summary = %q, хочу точный остаток истории", got.Summary)
+	}
+	for _, a := range got.AllAlerts {
+		if a.Code == "lowdata" && !strings.Contains(a.Text, "0 дней с первой нагрузки") {
+			t.Errorf("lowdata alert = %q, хочу «дней с первой нагрузки»", a.Text)
+		}
 	}
 }
 
@@ -669,7 +678,7 @@ func TestStateTSBBoundaries(t *testing.T) {
 		{-25, "loaded"},
 		{-25.1, "overloaded"},
 	} {
-		got := buildState(store.Day{}, store.Day{CTL: 0, ATL: -tt.tsb}, historyFacts{dataDays: 100, loadDays42: 30}, nil)
+		got := buildState(store.Day{CTL: 0, ATL: -tt.tsb}, historyFacts{dataDays: 100, loadDays42: 30}, nil)
 		if got.Label != tt.label {
 			t.Errorf("TSB %v: label = %q, хочу %q", tt.tsb, got.Label, tt.label)
 		}
@@ -712,5 +721,250 @@ func TestCTLTextUsesTrend(t *testing.T) {
 	}
 	if v, _ := ctlText(5, 0); v != "Форма стабильна" {
 		t.Errorf("нулевой тренд = %q", v)
+	}
+}
+
+func TestATLTextUsesRatio(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		atl, ctl    float64
+		wantVerdict string
+		wantAction  string
+	}{
+		{"выше формы", 27.4, 5.1, "Усталость выше формы", "Не добавляй нагрузку 1–2 дня"},
+		{"ровно 1.3", 13, 10, "В рабочем диапазоне", "Организм справляется"},
+		{"ровно 0.8", 8, 10, "В рабочем диапазоне", "Организм справляется"},
+		{"почти нет", 7.9, 10, "Усталости почти нет", "Можно грузить смелее"},
+		{"ATL 0", 0, 10, "Усталости почти нет", "Можно грузить смелее"},
+		{"CTL 0, ATL > 0", 5, 0, "Усталость есть, формы пока нет", "Не добавляй нагрузку, дай организму восстановиться"},
+		{"оба 0", 0, 0, "Усталости почти нет", "Можно начать с лёгкой нагрузки"},
+	} {
+		if got, action := atlText(tt.atl, tt.ctl); got != tt.wantVerdict || action != tt.wantAction {
+			t.Errorf("%s: atlText(%v, %v) = %q / %q, хочу %q / %q",
+				tt.name, tt.atl, tt.ctl, got, action, tt.wantVerdict, tt.wantAction)
+		}
+	}
+}
+
+func TestTSBTextSixLevels(t *testing.T) {
+	for _, tt := range []struct {
+		tsb  float64
+		want string
+	}{
+		{20.1, "Свежий"},
+		{10.1, "Отдохнувший"},
+		{0, "Норма"},
+		{-10.1, "Под нагрузкой"},
+		{-20.1, "Загружен"},
+		{-25.1, "Перегружен"},
+	} {
+		got, action := tsbText(tt.tsb)
+		if got != tt.want {
+			t.Errorf("tsbText(%v) = %q, хочу %q", tt.tsb, got, tt.want)
+		}
+		if action == "" {
+			t.Errorf("tsbText(%v): пустое действие", tt.tsb)
+		}
+	}
+}
+
+func TestStateTextMatchesTSBText(t *testing.T) {
+	for _, tsb := range []float64{25, 15, 0, -15, -22, -30} {
+		want, wantAction := tsbText(tsb)
+		label := string(thresholds.TSBStateFor(tsb))
+		got, action := stateTextAt(label, tsb, historyFacts{dataDays: 100, loadDays42: 30})
+		if got != want || action != wantAction {
+			t.Errorf("stateText(%q, %v) = %q / %q, хочу как tsbText %q / %q",
+				label, tsb, got, action, want, wantAction)
+		}
+	}
+}
+
+func TestBuildStateLowDataSuppressesCTLTrend(t *testing.T) {
+	days := make([]store.Day, 29)
+	days[len(days)-1] = store.Day{CTL: 5.1, ATL: 27.4, TSB: -22.3}
+	state := buildState(days[len(days)-1], historyFacts{dataDays: 5, loadDays42: 2}, days)
+	if state.CTL.Verdict != "Мало данных" {
+		t.Errorf("ctl.verdict = %q, хочу «Мало данных»", state.CTL.Verdict)
+	}
+	if state.ATL.Verdict != "Усталость выше формы" {
+		t.Errorf("atl.verdict = %q, хочу «Усталость выше формы»", state.ATL.Verdict)
+	}
+	if state.TSB.Verdict != "Загружен" {
+		t.Errorf("tsb.verdict = %q, хочу «Загружен»", state.TSB.Verdict)
+	}
+	if state.Label != "lowdata" || state.Confidence != "low" || !state.LowData {
+		t.Errorf("state = %+v, хочу lowdata/low/lowData", state)
+	}
+}
+
+func TestLowDataActionNamesMissingPart(t *testing.T) {
+	onlyLoad := buildState(store.Day{}, historyFacts{dataDays: 30, loadDays42: 5}, nil)
+	if strings.Contains(onlyLoad.Action, "истории") {
+		t.Errorf("не хватает только нагрузки, а действие просит историю: %q", onlyLoad.Action)
+	}
+	if !strings.Contains(onlyLoad.Action, "4 дня") {
+		t.Errorf("action = %q, хочу «4 дня с нагрузкой»", onlyLoad.Action)
+	}
+	both := buildState(store.Day{}, historyFacts{dataDays: 4, loadDays42: 2}, nil)
+	if !strings.Contains(both.Action, "17 дней истории") || !strings.Contains(both.Action, "7 дней с нагрузкой") {
+		t.Errorf("action = %q, хочу точные остатки истории и нагрузки", both.Action)
+	}
+}
+
+func TestBuildStateLowDataDoesNotHideOverload(t *testing.T) {
+	day := store.Day{CTL: 10, ATL: 40, TSB: -30}
+	state := buildState(day, historyFacts{dataDays: 5, loadDays42: 2}, nil)
+	if state.Label != "overloaded" || state.Verdict != "Перегружен" {
+		t.Errorf("state = %+v, хочу overloaded/Перегружен", state)
+	}
+	if !state.LowData || state.Confidence != "low" {
+		t.Errorf("пометка о данных потеряна: %+v", state)
+	}
+}
+
+func TestBuildStateDisplayedCTLAtlConvergeToTSB(t *testing.T) {
+	for _, tt := range []struct {
+		ctl, atl float64
+		wantTSB  float64
+		want     string
+	}{
+		{18.84, 24.14, -5.3, "Норма"},
+		{10.0, 20.04, -10.0, "Норма"}, // отображённые 10.0 и 20.0 дают ровно −10.0
+		{10.0, 20.06, -10.1, "Под нагрузкой"},
+	} {
+		state := buildState(store.Day{CTL: tt.ctl, ATL: tt.atl},
+			historyFacts{dataDays: 100, loadDays42: 30}, nil)
+		almostEqual(t, "displayed tsb", state.TSB.Value, tt.wantTSB)
+		almostEqual(t, "ctl-atl", state.CTL.Value-state.ATL.Value, state.TSB.Value)
+		if state.TSB.Verdict != tt.want {
+			t.Errorf("CTL %v ATL %v: tsb.verdict = %q, хочу %q", tt.ctl, tt.atl, state.TSB.Verdict, tt.want)
+		}
+	}
+}
+
+func TestStatusSummaryWithoutTarget(t *testing.T) {
+	db := openStatusDB(t)
+	got, err := buildStatus(db, time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Summary, "цель не задана") {
+		t.Errorf("summary = %q, хочу «цель не задана»", got.Summary)
+	}
+}
+
+func TestStatusFutureWorkoutIgnoredEverywhere(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	past, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.Add(-2 * time.Hour), Duration: time.Hour, TSS: 30,
+		DistanceKm: 20, Calories: 400, AscentM: 100,
+	}, "hash-future-past", filepath.Join(t.TempDir(), "p.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.Add(2 * time.Hour), Duration: 4 * time.Hour, TSS: 1000,
+		DistanceKm: 200, Calories: 4000, AscentM: 2000,
+	}, "hash-future-today", filepath.Join(t.TempDir(), "f.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	after, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	almostEqual(t, "week.tss", after.Week.TSS, before.Week.TSS)
+	if after.Week.Rides != before.Week.Rides {
+		t.Errorf("rides = %d, хочу %d", after.Week.Rides, before.Week.Rides)
+	}
+	if after.Summary != before.Summary {
+		t.Errorf("summary изменился от будущей тренировки:\nдо  %q\nпосле %q", before.Summary, after.Summary)
+	}
+	if fmt.Sprintf("%+v", after.Recommendation) != fmt.Sprintf("%+v", before.Recommendation) {
+		t.Errorf("рекомендация изменилась от будущей тренировки:\nдо  %+v\nпосле %+v", before.Recommendation, after.Recommendation)
+	}
+	if after.Readiness.LongestEver == nil || after.Readiness.LongestEver.WorkoutID != past {
+		t.Errorf("longestEver = %+v, хочу %d", after.Readiness.LongestEver, past)
+	}
+	if after.Readiness.CenturyCount != 0 || after.Readiness.LongestEver.KM != 20 {
+		t.Errorf("readiness = %+v, будущая 200 км попала в показатели", after.Readiness)
+	}
+	last, _ := after.LastWorkout.(map[string]any)
+	if last == nil {
+		t.Fatal("lastWorkout = null")
+	}
+	if id, _ := last["ID"].(float64); int64(id) != past {
+		t.Errorf("lastWorkout.ID = %v, хочу %d", last["ID"], past)
+	}
+}
+
+func TestStatusDatesForTemplate(t *testing.T) {
+	db, now := statusFixture(t)
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AsOf != "2026-10-30" || got.AsOfText != "30.10.2026" {
+		t.Errorf("asOf = %q / %q", got.AsOf, got.AsOfText)
+	}
+	if got.PMCAsOfText != "29.10.2026" {
+		t.Errorf("pmcAsOfText = %q", got.PMCAsOfText)
+	}
+}
+
+func TestPluralDays(t *testing.T) {
+	for _, tt := range []struct {
+		n    int
+		want string
+	}{
+		{0, "дней"}, {1, "день"}, {2, "дня"}, {4, "дня"}, {5, "дней"},
+		{11, "дней"}, {12, "дней"}, {14, "дней"}, {21, "день"}, {22, "дня"},
+	} {
+		if got := pluralDays(tt.n); got != tt.want {
+			t.Errorf("pluralDays(%d) = %q, хочу %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+func TestSignedPctDoesNotMutate(t *testing.T) {
+	v := 0.0
+	if got := signedPct(&v); got != "+0.0%" {
+		t.Errorf("signedPct(0) = %q", got)
+	}
+	if v != 0 || math.Signbit(v) {
+		t.Errorf("аргумент изменён: %v (signbit %v)", v, math.Signbit(v))
+	}
+	neg := -4.2
+	if got := signedPct(&neg); got != "−4.2%" {
+		t.Errorf("signedPct(-4.2) = %q", got)
+	}
+	if neg != -4.2 {
+		t.Errorf("аргумент изменён: %v", neg)
+	}
+}
+
+func TestProgressClassBoundaries(t *testing.T) {
+	target := 100.0
+	for _, tt := range []struct {
+		tss  float64
+		want string
+	}{
+		{90, "green"}, {110, "green"},
+		{89.9, "yellow"}, {70, "yellow"}, {69.9, "red"},
+		{110.1, "yellow"}, {125, "yellow"}, {125.1, "red"},
+	} {
+		if got := progressClass(tt.tss, &target); got != tt.want {
+			t.Errorf("progressClass(%v, 100) = %q, хочу %q", tt.tss, got, tt.want)
+		}
+	}
+	if got := progressClass(100, nil); got != "red" {
+		t.Errorf("progressClass без цели = %q, хочу red", got)
 	}
 }

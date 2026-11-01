@@ -2,6 +2,7 @@ package web
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -135,7 +136,11 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			return
 		}
 		if err := store.SetWeeklyTarget(db, value); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			if errors.Is(err, store.ErrWeeklyTargetRange) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("HX-Redirect", "/profile")

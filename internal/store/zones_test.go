@@ -165,3 +165,30 @@ func TestSetWorkoutZonesTransactional(t *testing.T) {
 		t.Errorf("zones_version = %d, хочу 1 (откат)", version)
 	}
 }
+
+// TestWeeksIgnoresFutureWorkout — будущая запись не раздувает текущую неделю
+// ни TSS/поездками, ни зонами.
+func TestWeeksIgnoresFutureWorkout(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	past := insertTimelineWorkout(t, db, "hash-wf-past", now.Add(-2*time.Hour), 30, 60, 20, false)
+	future := insertTimelineWorkout(t, db, "hash-wf-future", now.Add(2*time.Hour), 1000, 240, 200, false)
+	if err := SetWorkoutZones(db, past, [7]int{100, 0, 0, 0, 0, 0, 0}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetWorkoutZones(db, future, [7]int{0, 0, 1000, 0, 0, 0, 0}, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	weeks, err := Weeks(db, 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := weeks[0]
+	if !near(w.TSS, 30) || w.Rides != 1 {
+		t.Errorf("неделя = %+v, хочу 30 TSS / 1 поездку", w)
+	}
+	if w.Zones[2] != 0 || w.Zones[0] != 100 {
+		t.Errorf("зоны = %v, будущая серая зона попала в неделю", w.Zones)
+	}
+}

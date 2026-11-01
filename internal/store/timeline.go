@@ -32,6 +32,17 @@ type Day struct {
 // а в ответ попадают только дни [from, to] — иначе CTL/TSB зависели бы от окна.
 // День тренировки — локальная дата start_time (в БД время хранится в UTC).
 func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
+	return timeline(db, from, to, time.Time{})
+}
+
+// TimelineUntil — Timeline, но тренировки позже until не учитываются. Нужен
+// статусу и прогрессу: запись с будущим start_time не должна менять PMC,
+// неделю и нагрузку «на сейчас».
+func TimelineUntil(db DBTX, from, to, until time.Time) ([]Day, error) {
+	return timeline(db, from, to, until)
+}
+
+func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 	from, to = StartOfDay(from), StartOfDay(to)
 	if to.Before(from) {
 		return nil, nil
@@ -44,9 +55,15 @@ func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 	// запас по UTC с обеих сторон: локальная дата может отличаться от UTC
 	qFrom := warmFrom.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	qTo := to.AddDate(0, 0, 3).UTC().Format(time.RFC3339)
-	rows, err := db.Query(`SELECT start_time, duration_sec, COALESCE(distance_m, 0),
+	query := `SELECT start_time, duration_sec, COALESCE(distance_m, 0),
 	    trainer, is_test, COALESCE(tss, 0), COALESCE(name, '')
-	    FROM workouts WHERE start_time >= ? AND start_time < ?`, qFrom, qTo)
+	    FROM workouts WHERE start_time >= ? AND start_time < ?`
+	args := []any{qFrom, qTo}
+	if !until.IsZero() {
+		query += ` AND start_time <= ?`
+		args = append(args, until.UTC().Format(time.RFC3339))
+	}
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

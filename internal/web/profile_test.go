@@ -341,3 +341,32 @@ func TestProfileWeeklyTargetForm(t *testing.T) {
 		t.Error("после сброса цель всё ещё задана")
 	}
 }
+
+// TestProfileWeeklyTargetDBErrorIs500 — вне диапазона — 400, а сбой БД при
+// валидном значении — 500, а не «некорректная цель».
+func TestProfileWeeklyTargetDBErrorIs500(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(value string) int {
+		req := httptest.NewRequest(http.MethodPost, "/profile/weekly-target", strings.NewReader("value="+value))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := post("50"); code != http.StatusBadRequest {
+		t.Errorf("value=50: код %d, хочу 400", code)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if code := post("450"); code != http.StatusInternalServerError {
+		t.Errorf("value=450 на закрытой БД: код %d, хочу 500", code)
+	}
+}

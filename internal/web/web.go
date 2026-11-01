@@ -52,6 +52,8 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"progressClass":    progressClass,
 	"signedPct":        signedPct,
 	"targetSourceText": targetSourceText,
+	"pluralRides":      pluralRides,
+	"pluralDays":       pluralDays,
 	"divf":             func(a int, b float64) float64 { return float64(a) / b },
 	"divff":            func(a, b float64) float64 { return a / b },
 	"pizzas": func(kcal int) string {

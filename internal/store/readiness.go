@@ -49,7 +49,8 @@ func Readiness(db DBTX, now time.Time) (ReadinessStats, error) {
 
 	rows, err := db.Query(`SELECT id, start_time, COALESCE(distance_m, 0), duration_sec,
 	    COALESCE(tss, 0), COALESCE(calories, 0), COALESCE(total_ascent, 0)
-	    FROM workouts WHERE is_test = 0 ORDER BY start_time ASC, id ASC`)
+	    FROM workouts WHERE is_test = 0 AND start_time <= ?
+	    ORDER BY start_time ASC, id ASC`, now.UTC().Format(time.RFC3339))
 	if err != nil {
 		return ReadinessStats{}, err
 	}
@@ -73,6 +74,9 @@ func Readiness(db DBTX, now time.Time) (ReadinessStats, error) {
 			return ReadinessStats{}, err
 		}
 		lt := t.Local()
+		if lt.After(now) {
+			continue
+		}
 		km := distM / 1000
 		if distM > 0 {
 			if distM >= 100_000 {
@@ -85,9 +89,6 @@ func Readiness(db DBTX, now time.Time) (ReadinessStats, error) {
 		}
 
 		day := StartOfDay(lt)
-		if day.After(today) {
-			continue
-		}
 		if !day.Before(yearFrom) {
 			streakDays[day] = true
 		}

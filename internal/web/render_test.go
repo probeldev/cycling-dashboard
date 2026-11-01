@@ -13,7 +13,7 @@ import (
 )
 
 // TestRenderPages — все HTML-страницы рендерятся целиком с реальными данными:
-// главная с непустым деревом, деталка и профиль.
+// «Сегодня», деталка и профиль; дерево поездок живёт на /rides.
 func TestRenderPages(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -193,6 +193,47 @@ func TestRenderTodayWithTargetAndFTP(t *testing.T) {
 	for _, want := range []string{"300", "вручную", "осталось", "≈", "110–150"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET / с целью: нет %q", want)
+		}
+	}
+}
+
+// TestRidesPageCountAndFilterData — /rides показывает все поездки дерева и
+// кладёт в data-search имя и дату для клиентского фильтра.
+func TestRidesPageCountAndFilterData(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i, w := range []struct {
+		name  string
+		start time.Time
+	}{
+		{"Утренняя", time.Date(2026, 10, 30, 8, 0, 0, 0, time.Local)},
+		{"Вечерняя", time.Date(2026, 10, 31, 18, 0, 0, 0, time.Local)},
+	} {
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: w.start, Name: w.name, Duration: time.Hour, DistanceKm: 20,
+		}, fmt.Sprintf("hash-rides-page-%d", i), filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rides", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /rides: код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if n := strings.Count(body, `class="ride"`); n != 2 {
+		t.Errorf("поездок на /rides = %d, хочу 2", n)
+	}
+	for _, want := range []string{`data-search="30.10.2026`, `data-search="31.10.2026`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("нет фильтруемых данных %q", want)
 		}
 	}
 }

@@ -61,13 +61,13 @@ func TestRules(t *testing.T) {
 		{
 			name: "2 просевшая форма",
 			in:   func() Input { in := baseInput(); in.TSB = -20; return in }(),
-			rule: 2, kind: "z1z2", zone: "Z1-Z2", dur: [2]int{40, 60}, pct: [2]int{55, 75},
+			rule: 2, kind: "z1z2", zone: "Z1–Z2", dur: [2]int{40, 60}, pct: [2]int{55, 75},
 			want: "−20.0",
 		},
 		{
 			name: "3 тяжёлая вчера",
 			in:   func() Input { in := baseInput(); in.TSB = -10; in.DaysSinceHard = 1; return in }(),
-			rule: 3, kind: "z1z2", zone: "Z1-Z2", dur: [2]int{45, 60}, pct: [2]int{55, 75},
+			rule: 3, kind: "z1z2", zone: "Z1–Z2", dur: [2]int{45, 60}, pct: [2]int{55, 75},
 			want: "вчера",
 		},
 		{

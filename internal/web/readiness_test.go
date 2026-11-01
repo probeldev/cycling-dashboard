@@ -21,7 +21,7 @@ func TestReadinessAPI(t *testing.T) {
 	}
 	defer db.Close()
 	today := store.StartOfDay(time.Now())
-	start := today.Add(12 * time.Hour)
+	start := today
 	id, err := store.InsertWorkout(db, &store.Workout{
 		StartTime: start, Duration: 4 * time.Hour, DistanceKm: 100,
 		TSS: 200, Calories: 1600, AscentM: 500,

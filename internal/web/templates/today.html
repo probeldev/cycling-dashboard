@@ -2,7 +2,7 @@
 {{ $s := .S }}
 <div class="today">
   <section class="statusbar label-{{ $s.State.Label }}">
-    <div class="d">{{ $s.AsOf }}</div>
+    <div class="d">{{ $s.AsOfText }}</div>
     <div class="label">{{ $s.State.LabelText }}</div>
     <div class="summary">{{ $s.Summary }}</div>
   </section>
@@ -29,7 +29,7 @@
         <li><span>{{ .Label }}</span><b>{{ .Value }}</b></li>
         {{ end }}
       </ul>
-      <p class="muted" style="font-size:13px; margin:8px 0 0">{{ $s.TSBNote }}. PMC на {{ $s.PMCAsOf }}.</p>
+      <p class="muted" style="font-size:13px; margin:8px 0 0">{{ $s.TSBNote }}. PMC на {{ $s.PMCAsOfText }}.</p>
     </details>
   </section>
 
@@ -40,7 +40,7 @@
       <div class="verdict">{{ $s.State.CTL.Verdict }}</div>
       <div class="action">{{ $s.State.CTL.Action }}</div>
       <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.CTL.Spark }}"/></svg>
-      {{ if eq $s.State.Label "lowdata" }}<div class="note">(мало данных)</div>{{ end }}
+      {{ if $s.State.LowData }}<div class="note">(мало данных)</div>{{ end }}
     </section>
     <section class="metric">
       <div class="k">Усталость (ATL)</div>
@@ -48,7 +48,7 @@
       <div class="verdict">{{ $s.State.ATL.Verdict }}</div>
       <div class="action">{{ $s.State.ATL.Action }}</div>
       <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.ATL.Spark }}"/></svg>
-      {{ if eq $s.State.Label "lowdata" }}<div class="note">(мало данных)</div>{{ end }}
+      {{ if $s.State.LowData }}<div class="note">(мало данных)</div>{{ end }}
     </section>
     <section class="metric">
       <div class="k">Свежесть (TSB)</div>
@@ -56,10 +56,10 @@
       <div class="verdict">{{ $s.State.TSB.Verdict }}</div>
       <div class="action">{{ $s.State.TSB.Action }}</div>
       <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.TSB.Spark }}"/></svg>
-      {{ if eq $s.State.Label "lowdata" }}<div class="note">(мало данных)</div>{{ end }}
+      {{ if $s.State.LowData }}<div class="note">(мало данных)</div>{{ end }}
     </section>
   </div>
-  <p class="muted" style="font-size:13px; margin:-4px 0 0">{{ $s.TSBNote }} · PMC на {{ $s.PMCAsOf }}.</p>
+  <p class="muted" style="font-size:13px; margin:-4px 0 0">{{ $s.TSBNote }} · PMC на {{ $s.PMCAsOfText }}.</p>
 
   <div class="grid2">
     <section class="panel">
@@ -101,7 +101,7 @@
       <div class="facts" style="margin-top:10px">
         <span><b>{{ hours $s.Week.Hours }} ч</b></span>
         <span><b>{{ km $s.Week.KM }} км</b></span>
-        <span><b>{{ $s.Week.Rides }}</b> поездок</span>
+        <span><b>{{ $s.Week.Rides }}</b> {{ pluralRides $s.Week.Rides }}</span>
       </div>
       <div class="week-line">станок {{ hours $s.Week.TrainerHours }} ч · улица {{ hours $s.Week.OutdoorHours }} ч</div>
       <div class="week-line">полярность: Z1–Z2 {{ trimFloat $s.Week.Zones.LowPct }}% · Z3 {{ trimFloat $s.Week.Zones.GrayPct }}% · Z4+ {{ trimFloat $s.Week.Zones.HighPct }}% — {{ $s.Week.PolarityVerdict }}</div>

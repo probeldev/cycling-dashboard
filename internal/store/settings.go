@@ -51,7 +51,7 @@ func WeeklyTarget(db DBTX, now time.Time) (WeeklyTargetInfo, error) {
 		return WeeklyTargetInfo{TSS: v, Source: TargetSourceManual}, nil
 	}
 
-	first, ok, err := firstWorkoutDay(db)
+	first, ok, err := firstWorkoutDay(db, now)
 	if err != nil {
 		return WeeklyTargetInfo{}, err
 	}
@@ -68,7 +68,7 @@ func WeeklyTarget(db DBTX, now time.Time) (WeeklyTargetInfo, error) {
 
 	values := make([]float64, 0, 4)
 	for i := 3; i >= 0; i-- {
-		tss, err := weeklyTSS(db, lastFull.AddDate(0, 0, -7*i))
+		tss, err := weeklyTSS(db, lastFull.AddDate(0, 0, -7*i), now)
 		if err != nil {
 			return WeeklyTargetInfo{}, err
 		}
@@ -80,23 +80,32 @@ func WeeklyTarget(db DBTX, now time.Time) (WeeklyTargetInfo, error) {
 		return WeeklyTargetInfo{Source: TargetSourceNone}, nil
 	}
 	if weeks < 4 {
-		return WeeklyTargetInfo{
-			TSS:    math.Round(values[len(values)-1]),
-			Source: TargetSourceLastFull,
-		}, nil
+		return autoWeeklyTarget(values[len(values)-1], TargetSourceLastFull), nil
 	}
-	return WeeklyTargetInfo{
-		TSS:    math.Round(median(values)),
-		Source: TargetSourceMedian4,
-	}, nil
+	return autoWeeklyTarget(median(values), TargetSourceMedian4), nil
 }
+
+// autoWeeklyTarget округляет авто-цель до целого TSS. Значение меньше 0.5
+// округлилось бы до нуля и дало бы «0 из 0 TSS» — такую цель считаем
+// незаданной.
+func autoWeeklyTarget(v float64, source TargetSource) WeeklyTargetInfo {
+	rounded := math.Round(v)
+	if rounded <= 0 {
+		return WeeklyTargetInfo{Source: TargetSourceNone}
+	}
+	return WeeklyTargetInfo{TSS: rounded, Source: source}
+}
+
+// ErrWeeklyTargetRange — ошибка валидации ручной цели, а не сбой БД:
+// обработчик отличает её от 500.
+var ErrWeeklyTargetRange = errors.New("недельная цель TSS вне диапазона")
 
 // SetWeeklyTarget сохраняет ручную цель недельного TSS. Значение вне
 // 100…1500 отклоняется: цель 0 или 10000 сломала бы и сводку, и рекомендации.
 func SetWeeklyTarget(db DBTX, v float64) error {
 	if !validWeeklyTarget(v) {
-		return fmt.Errorf("недельная цель TSS: нужно %.0f…%.0f, получено %g",
-			WeeklyTargetMin, WeeklyTargetMax, v)
+		return fmt.Errorf("%w: нужно %.0f…%.0f, получено %g",
+			ErrWeeklyTargetRange, WeeklyTargetMin, WeeklyTargetMax, v)
 	}
 	_, err := db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
 	    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
@@ -134,10 +143,11 @@ func weeklyTargetSetting(db DBTX) (float64, bool, error) {
 	return v, true, nil
 }
 
-// firstWorkoutDay — локальный день самой ранней тренировки.
-func firstWorkoutDay(db DBTX) (time.Time, bool, error) {
+// firstWorkoutDay — локальный день самой ранней тренировки не позже now.
+func firstWorkoutDay(db DBTX, now time.Time) (time.Time, bool, error) {
 	var start sql.NullString
-	if err := db.QueryRow(`SELECT MIN(start_time) FROM workouts`).Scan(&start); err != nil {
+	if err := db.QueryRow(`SELECT MIN(start_time) FROM workouts WHERE start_time <= ?`,
+		now.UTC().Format(time.RFC3339)).Scan(&start); err != nil {
 		return time.Time{}, false, err
 	}
 	if !start.Valid {
@@ -150,13 +160,15 @@ func firstWorkoutDay(db DBTX) (time.Time, bool, error) {
 	return StartOfDay(t.Local()), true, nil
 }
 
-// weeklyTSS — сумма TSS за календарную неделю, начинающуюся с monday.
-func weeklyTSS(db DBTX, monday time.Time) (float64, error) {
+// weeklyTSS — сумма TSS за календарную неделю, начинающуюся с monday,
+// с учётом только тренировок не позже now.
+func weeklyTSS(db DBTX, monday, now time.Time) (float64, error) {
 	end := monday.AddDate(0, 0, 7)
 	var tss float64
 	err := db.QueryRow(`SELECT COALESCE(SUM(COALESCE(tss, 0)), 0) FROM workouts
-	    WHERE start_time >= ? AND start_time < ?`,
-		monday.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339)).Scan(&tss)
+	    WHERE start_time >= ? AND start_time < ? AND start_time <= ?`,
+		monday.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339),
+		now.UTC().Format(time.RFC3339)).Scan(&tss)
 	if err != nil {
 		return 0, err
 	}

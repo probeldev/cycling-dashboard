@@ -20,7 +20,9 @@ import (
 // неделя, последняя тренировка, готовность и предупреждения.
 type statusResponse struct {
 	AsOf           string               `json:"asOf"`
+	AsOfText       string               `json:"-"`
 	PMCAsOf        string               `json:"pmcAsOf"`
+	PMCAsOfText    string               `json:"-"`
 	TSBAsOf        string               `json:"tsbAsOf"`
 	TSBNote        string               `json:"tsbNote"`
 	State          statusState          `json:"state"`
@@ -45,6 +47,7 @@ type statusState struct {
 	Verdict    string       `json:"verdict"`
 	Action     string       `json:"action"`
 	Confidence string       `json:"confidence"`
+	LowData    bool         `json:"lowData"`
 	CTL        statusMetric `json:"ctl"`
 	ATL        statusMetric `json:"atl"`
 	TSB        statusMetric `json:"tsb"`
@@ -118,7 +121,7 @@ type historyFacts struct {
 	hasHistory    bool
 	firstDay      time.Time
 	lastDay       time.Time
-	dataDays      int // дней от первой нагрузки в окне 42 дней
+	dataDays      int // дней с первой нагрузки в окне 42 дней
 	loadDays42    int // различных дней с TSS > 0 за 42 дня
 	daysSinceHard int // -1 — тяжёлой тренировки не было
 	daysSinceTest int // -1 — тестовой тренировки не было
@@ -145,14 +148,13 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	if err != nil {
 		return nil, err
 	}
-	days, err := store.Timeline(db, today.AddDate(0, 0, -28), today)
+	days, err := store.TimelineUntil(db, today.AddDate(0, 0, -28), today, now)
 	if err != nil {
 		return nil, err
 	}
 	if len(days) == 0 {
 		return nil, fmt.Errorf("пустой таймлайн")
 	}
-	cur := days[len(days)-1]
 
 	week, gray4, err := statusWeekFor(db, now)
 	if err != nil {
@@ -167,16 +169,19 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	trainerFTP, _ := store.ProfileAt(db, "ftp", now)
 	outdoorFTP, _ := store.ProfileAt(db, "ftp_outdoor", now)
 
-	pmcDay := cur
+	pmcDay := days[len(days)-1]
 	if len(days) >= 2 {
 		pmcDay = days[len(days)-2]
 	}
+	// План видит те же округлённые значения, что карточки: иначе на границе
+	// −10.04 рекомендация и вердикт TSB могли бы противоречить друг другу.
+	pmcCTL, pmcATL := round1(pmcDay.CTL), round1(pmcDay.ATL)
 	in := plan.Input{
 		DataDays:      facts.dataDays,
 		LoadDays42:    facts.loadDays42,
-		TSB:           pmcDay.CTL - pmcDay.ATL,
-		CTL:           pmcDay.CTL,
-		ATL:           pmcDay.ATL,
+		TSB:           round1(pmcCTL - pmcATL),
+		CTL:           pmcCTL,
+		ATL:           pmcATL,
 		DaysSinceHard: facts.daysSinceHard,
 		DaysSinceTest: facts.daysSinceTest,
 		WeekTSS:       weekTSS,
@@ -194,7 +199,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		rec = plan.Recommend(in)
 	}
 
-	state := buildState(cur, pmcDay, facts, days)
+	state := buildState(pmcDay, facts, days)
 
 	latest, err := store.LatestWorkoutBefore(db, now)
 	if err != nil && err != sql.ErrNoRows {
@@ -241,7 +246,9 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	}
 	out := &statusResponse{
 		AsOf:           today.Format("2006-01-02"),
+		AsOfText:       today.Format("02.01.2006"),
 		PMCAsOf:        pmcDay.Date.Format("2006-01-02"),
+		PMCAsOfText:    pmcDay.Date.Format("02.01.2006"),
 		TSBAsOf:        pmcDay.Date.Format("2006-01-02"),
 		TSBNote:        "TSB — до нагрузки сегодняшнего дня",
 		State:          state,
@@ -471,19 +478,31 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 
 // buildState собирает карточки PMC. CTL/ATL берутся на конец предыдущего дня,
 // чтобы TSB = CTL − ATL сходился на одном моменте, а не смешивал сегодняшний
-// CTL с TSB до сегодняшней нагрузки.
-func buildState(cur, pmcDay store.Day, facts historyFacts, days []store.Day) statusState {
-	ctl, atl := pmcDay.CTL, pmcDay.ATL
-	tsb := ctl - atl
+// CTL с TSB до сегодняшней нагрузки. Все вердикты считаются от округлённых
+// значений, которые видит пользователь: иначе TSB −10.04 показывался бы как
+// −10.0, а трактовался как «загружен».
+func buildState(pmcDay store.Day, facts historyFacts, days []store.Day) statusState {
+	ctl := round1(pmcDay.CTL)
+	atl := round1(pmcDay.ATL)
+	tsb := round1(ctl - atl)
+	lowData := thresholds.LowData(facts.dataDays, facts.loadDays42)
 	label := string(thresholds.TSBStateFor(tsb))
 	confidence := "ok"
-	if thresholds.LowData(facts.dataDays, facts.loadDays42) {
-		label = "lowdata"
+	if lowData {
+		// Перегрузку не прячем за «мало данных»: при TSB < −25 это уже
+		// важнее неполной истории, а пометку о данных покажет LowData.
 		confidence = "low"
+		if tsb >= thresholds.TSBLoadedMin {
+			label = "lowdata"
+		}
 	}
-	verdict, action := stateText(label)
-	ctlTrend := round1(ctl - valueDaysAgo(days, 28, func(d store.Day) float64 { return d.CTL }))
+	verdict, action := stateTextAt(label, tsb, facts)
+	ctlTrend := round1(ctl - round1(valueDaysAgo(days, 28, func(d store.Day) float64 { return d.CTL })))
 	ctlVerdict, ctlAction := ctlText(ctl, ctlTrend)
+	if lowData {
+		// На короткой истории тренд от нуля — ещё не рост формы.
+		ctlVerdict = "Мало данных"
+	}
 	atlVerdict, atlAction := atlText(atl, ctl)
 	tsbVerdict, tsbAction := tsbText(tsb)
 	return statusState{
@@ -492,19 +511,20 @@ func buildState(cur, pmcDay store.Day, facts historyFacts, days []store.Day) sta
 		Verdict:    verdict,
 		Action:     action,
 		Confidence: confidence,
+		LowData:    lowData,
 		CTL: statusMetric{
-			Value: round1(ctl), Verdict: ctlVerdict, Action: ctlAction,
+			Value: ctl, Verdict: ctlVerdict, Action: ctlAction,
 			Trend: ctlTrend,
 			Spark: sparkPoints(days, func(d store.Day) float64 { return d.CTL }),
 		},
 		ATL: statusMetric{
-			Value: round1(atl), Verdict: atlVerdict, Action: atlAction,
-			Trend: round1(atl - valueDaysAgo(days, 7, func(d store.Day) float64 { return d.ATL })),
+			Value: atl, Verdict: atlVerdict, Action: atlAction,
+			Trend: round1(atl - round1(valueDaysAgo(days, 7, func(d store.Day) float64 { return d.ATL }))),
 			Spark: sparkPoints(days, func(d store.Day) float64 { return d.ATL }),
 		},
 		TSB: statusMetric{
-			Value: round1(tsb), Verdict: tsbVerdict, Action: tsbAction,
-			Trend: round1(tsb - valueDaysAgo(days, 14, func(d store.Day) float64 { return d.TSB })),
+			Value: tsb, Verdict: tsbVerdict, Action: tsbAction,
+			Trend: round1(tsb - round1(valueDaysAgo(days, 14, func(d store.Day) float64 { return d.TSB }))),
 			Spark: sparkPoints(days, func(d store.Day) float64 { return d.TSB }),
 		},
 	}
@@ -518,18 +538,47 @@ func valueDaysAgo(days []store.Day, n int, pick func(store.Day) float64) float64
 	return pick(days[i])
 }
 
+// stateText — текст карточки по классу TSB без точного значения. Верхняя
+// строка статуса использует stateTextAt: там тексты совпадают с tsbText на
+// тех же шести уровнях свежести.
 func stateText(label string) (verdict, action string) {
 	switch label {
-	case "fresh":
-		return "Свежий", "Хороший день для качественной работы"
-	case "loaded":
-		return "Загружен", "Лёгкая работа или отдых"
-	case "overloaded":
-		return "Перегружен", "Отдых 1–2 дня, только Z1"
 	case "lowdata":
-		return "Мало данных", "Собери 3 недели истории и хотя бы 9 дней с нагрузкой за 42 дня"
+		return "Мало данных", "Нужно больше истории и дней с нагрузкой"
+	case "fresh":
+		return tsbText(thresholds.TSBFreshAbove + 11)
+	case "loaded":
+		return tsbText(thresholds.TSBLoadedMin + 1)
+	case "overloaded":
+		return tsbText(thresholds.TSBLoadedMin - 1)
 	default:
-		return "Форма в норме", "Тренируйся по плану, следи за восстановлением"
+		return tsbText(0)
+	}
+}
+
+func stateTextAt(label string, tsb float64, facts historyFacts) (verdict, action string) {
+	if label == "lowdata" {
+		return "Мало данных", lowDataAction(facts)
+	}
+	return tsbText(tsb)
+}
+
+// lowDataAction говорит, чего именно не хватает: истории с первой нагрузки
+// или дней с реальным TSS за 42 дня. «Собери 3 недели» при нехватке только
+// нагрузки вводило бы в заблуждение.
+func lowDataAction(facts historyFacts) string {
+	needData := thresholds.MinDataDays - facts.dataDays
+	needLoad := thresholds.MinLoadDays42 - facts.loadDays42
+	switch {
+	case needData > 0 && needLoad > 0:
+		return fmt.Sprintf("Собери ещё %s истории и %s с нагрузкой за 42 дня",
+			daysText(needData), daysText(needLoad))
+	case needData > 0:
+		return fmt.Sprintf("Собери ещё %s истории", daysText(needData))
+	case needLoad > 0:
+		return fmt.Sprintf("Нужно ещё %s с нагрузкой за 42 дня", daysText(needLoad))
+	default:
+		return "Данных пока мало для уверенного вердикта"
 	}
 }
 
@@ -637,39 +686,68 @@ func ctlText(ctl, trend float64) (verdict, action string) {
 }
 
 func atlText(atl, ctl float64) (verdict, action string) {
+	if ctl <= 0 {
+		if atl > 0 {
+			return "Усталость есть, формы пока нет", "Не добавляй нагрузку, дай организму восстановиться"
+		}
+		return "Усталости почти нет", "Можно начать с лёгкой нагрузки"
+	}
+	ratio := atl / ctl
 	switch {
-	case atl < 10:
-		return "Усталость низкая", "Можно тренироваться по плану"
-	case atl < 30:
-		return "Усталость умеренная", "Следи за сном и не добавляй лишнюю интенсивность"
-	case atl < 50:
-		return "Усталость высокая", "Следующие 1–2 дня — лёгкие"
+	case ratio > 1.3:
+		return "Усталость выше формы", "Не добавляй нагрузку 1–2 дня"
+	case ratio >= 0.8:
+		return "В рабочем диапазоне", "Организм справляется"
 	default:
-		return "Усталость очень высокая", "Нужен отдых или только Z1"
+		return "Усталости почти нет", "Можно грузить смелее"
 	}
 }
 
+// tsbText — шесть уровней свежести по ТЗ. Границы согласованы с
+// thresholds.TSBStateFor: fresh/norm/loaded/overloaded остаются классами
+// цвета, а внутри них текст уточняет, насколько глубоко зашла нагрузка.
 func tsbText(tsb float64) (verdict, action string) {
-	switch thresholds.TSBStateFor(tsb) {
-	case thresholds.Fresh:
-		return "Свежесть хорошая", "Хороший день для качественной работы"
-	case thresholds.Norm:
-		return "Свежесть в норме", "Тренируйся по плану"
-	case thresholds.Loaded:
-		return "Загруженность", "Лёгкая работа или отдых"
+	switch {
+	case tsb > 20:
+		return "Свежий", "Хороший день для качественной работы"
+	case tsb > thresholds.TSBFreshAbove:
+		return "Отдохнувший", "Можно тренироваться по плану"
+	case tsb >= thresholds.TSBNormMin:
+		return "Норма", "Тренируйся по плану, следи за восстановлением"
+	case tsb >= -20:
+		return "Под нагрузкой", "Лёгкая работа или отдых"
+	case tsb >= thresholds.TSBLoadedMin:
+		return "Загружен", "Лёгкая работа или отдых"
 	default:
-		return "Перегрузка", "Отдых 1–2 дня, только Z1"
+		return "Перегружен", "Отдых 1–2 дня, только Z1"
 	}
 }
 
 func statusSummary(state statusState, week statusWeek, yesterdayTSS float64) string {
-	weekText := fmt.Sprintf("%.0f TSS", week.TSS)
+	weekText := fmt.Sprintf("%.0f TSS, цель не задана", week.TSS)
 	if week.Target != nil {
 		weekText = fmt.Sprintf("%.0f из %.0f TSS", week.TSS, *week.Target)
 	}
 	return fmt.Sprintf("%s. %d %s за неделю, %s. Вчера — %.0f TSS. %s.",
 		state.Verdict, week.Rides, pluralRides(week.Rides), weekText,
 		yesterdayTSS, state.Action)
+}
+
+// daysText — число с правильным склонением: «4 дня», а не «4 дней».
+func daysText(n int) string {
+	return fmt.Sprintf("%d %s", n, pluralDays(n))
+}
+
+// pluralDays — русское склонение для дней: 1 день, 2–4 дня, 5+ дней.
+func pluralDays(n int) string {
+	n10, n100 := n%10, n%100
+	if n10 == 1 && n100 != 11 {
+		return "день"
+	}
+	if n10 >= 2 && n10 <= 4 && !(n100 >= 12 && n100 <= 14) {
+		return "дня"
+	}
+	return "дней"
 }
 
 // pluralRides — русское склонение: 1 тренировка, 2–4 тренировки, 5+ тренировок.
@@ -686,7 +764,7 @@ func pluralRides(n int) string {
 
 func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.Workout) ([]statusAlert, error) {
 	today := store.StartOfDay(now)
-	recent, err := recentWorkouts(db, 3)
+	recent, err := recentWorkouts(db, 3, now)
 	if err != nil {
 		return nil, err
 	}
@@ -732,8 +810,8 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 		alerts = append(alerts, statusAlert{
 			Level: "info",
 			Code:  "lowdata",
-			Text: fmt.Sprintf("Мало данных: %d дн. с нагрузкой, %d дней с TSS>0 за 42 дня — рекомендация осторожная.",
-				facts.dataDays, facts.loadDays42),
+			Text: fmt.Sprintf("Мало данных: %s с первой нагрузки, %s с TSS>0 за 42 дня — рекомендация осторожная.",
+				daysText(facts.dataDays), daysText(facts.loadDays42)),
 		})
 	}
 	rank := map[string]int{"stale": 0, "data_gaps": 1, "no_hr": 2, "lowdata": 3, "no_rpe": 4, "ftp_hint": 5}
@@ -741,8 +819,10 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 	return alerts, nil
 }
 
-func recentWorkouts(db *sql.DB, n int) ([]*store.Workout, error) {
-	rows, err := db.Query(`SELECT id FROM workouts ORDER BY start_time DESC, id DESC LIMIT ?`, n)
+func recentWorkouts(db *sql.DB, n int, now time.Time) ([]*store.Workout, error) {
+	rows, err := db.Query(`SELECT id FROM workouts WHERE start_time <= ?
+	    ORDER BY start_time DESC, id DESC LIMIT ?`,
+		now.UTC().Format(time.RFC3339), n)
 	if err != nil {
 		return nil, err
 	}

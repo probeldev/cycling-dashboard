@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,7 +17,7 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 	r.Get("/progress", func(w http.ResponseWriter, req *http.Request) {
 		now := time.Now()
 		to := store.StartOfDay(now)
-		days, err := store.Timeline(db, to.AddDate(0, 0, -364), to)
+		days, err := store.TimelineUntil(db, to.AddDate(0, 0, -364), to, now)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -38,7 +39,9 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 				last4 += d.TSS
 			}
 		}
-		tsb := round1(today.TSB)
+		// TSB считаем от округлённых CTL/ATL — тех же чисел, что в карточках:
+		// иначе на границе −10.04 число и подпись расходились бы со статусом.
+		tsb := round1(round1(today.CTL) - round1(today.ATL))
 		// CP/W' по всем данным: окна MMP за всё время
 		allRecords, err := store.BestRecords(db, time.Time{}, to.AddDate(0, 0, 1), false)
 		if err != nil {
@@ -107,5 +110,5 @@ func format1(v float64) string {
 	if v == 0 {
 		v = 0 // снимает отрицательный нуль
 	}
-	return strconv.FormatFloat(v, 'f', 1, 64)
+	return strings.ReplaceAll(strconv.FormatFloat(v, 'f', 1, 64), "-", "−")
 }

@@ -268,3 +268,22 @@ func TestTimelineWarmUp(t *testing.T) {
 		}
 	}
 }
+
+// TestTimelineUntilIgnoresFuture — будущая тренировка сегодня не попадает
+// в день, даже если его дата входит в запрошенный диапазон.
+func TestTimelineUntilIgnoresFuture(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
+	db := openTestDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	insertTimelineWorkout(t, db, "hash-tu-past", now.Add(-2*time.Hour), 30, 60, 20, false)
+	insertTimelineWorkout(t, db, "hash-tu-future", now.Add(2*time.Hour), 1000, 240, 200, false)
+
+	days, err := TimelineUntil(db, now.AddDate(0, 0, -1), now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := days[len(days)-1]
+	if !near(today.TSS, 30) || today.Rides != 1 {
+		t.Errorf("день = %+v, хочу 30 TSS / 1 поездку без будущей", today)
+	}
+}

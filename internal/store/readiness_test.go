@@ -227,3 +227,32 @@ func TestReadinessEmpty(t *testing.T) {
 		t.Errorf("пустая БД: счётчики не нули: %+v", r)
 	}
 }
+
+// TestReadinessIgnoresFutureWorkout — будущая тренировка не участвует ни в
+// longestEver/centuryCount, ни в скользящих окнах.
+func TestReadinessIgnoresFutureWorkout(t *testing.T) {
+	loc := withLocal(t, "Europe/Minsk")
+	db := openTestDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, loc)
+	past := insertReadinessWorkout(t, db, "hash-rf-past", now.Add(-2*time.Hour), 50, 2*time.Hour, 80, 600, 200)
+	if _, err := InsertWorkout(db, &Workout{
+		StartTime: now.Add(2 * time.Hour), Duration: 5 * time.Hour,
+		DistanceKm: 200, TSS: 1000, Calories: 4000, AscentM: 2000,
+	}, "hash-rf-future", filepath.Join(t.TempDir(), "f.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Readiness(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.LongestEver == nil || r.LongestEver.WorkoutID != past || !near(r.LongestEver.KM, 50) {
+		t.Errorf("longestEver = %+v, хочу 50 км (id %d)", r.LongestEver, past)
+	}
+	if r.CenturyCount != 0 {
+		t.Errorf("centuryCount = %d, хочу 0", r.CenturyCount)
+	}
+	if r.Rolling7.Rides != 1 || !near(r.Rolling7.KM, 50) || !near(r.Rolling7.TSS, 80) {
+		t.Errorf("rolling7 = %+v, хочу 50 км / 80 TSS / 1 поездку", r.Rolling7)
+	}
+}

@@ -39,7 +39,7 @@ type Recommendation struct {
 	RuleID      int      `json:"ruleId"`
 	Kind        string   `json:"kind"` // rest|z1|z1z2|z2|z2long|ftp_test
 	DurationMin [2]int   `json:"durationMin"`
-	Zone        string   `json:"zone"` // Z1|Z1-Z2|Z2|Z4-Z5; у теста пусто
+	Zone        string   `json:"zone"` // Z1|Z1–Z2|Z2|Z4–Z5; у теста пусто
 	Watts       *[2]int  `json:"watts"`
 	PctFTP      [2]int   `json:"pctFTP"`
 	Cadence     [2]int   `json:"cadence"`
@@ -99,7 +99,7 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 			RuleID:      3,
 			Kind:        "z1z2",
 			DurationMin: [2]int{45, 60},
-			Zone:        "Z1-Z2",
+			Zone:        "Z1–Z2",
 			Watts:       watts(in, 55, 75),
 			PctFTP:      [2]int{55, 75},
 			Cadence:     [2]int{80, 90},
@@ -116,7 +116,7 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 
 	if thresholds.LowData(in.DataDays, in.LoadDays42) {
 		return apply(z2(in, 0, [2]int{60, 60}, fmt.Sprintf(
-			"Данных пока мало: %d дн. с нагрузкой и %d дней с TSS>0 за 42 дня. Работай ровно, без интервалов.",
+			"Данных пока мало: %d дн. с первой нагрузки и %d дн. с TSS>0 за 42 дня. Работай ровно, без интервалов.",
 			in.DataDays, in.LoadDays42)))
 	}
 	reject(0, fmt.Sprintf("данных %d дн. и %d дней с нагрузкой (нужно ≥%d и ≥%d)",
@@ -175,7 +175,7 @@ func z2(in Input, rule int, duration [2]int, rationale string) Recommendation {
 	}
 	if rule == 0 {
 		factors = []Factor{
-			{Label: "Данные", Value: fmt.Sprintf("%d дн.", in.DataDays)},
+			{Label: "История", Value: fmt.Sprintf("%d дн.", in.DataDays)},
 			{Label: "TSB", Value: num(in.TSB)},
 			{Label: "Неделя", Value: weekFactor(in)},
 		}
@@ -198,7 +198,7 @@ func z1z2(in Input, rule int, duration [2]int, rationale string) Recommendation 
 		RuleID:      rule,
 		Kind:        "z1z2",
 		DurationMin: duration,
-		Zone:        "Z1-Z2",
+		Zone:        "Z1–Z2",
 		Watts:       watts(in, 55, 75),
 		PctFTP:      [2]int{55, 75},
 		Cadence:     [2]int{80, 90},

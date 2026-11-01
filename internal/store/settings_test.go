@@ -156,7 +156,7 @@ func TestWeeklyTargetOnlyCurrentWeek(t *testing.T) {
 	}
 }
 
-func TestWeeklyTargetEmptyFullWeeksUsesCurrent(t *testing.T) {
+func TestWeeklyTargetEmptyFullWeeksIsNone(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
 	ws := WeekStart(now)
@@ -247,5 +247,36 @@ func TestCalendarDaysBetweenDST(t *testing.T) {
 	to := time.Date(2026, 4, 1, 0, 0, 0, 0, loc)
 	if got := calendarDaysBetween(from, to); got != 31 {
 		t.Errorf("calendarDaysBetween = %d, хочу 31", got)
+	}
+}
+
+// TestWeeklyTargetIgnoresFutureFirstWorkout — тренировка с будущим start_time
+// не делает историю начатой: авто-цели пока нет.
+func TestWeeklyTargetIgnoresFutureFirstWorkout(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	addWeekWorkout(t, db, WeekStart(now), 6, 220, "hash-target-future") // сегодня 12:00, now — 10:00
+	got, err := WeeklyTarget(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != TargetSourceNone || got.TSS != 0 {
+		t.Errorf("WeeklyTarget = %+v, хочу none: будущая тренировка не считается", got)
+	}
+}
+
+// TestWeeklyTargetAutoRoundsToZeroIsNone — авто-цель 0.4 TSS округлилась бы
+// до нуля; вместо «0 из 0» источник должен стать none.
+func TestWeeklyTargetAutoRoundsToZeroIsNone(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	ws := WeekStart(now)
+	addWeekWorkout(t, db, ws.AddDate(0, 0, -7), 2, 0.4, "hash-target-round-zero")
+	got, err := WeeklyTarget(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Source != TargetSourceNone || got.TSS != 0 {
+		t.Errorf("WeeklyTarget = %+v, хочу none/0", got)
 	}
 }

@@ -20,9 +20,9 @@ func TestTSBFormat(t *testing.T) {
 		label string
 	}{
 		{-0.04, "0.0", "норма"},
-		{-9.976, "-10.0", "норма"}, // ровно -10 ещё «норма», порог строгий
-		{-10.14, "-10.1", "загружен"},
-		{-25.14, "-25.1", "перегружен"},
+		{-9.976, "−10.0", "норма"}, // ровно -10 ещё «норма», порог строгий
+		{-10.14, "−10.1", "загружен"},
+		{-25.14, "−25.1", "перегружен"},
 		{5.06, "5.1", "норма"},
 		{10.06, "10.1", "свежий"},
 	} {
@@ -81,8 +81,8 @@ func TestProgressCards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tsb := days[0].TSB
-	if !strings.Contains(body, ">"+format1(round1(tsb))+"</div><div class=\"k\">TSB · "+tsbLabel(round1(tsb))) {
+	tsb := round1(round1(days[0].CTL) - round1(days[0].ATL))
+	if !strings.Contains(body, ">"+format1(tsb)+"</div><div class=\"k\">TSB · "+tsbLabel(tsb)) {
 		t.Errorf("карточка TSB не совпадает с расчётом %v", tsb)
 	}
 }

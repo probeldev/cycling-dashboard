@@ -98,7 +98,9 @@ func progressClass(tss float64, target *float64) string {
 	if target == nil || *target <= 0 {
 		return "red"
 	}
-	pct := tss / *target * 100
+	// Округляем процент, иначе 110/100*100 = 110.00000000000001 и правая
+	// граница «зелёного» диапазона не срабатывает.
+	pct := math.Round(tss / *target * 10000) / 100
 	switch {
 	case pct >= 90 && pct <= 110:
 		return "green"
@@ -113,14 +115,14 @@ func signedPct(v *float64) string {
 	if v == nil {
 		return "—"
 	}
-	if *v == 0 {
-		*v = 0
+	value := *v
+	if value == 0 {
+		return "+0.0%" // снимает отрицательный нуль, не меняя аргумент
 	}
-	s := fmt.Sprintf("%+.1f%%", *v)
-	if *v < 0 {
-		s = fmt.Sprintf("−%.1f%%", math.Abs(*v))
+	if value < 0 {
+		return fmt.Sprintf("−%.1f%%", math.Abs(value))
 	}
-	return s
+	return fmt.Sprintf("+%.1f%%", value)
 }
 
 func targetSourceText(s store.TargetSource) string {

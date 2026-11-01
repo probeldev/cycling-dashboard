@@ -132,16 +132,20 @@ func WeekStart(t time.Time) time.Time {
 }
 
 // Weeks — последние n ISO-недель (включая текущую) с TSS, временем, дистанцией
-// и зонами. Недели без тренировок присутствуют с нулями.
+// и зонами. Недели без тренировок присутствуют с нулями. Тренировки с
+// start_time позже now не учитываются: будущая запись не должна раздувать
+// текущую неделю.
 func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 	cur := WeekStart(now)
 	from := cur.AddDate(0, 0, -7*(n-1))
 	qFrom := from.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	qTo := cur.AddDate(0, 0, 8).UTC().Format(time.RFC3339)
+	qNow := now.UTC().Format(time.RFC3339)
 
 	rows, err := db.Query(`SELECT id, start_time, duration_sec, COALESCE(distance_m, 0),
 	    trainer, COALESCE(tss, 0), COALESCE(rpe, 0)
-	    FROM workouts WHERE start_time >= ? AND start_time < ? ORDER BY start_time`, qFrom, qTo)
+	    FROM workouts WHERE start_time >= ? AND start_time < ? AND start_time <= ?
+	    ORDER BY start_time`, qFrom, qTo, qNow)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +167,7 @@ func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 			return nil, err
 		}
 		lt := t.Local()
-		if lt.Before(from) || !lt.Before(cur.AddDate(0, 0, 7)) {
+		if lt.After(now) || lt.Before(from) || !lt.Before(cur.AddDate(0, 0, 7)) {
 			continue
 		}
 		wk := WeekStart(lt)
@@ -192,7 +196,8 @@ func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 
 	zrows, err := db.Query(`SELECT z.workout_id, z.zone, z.secs
 	    FROM workout_zones z JOIN workouts w ON w.id = z.workout_id
-	    WHERE w.start_time >= ? AND w.start_time < ?`, qFrom, qTo)
+	    WHERE w.start_time >= ? AND w.start_time < ? AND w.start_time <= ?`,
+		qFrom, qTo, qNow)
 	if err != nil {
 		return nil, err
 	}
