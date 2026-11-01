@@ -20,8 +20,7 @@ type Input struct {
 	DaysSinceHard int
 	DaysSinceTest int
 	WeekTSS       float64
-	TargetTSS     float64
-	DayOfWeek     int     // 1..7 (пн..вс)
+	TargetTSS     float64 // 0 — цель не задана
 	GrayPct       float64 // за 4 недели
 	FTPTrainer    float64
 	FTPOutdoor    float64
@@ -130,7 +129,7 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 	reject(4, fmt.Sprintf("TSB %s (нужно > +15), тест %s (нужно > 21 дн. или не было), тяжёлая %s",
 		num(in.TSB), daysOrNever(in.DaysSinceTest), hardWhen(in.DaysSinceHard)))
 
-	if in.TSB > 5 && in.WeekTSS < 0.7*in.TargetTSS {
+	if in.TSB > 5 && in.TargetTSS > 0 && in.WeekTSS < 0.7*in.TargetTSS {
 		return apply(Recommendation{
 			RuleID:      5,
 			Kind:        "z2long",
@@ -157,8 +156,11 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 	}
 	reject(6, fmt.Sprintf("серая зона %s%% (нужно > 20%%)", pct(in.GrayPct)))
 
-	return apply(z2(in, 7, [2]int{60, 75},
-		"Форма в норме, недельный объём выполняется."))
+	rationale := "Форма в норме: ровная Z2 без интервалов."
+	if in.TargetTSS > 0 && in.WeekTSS >= 0.7*in.TargetTSS {
+		rationale = "Форма в норме, неделя идёт не ниже 70% цели: ровная Z2 без интервалов."
+	}
+	return apply(z2(in, 7, [2]int{60, 75}, rationale))
 }
 
 func z2(in Input, rule int, duration [2]int, rationale string) Recommendation {
@@ -294,6 +296,9 @@ func ftpValue(in Input) string {
 }
 
 func weekFactor(in Input) string {
+	if in.TargetTSS <= 0 {
+		return tss(in.WeekTSS) + " / — TSS"
+	}
 	return tss(in.WeekTSS) + " / " + tss(in.TargetTSS) + " TSS"
 }
 

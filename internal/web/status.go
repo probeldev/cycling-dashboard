@@ -151,7 +151,6 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		DaysSinceTest: facts.daysSinceTest,
 		WeekTSS:       weekTSS,
 		TargetTSS:     target,
-		DayOfWeek:     dayOfWeek(now),
 		GrayPct:       gray4,
 		FTPTrainer:    trainerFTP,
 		FTPOutdoor:    outdoorFTP,

@@ -17,7 +17,6 @@ func baseInput() Input {
 		DaysSinceTest: 40,
 		WeekTSS:       200,
 		TargetTSS:     220,
-		DayOfWeek:     3,
 		GrayPct:       10,
 		FTPTrainer:    200,
 		FTPOutdoor:    210,
@@ -415,5 +414,34 @@ func TestFTPFactorSeparateFromZone(t *testing.T) {
 	}
 	if got["Z2"] != "120–150 Вт" {
 		t.Errorf("Z2 = %q, хочу диапазон 120–150 Вт", got["Z2"])
+	}
+}
+
+func TestRuleSevenDoesNotClaimUncheckedVolume(t *testing.T) {
+	in := baseInput()
+	in.TargetTSS = 0
+	in.WeekTSS = 50
+	rec := Recommend(in)
+	if rec.RuleID != 7 {
+		t.Fatalf("RuleID = %d, хочу 7", rec.RuleID)
+	}
+	if strings.Contains(rec.Rationale, "выполняется") {
+		t.Errorf("Rationale = %q: объём не проверен, нельзя утверждать выполнение", rec.Rationale)
+	}
+	got := map[string]string{}
+	for _, f := range rec.Factors {
+		got[f.Label] = f.Value
+	}
+	if got["Неделя"] != "50 / — TSS" {
+		t.Errorf("Неделя = %q, хочу «50 / — TSS»", got["Неделя"])
+	}
+}
+
+func TestRuleSevenChecksSeventyPercent(t *testing.T) {
+	in := baseInput()
+	in.WeekTSS = 154 // ровно 70% от 220
+	rec := Recommend(in)
+	if rec.RuleID != 7 || !strings.Contains(rec.Rationale, "70%") {
+		t.Errorf("rec = %+v, хочу нейтральную Z2 с проверкой 70%%", rec)
 	}
 }
