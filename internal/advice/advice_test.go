@@ -413,6 +413,25 @@ func TestDecoupling(t *testing.T) {
 		}
 	})
 
+	t.Run("накат не входит в EF", func(t *testing.T) {
+		// 300 с наката только в первой половине, дальше 1200 с ровного
+		// педалирования: при учёте наката EF первой половины падает и
+		// decoupling уезжает в минус, хотя дрейфа нет.
+		var samples []store.Sample
+		for i := 0; i < 300; i++ {
+			samples = append(samples, store.Sample{Offset: int64(i), HasPwr: true, HR: 140})
+		}
+		for i := 0; i < 1200; i++ {
+			samples = append(samples, store.Sample{
+				Offset: int64(300 + i), Power: 200, HasPwr: true, HR: 140,
+			})
+		}
+		dec, ok := Decoupling(samples)
+		if !ok || math.Abs(dec) > 1e-9 {
+			t.Errorf("накат сломал EF: dec=%v ok=%v", dec, ok)
+		}
+	})
+
 	t.Run("дропаут без пульса пропускается", func(t *testing.T) {
 		var samples []store.Sample
 		for i := 0; i < 600; i++ {

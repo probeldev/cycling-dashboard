@@ -143,9 +143,10 @@ func pct(part, total float64) float64 {
 
 // Decoupling — аэробный дрейф, %: насколько упал efficiency factor
 // (мощность / пульс) во второй половине относительно первой. Считается по
-// времени (ridedata.Timings), берутся только записи с мощностью и пульсом.
-// Положительное значение — пульс рос при той же мощности. false — данных
-// меньше чем по 5 минут на половину или пульса/мощности нет.
+// времени (ridedata.Timings), берутся только записи с мощностью > 0 и пульсом:
+// накат в EF не входит — иначе разное время наката в половинах выдавало бы
+// дрейф, которого нет. false — данных меньше чем по 5 минут на половину или
+// пульса/мощности нет.
 func Decoupling(samples []store.Sample) (float64, bool) {
 	if len(samples) == 0 {
 		return 0, false
@@ -153,7 +154,7 @@ func Decoupling(samples []store.Sample) (float64, bool) {
 	times := ridedata.Timings(samples)
 	var total float64
 	for i, s := range samples {
-		if s.HasPwr && s.HR > 0 {
+		if s.HasPwr && s.Power > 0 && s.HR > 0 {
 			total += times[i].Secs
 		}
 	}
@@ -169,7 +170,7 @@ func Decoupling(samples []store.Sample) (float64, bool) {
 		hr[h] += float64(s.HR) * dt
 	}
 	for i, s := range samples {
-		if !s.HasPwr || s.HR <= 0 {
+		if !s.HasPwr || s.Power <= 0 || s.HR <= 0 {
 			continue
 		}
 		dt := times[i].Secs
