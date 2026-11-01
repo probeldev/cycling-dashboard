@@ -56,13 +56,13 @@
     {{ if .W.MaxSpeedKmh }}<div class="stat"><div class="v">{{ trimFloat .W.MaxSpeedKmh }}</div><div class="k">макс, км/ч</div></div>{{ end }}
   </div>
   {{ end }}
-  {{ if .W.AvgCadence }}
+  {{ if or .W.AvgCadence .W.AvgCadenceActive }}
   <h3>Каденс</h3>
   <div class="stats">
     <div class="stat">
       <div class="v">{{ if .W.AvgCadenceActive }}{{ .W.AvgCadenceActive }}{{ else }}—{{ end }}</div>
       <div class="k">в работе</div>
-      <div class="k">{{ .W.AvgCadence }} с накатом</div>
+      {{ if .W.AvgCadence }}<div class="k">{{ .W.AvgCadence }} с накатом</div>{{ end }}
     </div>
     {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс</div></div>{{ end }}
   </div>
