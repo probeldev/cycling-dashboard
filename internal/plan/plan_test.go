@@ -223,6 +223,27 @@ func TestBoundaries(t *testing.T) {
 			in.TSB = -15
 			return in
 		}(), 7},
+		{"TSB −15.1 — правило 2", func() Input {
+			in := baseInput()
+			in.TSB = -15.1
+			return in
+		}(), 2},
+		{"TSB −20 — правило 2", func() Input {
+			in := baseInput()
+			in.TSB = -20
+			return in
+		}(), 2},
+		{"TSB −21 — правило 2", func() Input {
+			in := baseInput()
+			in.TSB = -21
+			return in
+		}(), 2},
+		{"TSB ровно +10 — норма", func() Input {
+			in := baseInput()
+			in.TSB = 10
+			in.DaysSinceTest = 30
+			return in
+		}(), 7},
 		{"TSB ровно +15 — не тест", func() Input {
 			in := baseInput()
 			in.TSB = 15

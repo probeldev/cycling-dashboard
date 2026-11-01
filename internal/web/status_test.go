@@ -655,3 +655,62 @@ func TestStatusIncludesBothFTPHints(t *testing.T) {
 		t.Errorf("ftp_hint = %d, хочу обе подсказки: %+v", n, got.AllAlerts)
 	}
 }
+
+func TestStateTSBBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		tsb   float64
+		label string
+	}{
+		{10, "norm"},
+		{10.1, "fresh"},
+		{-10, "norm"},
+		{-10.1, "loaded"},
+		{-21, "loaded"},
+		{-25, "loaded"},
+		{-25.1, "overloaded"},
+	} {
+		got := buildState(store.Day{}, store.Day{CTL: 0, ATL: -tt.tsb}, historyFacts{dataDays: 100, loadDays42: 30}, nil)
+		if got.Label != tt.label {
+			t.Errorf("TSB %v: label = %q, хочу %q", tt.tsb, got.Label, tt.label)
+		}
+	}
+}
+
+func TestStatusNullTargetAndWatts(t *testing.T) {
+	db := openStatusDB(t)
+	got, err := buildStatus(db, time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Week.Target != nil || got.Week.TargetToDate != nil || got.Week.Remaining != nil ||
+		got.Week.RemainingMinZ2Total != nil {
+		t.Errorf("week target fields = %+v, хочу null", got.Week)
+	}
+	if got.Week.TargetSource != store.TargetSourceNone {
+		t.Errorf("targetSource = %q, хочу none", got.Week.TargetSource)
+	}
+	if got.Recommendation.Watts != nil {
+		t.Errorf("watts = %v, хочу null без FTP", *got.Recommendation.Watts)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"target":null`, `"targetToDate":null`, `"remaining":null`, `"remainingMinZ2Total":null`, `"watts":null`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("JSON нет %s: %s", want, raw)
+		}
+	}
+}
+
+func TestCTLTextUsesTrend(t *testing.T) {
+	if v, _ := ctlText(80, 3); v != "Форма растёт" {
+		t.Errorf("растущий тренд при высоком CTL = %q", v)
+	}
+	if v, _ := ctlText(80, -3); v != "Форма снижается" {
+		t.Errorf("падающий тренд при высоком CTL = %q", v)
+	}
+	if v, _ := ctlText(5, 0); v != "Форма стабильна" {
+		t.Errorf("нулевой тренд = %q", v)
+	}
+}
