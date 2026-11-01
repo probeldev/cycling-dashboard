@@ -113,6 +113,29 @@ func TestFTPHintThreshold(t *testing.T) {
 			t.Errorf("тренировка в подсказке = id %d, дата %v", got.WorkoutID, got.Date)
 		}
 	})
+
+	// Порог сравнивается по неокруглённой дельте: 2.01–2.04% раньше
+	// округлялись до 2.0 и молча скрывались.
+	for _, tt := range []struct {
+		name    string
+		current float64
+		watts   float64
+	}{
+		{"+2.01%", 199, 213.6843},
+		{"+2.04%", 196, 210.53},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			db, h := ftpHintServer(t, map[string]float64{"ftp": tt.current})
+			addHintWorkout(t, db, false, start, tt.watts)
+			got := getFTPHint(t, h)
+			if got == nil {
+				t.Fatalf("подсказка при %s скрыта", tt.name)
+			}
+			if got.DeltaPct != 2.0 {
+				t.Errorf("%s: DeltaPct = %v, хочу подпись 2.0", tt.name, got.DeltaPct)
+			}
+		})
+	}
 }
 
 // TestFTPHintKindFTP — станок сравнивается со станковым FTP, улица без

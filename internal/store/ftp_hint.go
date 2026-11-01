@@ -90,15 +90,17 @@ func FTPHints(db DBTX, now time.Time) ([]FTPHint, error) {
 			continue
 		}
 		estimate := roundHint(0.95 * bests[i].watts)
-		delta := roundHint((estimate/current - 1) * 100)
-		if delta <= FTPHintThresholdPct {
+		// порог сравниваем по неокруглённой дельте: +2.01…2.04% должны
+		// показываться, хотя в подписи они округляются до +2.0%
+		deltaPct := (estimate/current - 1) * 100
+		if deltaPct <= FTPHintThresholdPct+1e-9 {
 			continue
 		}
 		hints = append(hints, FTPHint{
 			Kind:      kind,
 			Current:   roundHint(current),
 			Estimate:  estimate,
-			DeltaPct:  delta,
+			DeltaPct:  roundHint(deltaPct),
 			WorkoutID: bests[i].id,
 			Date:      bests[i].date,
 		})
@@ -108,9 +110,9 @@ func FTPHints(db DBTX, now time.Time) ([]FTPHint, error) {
 	return hints, nil
 }
 
-// roundHint — ватты и проценты с одним знаком: порог и подпись считаются от
-// одного и того же округлённого значения, чтобы «+2.0%» не всплывало из-за
-// хвоста float64.
+// roundHint — ватты и проценты с одним знаком для подписи. Порог при этом
+// сравнивается по неокруглённой дельте: иначе 2.01–2.04% прятались бы под
+// подписью «+2.0%».
 func roundHint(v float64) float64 {
 	return math.Round(v*10) / 10
 }
