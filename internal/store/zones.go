@@ -61,6 +61,35 @@ func WorkoutZones(q DBTX, id int64) ([7]int, error) {
 	return zones, rows.Err()
 }
 
+// ZoneTime — сумма секунд в зонах Z1–Z7 за [from, to) отдельно для станка
+// (trainer=true) и улицы: зоны посчитаны от разных FTP, смешивать их нельзя.
+func ZoneTime(db DBTX, from, to time.Time, trainer bool) ([7]int, error) {
+	var zones [7]int
+	trainerArg := 0
+	if trainer {
+		trainerArg = 1
+	}
+	rows, err := db.Query(`SELECT z.zone, SUM(z.secs) FROM workout_zones z
+	    JOIN workouts w ON w.id = z.workout_id
+	    WHERE w.trainer = ? AND w.start_time >= ? AND w.start_time < ?
+	    GROUP BY z.zone`,
+		trainerArg, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+	if err != nil {
+		return zones, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var zone, secs int
+		if err := rows.Scan(&zone, &secs); err != nil {
+			return zones, err
+		}
+		if zone >= 1 && zone <= 7 {
+			zones[zone-1] = secs
+		}
+	}
+	return zones, rows.Err()
+}
+
 // WorkoutsNeedingZones — тренировки, у которых зоны ещё не посчитаны этой версией.
 func WorkoutsNeedingZones(q DBTX, version int) ([]FileRef, error) {
 	rows, err := q.Query(`SELECT id, file_path FROM workouts WHERE zones_version < ? ORDER BY id`, version)

@@ -10,6 +10,29 @@
 </div>
 {{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="color:var(--dim); font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ .FTP }} Вт.</p>{{ end }}
 
+{{ if or .HasFTP .HasFTPOutdoor }}
+<h2>Мощностные зоны</h2>
+<p class="sub" style="color:var(--dim); font-size:14px">Границы — от текущего FTP, правая граница зоны не входит. Время — за последние 90 дней из зон тренировок.</p>
+{{ with .TrainerZones }}
+<h3>Станок · FTP {{ $.FTP }} Вт</h3>
+<table>
+  <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
+  {{ range . }}
+  <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+  {{ end }}
+</table>
+{{ end }}
+{{ with .OutdoorZones }}
+<h3>Улица · FTP {{ $.FTPOutdoor }} Вт</h3>
+<table>
+  <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
+  {{ range . }}
+  <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+  {{ end }}
+</table>
+{{ end }}
+{{ end }}
+
 <h2>Вес и FTP</h2>
 <canvas id="profile-ftp" style="width:100%; height:240px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
 <p id="profile-empty" style="display:none; color:var(--dim)">Данных профиля пока нет — добавьте вес или FTP.</p>

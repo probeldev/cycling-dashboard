@@ -26,6 +26,26 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 		weight, hasWeight := store.ProfileAt(db, "weight", now)
 		ftp, hasFTP := store.ProfileAt(db, "ftp", now)
 		ftpOutdoor, hasFTPOutdoor := store.ProfileAt(db, "ftp_outdoor", now)
+		today := store.StartOfDay(now)
+		zoneFrom := today.AddDate(0, 0, -(zoneHistoryDays - 1))
+		zoneTo := today.AddDate(0, 0, 1)
+		var trainerZones, outdoorZones []powerZone
+		if hasFTP {
+			secs, err := store.ZoneTime(db, zoneFrom, zoneTo, true)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			trainerZones = buildPowerZones(int(ftp), secs)
+		}
+		if hasFTPOutdoor {
+			secs, err := store.ZoneTime(db, zoneFrom, zoneTo, false)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			outdoorZones = buildPowerZones(int(ftpOutdoor), secs)
+		}
 		render(w, "profile.html", map[string]any{
 			"History":       history,
 			"Weight":        weight,
@@ -34,6 +54,8 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			"HasFTP":        hasFTP,
 			"FTPOutdoor":    int(ftpOutdoor),
 			"HasFTPOutdoor": hasFTPOutdoor,
+			"TrainerZones":  trainerZones,
+			"OutdoorZones":  outdoorZones,
 			"Today":         now.Format("2006-01-02"),
 		})
 	})
