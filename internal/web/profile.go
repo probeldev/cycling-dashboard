@@ -97,19 +97,25 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, "некорректное значение", http.StatusBadRequest)
 			return
 		}
-		at := time.Now()
-		if d := req.FormValue("date"); d != "" {
-			t, err := time.ParseInLocation("2006-01-02", d, time.Local)
-			if err != nil {
-				http.Error(w, "некорректная дата", http.StatusBadRequest)
-				return
-			}
-			at = t
-		}
+		dateRaw := req.FormValue("date")
 		// workoutId приходит только от кнопки «Обновить FTP»: запись должна
 		// действовать с начала тренировки-источника, а не с момента нажатия.
 		var workoutID int64
+		var hintKind string
 		if raw := req.FormValue("workoutId"); raw != "" {
+			switch kind {
+			case "ftp":
+				hintKind = "trainer"
+			case "ftp_outdoor":
+				hintKind = "outdoor"
+			default:
+				http.Error(w, "workoutId допустим только для kind=ftp или kind=ftp_outdoor", http.StatusBadRequest)
+				return
+			}
+			if dateRaw != "" {
+				http.Error(w, "date и workoutId нельзя передавать вместе", http.StatusBadRequest)
+				return
+			}
 			id, err := strconv.ParseInt(raw, 10, 64)
 			if err != nil || id <= 0 {
 				http.Error(w, "workoutId: нужно положительное целое число", http.StatusBadRequest)
@@ -129,23 +135,36 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 				notFoundOr500(w, req, err)
 				return
 			}
-			wantTrainer := kind == "ftp"
-			if source.Trainer != wantTrainer {
-				http.Error(w, "вид подсказки не совпадает с типом тренировки", http.StatusBadRequest)
-				return
-			}
-			hintKind := "trainer"
-			if kind == "ftp_outdoor" {
-				hintKind = "outdoor"
+			switch kind {
+			case "ftp":
+				if !source.Trainer {
+					http.Error(w, "вид подсказки не совпадает с типом тренировки", http.StatusBadRequest)
+					return
+				}
+			case "ftp_outdoor":
+				if source.Trainer {
+					http.Error(w, "вид подсказки не совпадает с типом тренировки", http.StatusBadRequest)
+					return
+				}
 			}
 			if _, err := store.ApplyFTPHintTx(tx, hintKind, value, source); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			at = source.StartTime
-		} else if err := store.AddProfileEntryTx(tx, kind, value, at); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		} else {
+			at := time.Now()
+			if dateRaw != "" {
+				t, err := time.ParseInLocation("2006-01-02", dateRaw, time.Local)
+				if err != nil {
+					http.Error(w, "некорректная дата", http.StatusBadRequest)
+					return
+				}
+				at = t
+			}
+			if err := store.AddProfileEntryTx(tx, kind, value, at); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		// метрики зависят от FTP: считаем их в той же транзакции, чтобы не
 		// сохранить профиль с устаревшими IF/TSS
@@ -198,6 +217,10 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 		}
 		defer tx.Rollback()
 		if err := store.DeleteProfileEntryTx(tx, id); err != nil {
+			if errors.Is(err, store.ErrSyntheticProfileEntry) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

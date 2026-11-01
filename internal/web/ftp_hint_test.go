@@ -673,6 +673,9 @@ func TestFTPHintUpdateOutdoorUsesSourceDate(t *testing.T) {
 		if e.Kind == "ftp_outdoor" {
 			outdoor = append(outdoor, e)
 		}
+		if e.Synthetic {
+			t.Errorf("уличное обновление создало служебную границу: %+v", e)
+		}
 	}
 	if len(outdoor) != 1 || outdoor[0].Value != hint.Estimate ||
 		!outdoor[0].RecordedAt.Equal(source.StartTime) {
@@ -801,6 +804,303 @@ func TestFTPHintUpdateTrainerKeepsBeforeFirstEntry(t *testing.T) {
 	}
 	if got := getFTPHint(t, h); got != nil {
 		t.Errorf("подсказка не исчезла: %+v", got)
+	}
+}
+
+// TestFTPHintUpdateTrainerExactAtSourceKeepsPast — запись профиля ровно в
+// start_time источника не должна отменять границу: новая запись выигрывает
+// tie-break по id, и без границы fallback применил бы её к прошлым тренировкам.
+func TestFTPHintUpdateTrainerExactAtSourceKeepsPast(t *testing.T) {
+	db, h := ftpTestServer(t)
+	source := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	olderID := insertFTPWorkout(t, db, "hash-exact-old", source.AddDate(0, 0, -1), true,
+		time.Hour, 120, 110)
+	sourceID := insertFTPWorkout(t, db, "hash-exact-src", source, true, time.Hour, 140, 130)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp", 156, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeOlder := snapshotFTP(t, db, olderID)
+	hint := getFTPHint(t, h)
+	if hint == nil || hint.Kind != "trainer" || hint.Current != 156 ||
+		hint.Estimate != 209 || hint.WorkoutID != sourceID {
+		t.Fatalf("подсказка = %+v, хочу trainer/156/209/id %d", hint, sourceID)
+	}
+	form := url.Values{
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}
+	for i := 0; i < 2; i++ {
+		if code := postProfileEntry(t, h, form); code != http.StatusOK {
+			t.Fatalf("POST %d: код %d, хочу 200", i+1, code)
+		}
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("старая станковая изменилась: было %+v, стало %+v", beforeOlder, got)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("после BackfillProfileStamps старая станковая изменилась: было %+v, стало %+v",
+			beforeOlder, got)
+	}
+	w, err := store.GetWorkout(db, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.FTP != int(hint.Estimate) || w.FTPKind != "trainer" {
+		t.Errorf("источник: FTP=%d kind=%q, хочу %v/trainer", w.FTP, w.FTPKind, hint.Estimate)
+	}
+
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var synthetic []store.ProfileEntry
+	var changed int
+	for _, e := range history {
+		if e.Synthetic {
+			synthetic = append(synthetic, e)
+		}
+		if e.Kind == "ftp" && e.Value == hint.Estimate && !e.Synthetic {
+			changed++
+		}
+	}
+	if len(synthetic) != 1 {
+		t.Fatalf("служебных границ %d, хочу 1: %+v", len(synthetic), history)
+	}
+	if synthetic[0].Value != 156 || !synthetic[0].RecordedAt.Equal(source.Add(-time.Second)) {
+		t.Errorf("граница = %+v, хочу 156 на %v", synthetic[0], source.Add(-time.Second))
+	}
+	if changed != 1 {
+		t.Errorf("записей ftp %v — %d, хочу 1: %+v", hint.Estimate, changed, history)
+	}
+}
+
+// TestFTPHintUpdateTrainerKeepsOlderOutdoorFallback — старая уличная без
+// ftp_outdoor живёт на fallback к станковому FTP. Даже если до источника
+// станковых тренировок нет, новая запись не должна её перештамповать.
+func TestFTPHintUpdateTrainerKeepsOlderOutdoorFallback(t *testing.T) {
+	db, h := ftpTestServer(t)
+	now := time.Now().Truncate(time.Second)
+	olderID := insertFTPWorkout(t, db, "hash-fallback-old", now.AddDate(0, 0, -1), false,
+		time.Hour, 140, 123)
+	sourceID := insertFTPWorkout(t, db, "hash-fallback-src", now.Add(-2*time.Hour), true,
+		time.Hour, 140, 130)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Запись FTP появилась позже источника: новая станковая запись стала бы
+	// самой ранней, а старая уличная получала бы её через fallback.
+	if err := store.AddProfileEntry(db, "ftp", 200, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeOlder := snapshotFTP(t, db, olderID)
+	if beforeOlder.ftp != 200 || beforeOlder.kind != "trainer" {
+		t.Fatalf("старая уличная до POST: %+v, хочу 200/trainer (fallback)", beforeOlder)
+	}
+	hint := getFTPHint(t, h)
+	if hint == nil || hint.Kind != "trainer" || hint.Current != 200 ||
+		hint.Estimate != 209 || hint.WorkoutID != sourceID {
+		t.Fatalf("подсказка = %+v, хочу trainer/200/209/id %d", hint, sourceID)
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}); code != http.StatusOK {
+		t.Fatalf("POST: код %d, хочу 200", code)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("старая уличная на fallback изменилась: было %+v, стало %+v", beforeOlder, got)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("после BackfillProfileStamps старая уличная изменилась: было %+v, стало %+v",
+			beforeOlder, got)
+	}
+	w, err := store.GetWorkout(db, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.FTP != int(hint.Estimate) || w.FTPKind != "trainer" {
+		t.Errorf("источник: FTP=%d kind=%q, хочу %v/trainer", w.FTP, w.FTPKind, hint.Estimate)
+	}
+
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var synthetic []store.ProfileEntry
+	for _, e := range history {
+		if e.Kind == "ftp_outdoor" {
+			t.Errorf("станковая кнопка создала запись ftp_outdoor: %+v", e)
+		}
+		if e.Synthetic {
+			synthetic = append(synthetic, e)
+		}
+	}
+	if len(synthetic) != 1 || synthetic[0].Value != 200 ||
+		!synthetic[0].RecordedAt.Equal(now.Add(-2*time.Hour-time.Second)) {
+		t.Errorf("граница = %+v, хочу 200 за секунду до источника", synthetic)
+	}
+}
+
+// TestSyntheticProfileBoundaryProtected — служебная граница помечена в
+// истории и не удаляется ни кнопкой, ни через API.
+func TestSyntheticProfileBoundaryProtected(t *testing.T) {
+	db, h := ftpTestServer(t)
+	source := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	sourceID := insertFTPWorkout(t, db, "hash-synth-src", source, true, time.Hour, 140, 130)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp", 156, source); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	hint := getFTPHint(t, h)
+	if hint == nil {
+		t.Fatal("нет подсказки")
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}); code != http.StatusOK {
+		t.Fatalf("POST: код %d, хочу 200", code)
+	}
+
+	boundary := findSyntheticProfileEntry(t, db)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /profile: код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "системная граница (не удалять)") {
+		t.Error("/profile не помечает служебную границу")
+	}
+	if strings.Contains(body, fmt.Sprintf("/profile/entry/%d/delete", boundary.ID)) {
+		t.Errorf("/profile показывает кнопку удаления служебной границы id=%d", boundary.ID)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/profile/entry/%d/delete", boundary.ID), nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("удаление границы: код %d, хочу 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "нельзя удалить") {
+		t.Errorf("тело ошибки: %q", rec.Body.String())
+	}
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stillThere bool
+	for _, e := range history {
+		if e.ID == boundary.ID {
+			stillThere = true
+		}
+	}
+	if !stillThere {
+		t.Error("служебная граница удалена через API")
+	}
+}
+
+// findSyntheticProfileEntry — единственная служебная запись в истории.
+func findSyntheticProfileEntry(t *testing.T, db *sql.DB) store.ProfileEntry {
+	t.Helper()
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range history {
+		if e.Synthetic {
+			return e
+		}
+	}
+	t.Fatalf("в истории нет служебной границы: %+v", history)
+	return store.ProfileEntry{}
+}
+
+// TestProfileEntryWorkoutIDOnlyForFTP — workoutId имеет смысл только для
+// станкового/уличного FTP: weight с workoutId не должен молча превращаться
+// в запись ftp на дату тренировки. date вместе с workoutId тоже отклоняется.
+func TestProfileEntryWorkoutIDOnlyForFTP(t *testing.T) {
+	db, h := ftpTestServer(t)
+	trainerID := insertFTPWorkout(t, db, "hash-wid-tr", time.Now().Add(-2*time.Hour), true,
+		time.Hour, 140, 130)
+	outdoorID := insertFTPWorkout(t, db, "hash-wid-out", time.Now().Add(-time.Hour), false,
+		time.Hour, 140, 130)
+	for _, id := range []int64{trainerID, outdoorID} {
+		if code := postProfileEntry(t, h, url.Values{
+			"kind":      {"weight"},
+			"value":     {"75"},
+			"workoutId": {strconv.FormatInt(id, 10)},
+		}); code != http.StatusBadRequest {
+			t.Errorf("weight с workoutId=%d: код %d, хочу 400", id, code)
+		}
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind":      {"ftp"},
+		"value":     {"200"},
+		"workoutId": {strconv.FormatInt(trainerID, 10)},
+		"date":      {"2026-10-30"},
+	}); code != http.StatusBadRequest {
+		t.Errorf("date вместе с workoutId: код %d, хочу 400", code)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM profile_history`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("отклонённые формы создали %d записей профиля", n)
+	}
+
+	// Правильные виды с workoutId работают как раньше.
+	if code := postProfileEntry(t, h, url.Values{
+		"kind": {"ftp"}, "value": {"200"}, "workoutId": {strconv.FormatInt(trainerID, 10)},
+	}); code != http.StatusOK {
+		t.Errorf("ftp с workoutId: код %d, хочу 200", code)
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind": {"ftp_outdoor"}, "value": {"190"}, "workoutId": {strconv.FormatInt(outdoorID, 10)},
+	}); code != http.StatusOK {
+		t.Errorf("ftp_outdoor с workoutId: код %d, хочу 200", code)
+	}
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].Kind != "ftp_outdoor" || history[1].Kind != "ftp" {
+		t.Errorf("история после валидных форм = %+v, хочу ftp_outdoor и ftp", history)
 	}
 }
 

@@ -118,9 +118,9 @@
   {{ range .History }}
   <tr>
     <td>{{ date .RecordedAt }}</td>
-    <td>{{ if eq .Kind "weight" }}вес{{ else if eq .Kind "ftp_outdoor" }}FTP (улица){{ else }}FTP (станок){{ end }}</td>
+    <td>{{ if eq .Kind "weight" }}вес{{ else if eq .Kind "ftp_outdoor" }}FTP (улица){{ else }}FTP (станок){{ end }}{{ if .Synthetic }} <span class="sub" style="color:var(--dim)">системная граница (не удалять)</span>{{ end }}</td>
     <td>{{ if eq .Kind "weight" }}{{ km .Value }} кг{{ else }}{{ watts .Value }} Вт{{ end }}</td>
-    <td><button hx-post="/profile/entry/{{ .ID }}/delete" hx-swap="none">✕</button></td>
+    <td>{{ if not .Synthetic }}<button hx-post="/profile/entry/{{ .ID }}/delete" hx-swap="none">✕</button>{{ end }}</td>
   </tr>
   {{ end }}
 </table>

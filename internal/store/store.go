@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -265,6 +266,7 @@ CREATE TABLE IF NOT EXISTS profile_history (
     kind        TEXT NOT NULL, -- 'weight' (кг), 'ftp' (Вт, станок) или 'ftp_outdoor' (Вт, улица)
     value       REAL NOT NULL,
     recorded_at TEXT NOT NULL, -- с какой даты значение действует
+    synthetic   INTEGER NOT NULL DEFAULT 0, -- служебная граница, защищена от удаления
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded_at);
@@ -311,6 +313,7 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"workouts", "avg_temp", `ALTER TABLE workouts ADD COLUMN avg_temp REAL`},
 		{"workouts", "is_test", `ALTER TABLE workouts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "avg_cadence_active", `ALTER TABLE workouts ADD COLUMN avg_cadence_active INTEGER`},
+		{"profile_history", "synthetic", `ALTER TABLE profile_history ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -628,7 +631,12 @@ type ProfileEntry struct {
 	Kind       string // 'weight' или 'ftp'
 	Value      float64
 	RecordedAt time.Time
+	Synthetic  bool // служебная граница: сохраняет старое значение до источника
 }
+
+// ErrSyntheticProfileEntry — служебную запись-границу нельзя удалить вручную:
+// без неё fallback применит новое значение к тренировкам до источника.
+var ErrSyntheticProfileEntry = errors.New("системную запись-границу нельзя удалить")
 
 // AddProfileEntry добавляет запись истории и пересчитывает штампы тренировок.
 func AddProfileEntry(db *sql.DB, kind string, value float64, at time.Time) error {
@@ -667,7 +675,17 @@ func DeleteProfileEntry(db *sql.DB, id int64) error {
 }
 
 // DeleteProfileEntryTx удаляет запись и пересчитывает штампы в переданной транзакции.
+// Служебную границу удалить нельзя: без неё fallback применит новое значение
+// к тренировкам до источника.
 func DeleteProfileEntryTx(tx *sql.Tx, id int64) error {
+	var synthetic bool
+	err := tx.QueryRow(`SELECT synthetic FROM profile_history WHERE id = ?`, id).Scan(&synthetic)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if synthetic {
+		return ErrSyntheticProfileEntry
+	}
 	if _, err := tx.Exec(`DELETE FROM profile_history WHERE id = ?`, id); err != nil {
 		return err
 	}
@@ -676,7 +694,7 @@ func DeleteProfileEntryTx(tx *sql.Tx, id int64) error {
 
 // ProfileHistory возвращает всю историю, новые записи первыми.
 func ProfileHistory(db *sql.DB) ([]ProfileEntry, error) {
-	rows, err := db.Query(`SELECT id, kind, value, recorded_at FROM profile_history
+	rows, err := db.Query(`SELECT id, kind, value, recorded_at, synthetic FROM profile_history
 		ORDER BY recorded_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
@@ -686,7 +704,7 @@ func ProfileHistory(db *sql.DB) ([]ProfileEntry, error) {
 	for rows.Next() {
 		var e ProfileEntry
 		var at string
-		if err := rows.Scan(&e.ID, &e.Kind, &e.Value, &at); err != nil {
+		if err := rows.Scan(&e.ID, &e.Kind, &e.Value, &at, &e.Synthetic); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339, at)

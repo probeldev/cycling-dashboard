@@ -129,30 +129,26 @@ func ApplyFTPHintTx(tx *sql.Tx, kind string, value float64, source *Workout) (bo
 	}
 	at := source.StartTime.UTC()
 	// У станка нет строгого поиска: если запись оказывается самой ранней,
-	// fallback применил бы новое значение и к тренировкам до источника.
-	// Держим прежнее значение отдельной записью за секунду до источника —
-	// так прошлое не перештамповывается ни сейчас, ни при следующем старте.
+	// fallback применил бы новое значение и к тренировкам до источника
+	// (включая уличные без ftp_outdoor). Держим прежнее значение отдельной
+	// служебной записью за секунду до источника — так прошлое не
+	// перештамповывается ни сейчас, ни при следующем старте. Граница нужна,
+	// только если до источника нет записи строго раньше: запись ровно в
+	// start_time тоже делает новую самой ранней при tie-break по id.
 	if profileKind == "ftp" {
-		before, err := hasProfileAtOrBefore(tx, profileKind, at)
+		before, err := hasProfileBefore(tx, profileKind, at)
 		if err != nil {
 			return false, err
 		}
 		if !before {
-			var older int
-			if err := tx.QueryRow(`SELECT COUNT(*) FROM workouts WHERE trainer = 1 AND start_time < ?`,
-				at.Format(time.RFC3339)).Scan(&older); err != nil {
-				return false, err
-			}
-			if older > 0 {
-				if prev, ok := ProfileAt(tx, profileKind, at); ok {
-					if _, err := insertProfileEntryOnceTx(tx, profileKind, prev, at.Add(-time.Second)); err != nil {
-						return false, err
-					}
+			if prev, ok := ProfileAt(tx, profileKind, at); ok {
+				if _, err := insertProfileEntryOnceTx(tx, profileKind, prev, at.Add(-time.Second), true); err != nil {
+					return false, err
 				}
 			}
 		}
 	}
-	inserted, err := insertProfileEntryOnceTx(tx, profileKind, value, at)
+	inserted, err := insertProfileEntryOnceTx(tx, profileKind, value, at, false)
 	if err != nil {
 		return false, err
 	}
@@ -162,22 +158,24 @@ func ApplyFTPHintTx(tx *sql.Tx, kind string, value float64, source *Workout) (bo
 	return inserted, nil
 }
 
-// hasProfileAtOrBefore — есть ли запись вида, действовавшая не позже t.
-func hasProfileAtOrBefore(q DBTX, kind string, t time.Time) (bool, error) {
+// hasProfileBefore — есть ли запись вида строго раньше t. Запись ровно в t
+// не считается: новая запись с тем же recorded_at выиграла бы tie-break по id
+// и через fallback изменила бы прошлое.
+func hasProfileBefore(q DBTX, kind string, t time.Time) (bool, error) {
 	var exists bool
 	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM profile_history
-	    WHERE kind = ? AND recorded_at <= ?)`, kind, t.UTC().Format(time.RFC3339)).Scan(&exists)
+	    WHERE kind = ? AND recorded_at < ?)`, kind, t.UTC().Format(time.RFC3339)).Scan(&exists)
 	return exists, err
 }
 
 // insertProfileEntryOnceTx вставляет запись, только если такой же
 // (kind, value, recorded_at) ещё нет: повторное нажатие кнопки идемпотентно.
-func insertProfileEntryOnceTx(tx *sql.Tx, kind string, value float64, at time.Time) (bool, error) {
+func insertProfileEntryOnceTx(tx *sql.Tx, kind string, value float64, at time.Time, synthetic bool) (bool, error) {
 	ts := at.UTC().Format(time.RFC3339)
-	res, err := tx.Exec(`INSERT INTO profile_history (kind, value, recorded_at)
-	    SELECT ?, ?, ? WHERE NOT EXISTS (
+	res, err := tx.Exec(`INSERT INTO profile_history (kind, value, recorded_at, synthetic)
+	    SELECT ?, ?, ?, ? WHERE NOT EXISTS (
 	      SELECT 1 FROM profile_history WHERE kind = ? AND value = ? AND recorded_at = ?
-	    )`, kind, value, ts, kind, value, ts)
+	    )`, kind, value, ts, synthetic, kind, value, ts)
 	if err != nil {
 		return false, err
 	}
