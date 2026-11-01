@@ -394,6 +394,25 @@ func TestProfileRollbackOnStampError(t *testing.T) {
 	}
 }
 
+// TestProfileAtTieBreak — две записи с одинаковым recorded_at разрешаются по
+// id: действует более поздняя. Так же и для fallback на самую раннюю запись.
+func TestProfileAtTieBreak(t *testing.T) {
+	db := openTestDB(t)
+	at := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	if err := AddProfileEntry(db, "ftp", 150, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfileEntry(db, "ftp", 160, at); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := ProfileAt(db, "ftp", at.Add(time.Hour)); !ok || got != 160 {
+		t.Errorf("на момент после записей: %v ok=%v, хочу 160", got, ok)
+	}
+	if got, ok := ProfileAt(db, "ftp", at.Add(-time.Hour)); !ok || got != 160 {
+		t.Errorf("fallback до записей: %v ok=%v, хочу 160 (поздняя по id)", got, ok)
+	}
+}
+
 // TestProfileStampsByKind — FTP станка и улицы берутся из разных видов профиля,
 // у улицы при отсутствии ftp_outdoor — fallback на станковый.
 func TestProfileStampsByKind(t *testing.T) {

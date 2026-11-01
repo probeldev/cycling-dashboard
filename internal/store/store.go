@@ -685,7 +685,8 @@ func ProfileHistory(db *sql.DB) ([]ProfileEntry, error) {
 
 // ProfileAt возвращает значение вида ('weight'/'ftp'/'ftp_outdoor'),
 // действовавшее на момент t: последнее до t, а если такого нет — самое раннее
-// известное.
+// известное. Записи с одинаковым recorded_at разрешаются по id: выигрывает
+// более поздняя, как в ProfileHistory.
 func ProfileAt(db DBTX, kind string, t time.Time) (float64, bool) {
 	return profileAt(db, kind, t)
 }
@@ -694,10 +695,10 @@ func profileAt(q DBTX, kind string, t time.Time) (float64, bool) {
 	ts := t.UTC().Format(time.RFC3339)
 	var v float64
 	err := q.QueryRow(`SELECT value FROM profile_history
-		WHERE kind = ? AND recorded_at <= ? ORDER BY recorded_at DESC LIMIT 1`, kind, ts).Scan(&v)
+		WHERE kind = ? AND recorded_at <= ? ORDER BY recorded_at DESC, id DESC LIMIT 1`, kind, ts).Scan(&v)
 	if err == sql.ErrNoRows {
 		err = q.QueryRow(`SELECT value FROM profile_history
-			WHERE kind = ? ORDER BY recorded_at ASC LIMIT 1`, kind).Scan(&v)
+			WHERE kind = ? ORDER BY recorded_at ASC, id DESC LIMIT 1`, kind).Scan(&v)
 	}
 	if err != nil {
 		return 0, false
