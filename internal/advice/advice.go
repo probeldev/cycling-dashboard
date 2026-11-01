@@ -162,10 +162,9 @@ func Decoupling(samples []store.Sample) (float64, bool) {
 	}
 
 	half := total / 2
-	var secs, power, hr [2]float64
+	var power, hr [2]float64
 	var elapsed float64
 	add := func(h int, dt float64, s store.Sample) {
-		secs[h] += dt
 		power[h] += float64(s.Power) * dt
 		hr[h] += float64(s.HR) * dt
 	}

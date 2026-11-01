@@ -45,7 +45,7 @@ func TestRuleLowCadence(t *testing.T) {
 		{"69 на улице", 69, false, true},
 		{"70 на улице", 70, false, false},
 		{"60 на станке", 60, true, false},
-		{"нет данных", 0, false, false},
+		{"каденса нет", 0, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			w, ctx := baseWorkout()
@@ -66,7 +66,7 @@ func TestRuleHighVI(t *testing.T) {
 	}{
 		{"1.15 ровно", 1.15, true, false},
 		{"1.151", 1.151, true, true},
-		{"нет данных", 2, false, false},
+		{"HasVI false", 2, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			w, ctx := baseWorkout()
@@ -152,6 +152,10 @@ func TestRuleHighZones(t *testing.T) {
 	}{
 		{"40% ровно", [7]int{600, 0, 0, 400, 0, 0, 0}, false},
 		{"40.1%", [7]int{599, 0, 0, 401, 0, 0, 0}, true},
+		{"Z5", [7]int{0, 0, 0, 0, 1000, 0, 0}, true},
+		{"Z6", [7]int{0, 0, 0, 0, 0, 1000, 0}, true},
+		{"Z7", [7]int{0, 0, 0, 0, 0, 0, 1000}, true},
+		{"Z3 не порог", [7]int{0, 0, 1000, 0, 0, 0, 0}, false},
 		{"зон нет", [7]int{}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,16 +173,18 @@ func TestRuleTwoHeavyDays(t *testing.T) {
 		name      string
 		tss       float64
 		yesterday float64
+		hasTSS    bool
 		want      bool
 	}{
-		{"TSS 100 ровно", 100, 90, false},
-		{"вчера 80 ровно", 100.1, 80, false},
-		{"оба выше", 100.1, 80.1, true},
-		{"вчера мало", 100.1, 0, false},
+		{"TSS 100 ровно", 100, 90, true, false},
+		{"вчера 80 ровно", 100.1, 80, true, false},
+		{"оба выше", 100.1, 80.1, true, true},
+		{"вчера мало", 100.1, 0, true, false},
+		{"HasTSS false", 200, 100, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			w, ctx := baseWorkout()
-			w.TSS, ctx.YesterdayTSS = tt.tss, tt.yesterday
+			w.TSS, ctx.YesterdayTSS, w.HasTSS = tt.tss, tt.yesterday, tt.hasTSS
 			if got := hasCard(For(w, ctx), "Два тяжёлых дня подряд"); got != tt.want {
 				t.Errorf("Два тяжёлых дня подряд = %v, хочу %v", got, tt.want)
 			}
@@ -205,19 +211,21 @@ func TestRuleLowTSB(t *testing.T) {
 
 func TestRuleEasyRPE(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		rpe  int
-		tss  float64
-		want bool
+		name   string
+		rpe    int
+		tss    float64
+		hasTSS bool
+		want   bool
 	}{
-		{"RPE 4 при TSS 100.1", 4, 100.1, true},
-		{"RPE 5", 5, 200, false},
-		{"TSS 100 ровно", 4, 100, false},
-		{"RPE не задан — правило 10", 0, 200, false},
+		{"RPE 4 при TSS 100.1", 4, 100.1, true, true},
+		{"RPE 5", 5, 200, true, false},
+		{"TSS 100 ровно", 4, 100, true, false},
+		{"RPE не задан — правило 10", 0, 200, true, false},
+		{"HasTSS false", 4, 200, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			w, ctx := baseWorkout()
-			w.RPE, w.TSS = tt.rpe, tt.tss
+			w.RPE, w.TSS, w.HasTSS = tt.rpe, tt.tss, tt.hasTSS
 			if got := hasCard(For(w, ctx), "Субъективно легко"); got != tt.want {
 				t.Errorf("Субъективно легко = %v, хочу %v", got, tt.want)
 			}
@@ -282,7 +290,8 @@ func TestRuleGoodDecoupling(t *testing.T) {
 
 func ptr(v float64) *float64 { return &v }
 
-// TestPriorityAndLimit — warn идёт первым, лимит 5 отрезает хвост.
+// TestPriorityAndLimit — warn идёт первым, лимит 5 отрезает хвост: шестая
+// карточка «Нет RPE» отброшена.
 func TestPriorityAndLimit(t *testing.T) {
 	w, ctx := baseWorkout()
 	w.AvgCadence = 60                               // info
@@ -292,8 +301,11 @@ func TestPriorityAndLimit(t *testing.T) {
 	w.AvgHR, w.MaxHR = 0, 0                         // info
 	w.RPE = 0                                       // info
 	cards := For(w, ctx)
-	if len(cards) != MaxCards {
-		t.Fatalf("карточек %d, хочу %d", len(cards), MaxCards)
+	if len(cards) != 5 {
+		t.Fatalf("карточек %d, хочу 5 (MaxCards=%d)", len(cards), MaxCards)
+	}
+	if hasCard(cards, "Нет RPE") {
+		t.Error("шестая карточка «Нет RPE» не отброшена")
 	}
 	wantLevels := []string{LevelWarn, LevelWarn, LevelInfo, LevelInfo, LevelInfo}
 	wantTitles := []string{"Рваная езда", "Пропуски данных", "Низкий каденс", "Много наката", "Пульса нет"}
