@@ -12,12 +12,16 @@ import (
 	"cycling-dashboard/internal/advice"
 	"cycling-dashboard/internal/plan"
 	"cycling-dashboard/internal/store"
+	"cycling-dashboard/internal/thresholds"
 )
 
 // statusResponse — композитный ответ главной: состояние, рекомендация,
 // неделя, последняя тренировка, готовность и предупреждения.
 type statusResponse struct {
 	AsOf           string               `json:"asOf"`
+	PMCAsOf        string               `json:"pmcAsOf"`
+	TSBAsOf        string               `json:"tsbAsOf"`
+	TSBNote        string               `json:"tsbNote"`
 	State          statusState          `json:"state"`
 	Summary        string               `json:"summary"`
 	Recommendation plan.Recommendation  `json:"recommendation"`
@@ -164,7 +168,11 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		rec = plan.Recommend(in)
 	}
 
-	state := buildState(cur, facts, days)
+	pmcDay := cur
+	if len(days) >= 2 {
+		pmcDay = days[len(days)-2]
+	}
+	state := buildState(cur, pmcDay, facts, days)
 
 	latest, err := store.LatestWorkout(db)
 	if err != nil && err != sql.ErrNoRows {
@@ -205,6 +213,9 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	}
 	out := &statusResponse{
 		AsOf:           today.Format("2006-01-02"),
+		PMCAsOf:        pmcDay.Date.Format("2006-01-02"),
+		TSBAsOf:        pmcDay.Date.Format("2006-01-02"),
+		TSBNote:        "TSB — до нагрузки сегодняшнего дня",
 		State:          state,
 		Summary:        statusSummary(state, week, yesterday),
 		Recommendation: rec,
@@ -416,44 +427,39 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	return out, nil
 }
 
-func buildState(cur store.Day, facts historyFacts, days []store.Day) statusState {
-	label := "norm"
+// buildState собирает карточки PMC. CTL/ATL берутся на конец предыдущего дня,
+// чтобы TSB = CTL − ATL сходился на одном моменте, а не смешивал сегодняшний
+// CTL с TSB до сегодняшней нагрузки.
+func buildState(cur, pmcDay store.Day, facts historyFacts, days []store.Day) statusState {
+	ctl, atl := pmcDay.CTL, pmcDay.ATL
+	tsb := ctl - atl
+	label := string(thresholds.TSBStateFor(tsb))
 	confidence := "ok"
-	if facts.dataDays < 21 {
+	if facts.dataDays < thresholds.MinDataDays {
 		label = "lowdata"
 		confidence = "low"
-	} else {
-		switch {
-		case cur.TSB > 10:
-			label = "fresh"
-		case cur.TSB >= -10:
-			label = "norm"
-		case cur.TSB >= -20:
-			label = "loaded"
-		default:
-			label = "overloaded"
-		}
 	}
 	verdict, action := stateText(label)
-	ctlVerdict, ctlAction := ctlText(cur.CTL, cur.ATL)
-	atlVerdict, atlAction := atlText(cur.ATL, cur.CTL)
-	tsbVerdict, tsbAction := tsbText(cur.TSB)
+	ctlTrend := round1(ctl - valueDaysAgo(days, 28, func(d store.Day) float64 { return d.CTL }))
+	ctlVerdict, ctlAction := ctlText(ctl, ctlTrend)
+	atlVerdict, atlAction := atlText(atl, ctl)
+	tsbVerdict, tsbAction := tsbText(tsb)
 	return statusState{
 		Label:      label,
 		Verdict:    verdict,
 		Action:     action,
 		Confidence: confidence,
 		CTL: statusMetric{
-			Value: cur.CTL, Verdict: ctlVerdict, Action: ctlAction,
-			Trend: round1(cur.CTL - valueDaysAgo(days, 28, func(d store.Day) float64 { return d.CTL })),
+			Value: round1(ctl), Verdict: ctlVerdict, Action: ctlAction,
+			Trend: ctlTrend,
 		},
 		ATL: statusMetric{
-			Value: cur.ATL, Verdict: atlVerdict, Action: atlAction,
-			Trend: round1(cur.ATL - valueDaysAgo(days, 7, func(d store.Day) float64 { return d.ATL })),
+			Value: round1(atl), Verdict: atlVerdict, Action: atlAction,
+			Trend: round1(atl - valueDaysAgo(days, 7, func(d store.Day) float64 { return d.ATL })),
 		},
 		TSB: statusMetric{
-			Value: cur.TSB, Verdict: tsbVerdict, Action: tsbAction,
-			Trend: round1(cur.TSB - valueDaysAgo(days, 14, func(d store.Day) float64 { return d.TSB })),
+			Value: round1(tsb), Verdict: tsbVerdict, Action: tsbAction,
+			Trend: round1(tsb - valueDaysAgo(days, 14, func(d store.Day) float64 { return d.TSB })),
 		},
 	}
 }
@@ -481,17 +487,28 @@ func stateText(label string) (verdict, action string) {
 	}
 }
 
-func ctlText(ctl, atl float64) (verdict, action string) {
+// ctlText оценивает не уровень формы, а её тренд: высокий CTL может падать,
+// и «форма растёт» на нём было бы неправдой.
+func ctlText(ctl, trend float64) (verdict, action string) {
+	switch {
+	case trend > 2:
+		verdict = "Форма растёт"
+	case trend < -2:
+		verdict = "Форма снижается"
+	default:
+		verdict = "Форма стабильна"
+	}
 	switch {
 	case ctl < 10:
-		return "Форма низкая", "Набирай объём постепенно: 3–4 спокойные тренировки в неделю"
+		action = "Набирай объём постепенно: 3–4 спокойные тренировки в неделю"
 	case ctl < 30:
-		return "Форма растёт", "Держи регулярность и постепенно добавляй объём"
+		action = "Держи регулярность и постепенно добавляй объём"
 	case ctl < 50:
-		return "Форма хорошая", "Можно добавить длинную Z2 и одну интервальную"
+		action = "Можно добавить длинную Z2 и одну интервальную"
 	default:
-		return "Форма высокая", "Поддерживай объём и следи за восстановлением"
+		action = "Поддерживай объём и следи за восстановлением"
 	}
+	return verdict, action
 }
 
 func atlText(atl, ctl float64) (verdict, action string) {
@@ -508,12 +525,12 @@ func atlText(atl, ctl float64) (verdict, action string) {
 }
 
 func tsbText(tsb float64) (verdict, action string) {
-	switch {
-	case tsb > 10:
+	switch thresholds.TSBStateFor(tsb) {
+	case thresholds.Fresh:
 		return "Свежесть хорошая", "Хороший день для качественной работы"
-	case tsb >= -10:
+	case thresholds.Norm:
 		return "Свежесть в норме", "Тренируйся по плану"
-	case tsb >= -20:
+	case thresholds.Loaded:
 		return "Загруженность", "Лёгкая работа или отдых"
 	default:
 		return "Перегрузка", "Отдых 1–2 дня, только Z1"

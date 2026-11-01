@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"cycling-dashboard/internal/store"
+	"cycling-dashboard/internal/thresholds"
 )
 
 func progressRoutes(r chi.Router, db *sql.DB) {
@@ -89,11 +90,13 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 // tsbLabel — словесная трактовка свежести. Считается от того же округлённого
 // значения, что показывается в карточке, чтобы подпись не спорила с числом.
 func tsbLabel(tsb float64) string {
-	switch {
-	case tsb < -10:
-		return "загружен"
-	case tsb > 5:
+	switch thresholds.TSBStateFor(tsb) {
+	case thresholds.Fresh:
 		return "свежий"
+	case thresholds.Loaded:
+		return "загружен"
+	case thresholds.Overloaded:
+		return "перегружен"
 	default:
 		return "норма"
 	}

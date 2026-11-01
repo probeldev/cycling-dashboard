@@ -9,6 +9,7 @@ import (
 
 	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
+	"cycling-dashboard/internal/thresholds"
 )
 
 // Пороги правил. Границы строгие там, где так написано в правиле:
@@ -21,7 +22,6 @@ const (
 	HighZonePct       = 40   // больше — много времени в Z4+
 	HeavyTSS          = 100  // выше — тяжёлая тренировка
 	PreviousHeavyTSS  = 80   // выше — вчера тоже была тяжёлая
-	LowTSB            = -20  // ниже — накопленная усталость
 	LowRPE            = 4    // не выше — субъективно легко
 	GrayZonePct       = 20   // больше — много серой зоны за неделю
 	GoodDecouplingPct = 5    // ниже — мощность не просела относительно пульса
@@ -89,7 +89,7 @@ func For(w store.Workout, ctx Context) []Card {
 	if w.HasTSS && w.TSS > HeavyTSS && ctx.YesterdayTSS > PreviousHeavyTSS {
 		add(LevelWarn, "Два тяжёлых дня подряд", "следующий день — лёгкий или отдых")
 	}
-	if ctx.TSB < LowTSB {
+	if ctx.TSB < thresholds.TSBLoadedMin {
 		add(LevelWarn, "Накопленная усталость", "1–2 дня Z1 или отдых")
 	}
 	if w.RPE > 0 && w.RPE <= LowRPE && w.HasTSS && w.TSS > HeavyTSS {

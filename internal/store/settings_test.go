@@ -19,8 +19,6 @@ func addWeekWorkout(t *testing.T, db DBTX, weekStart time.Time, day int, tss flo
 	}
 }
 
-
-
 func TestWeeklyTargetOverride(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)

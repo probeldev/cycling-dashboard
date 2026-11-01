@@ -197,8 +197,8 @@ func TestRuleLowTSB(t *testing.T) {
 		tsb  float64
 		want bool
 	}{
-		{-20, false},
-		{-20.1, true},
+		{-25, false},
+		{-25.1, true},
 		{0, false},
 	} {
 		w, ctx := baseWorkout()

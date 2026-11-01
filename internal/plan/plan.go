@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"cycling-dashboard/internal/thresholds"
 )
 
 // Input — всё, что нужно правилам. DaysSinceHard/DaysSinceTest — целые дни
@@ -76,7 +78,7 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 	}
 	reject(0, fmt.Sprintf("данных %d дн. (нужно < 21)", in.DataDays))
 
-	if in.TSB < -25 {
+	if in.TSB < thresholds.TSBLoadedMin {
 		return apply(Recommendation{
 			RuleID:      1,
 			Kind:        "rest",
@@ -90,13 +92,13 @@ func Explain(in Input) (Recommendation, []RuleCheck) {
 			},
 		})
 	}
-	reject(1, fmt.Sprintf("TSB %s (нужно < −25)", num(in.TSB)))
+	reject(1, fmt.Sprintf("TSB %s (нужно < %s)", num(in.TSB), num(thresholds.TSBLoadedMin)))
 
-	if in.TSB < -15 {
+	if in.TSB < thresholds.TSBLightBelow {
 		return apply(z1z2(in, 2, [2]int{40, 60},
 			fmt.Sprintf("TSB %s: форма просела. Лёгкая Z1–Z2 без интервалов.", num(in.TSB))))
 	}
-	reject(2, fmt.Sprintf("TSB %s (нужно −25…<−15)", num(in.TSB)))
+	reject(2, fmt.Sprintf("TSB %s (нужно %s…<%s)", num(in.TSB), num(thresholds.TSBLoadedMin), num(thresholds.TSBLightBelow)))
 
 	if in.DaysSinceHard >= 0 && in.DaysSinceHard <= 1 && in.TSB < 0 {
 		return apply(Recommendation{

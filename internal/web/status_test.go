@@ -111,11 +111,11 @@ func TestStatusGolden(t *testing.T) {
 	if got.State.Verdict != "Форма в норме" {
 		t.Errorf("verdict = %q", got.State.Verdict)
 	}
-	almostEqual(t, "tsb", got.State.TSB.Value, -5.277651687895656)
-	almostEqual(t, "ctl", got.State.CTL.Value, 19.762878583653567)
-	almostEqual(t, "atl", got.State.ATL.Value, 29.193546056804983)
-	almostEqual(t, "ctl.trend", got.State.CTL.Trend, 3.9)
-	almostEqual(t, "atl.trend", got.State.ATL.Trend, 16.4)
+	almostEqual(t, "tsb", got.State.TSB.Value, -5.3)
+	almostEqual(t, "ctl", got.State.CTL.Value, 18.8)
+	almostEqual(t, "atl", got.State.ATL.Value, 24.1)
+	almostEqual(t, "ctl.trend", got.State.CTL.Trend, 2.9)
+	almostEqual(t, "atl.trend", got.State.ATL.Trend, 11.3)
 	almostEqual(t, "tsb.trend", got.State.TSB.Trend, 8.9)
 	if got.State.CTL.Verdict != "Форма растёт" || got.State.ATL.Verdict != "Усталость умеренная" ||
 		got.State.TSB.Verdict != "Свежесть в норме" {
