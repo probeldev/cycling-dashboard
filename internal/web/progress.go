@@ -61,6 +61,15 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		hints, err := store.FTPHints(db, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var ftpHint *store.FTPHint
+		if len(hints) > 0 {
+			ftpHint = &hints[0]
+		}
 		render(w, "progress.html", map[string]any{
 			"Bikes":     bikes,
 			"CP":        cpView(cp),
@@ -72,6 +81,7 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 			"TSBLabel":  tsbLabel(tsb),
 			"TodayDate": now.Format("02.01.2006"),
 			"Readiness": readiness,
+			"FTPHint":   ftpHint,
 		})
 	})
 }

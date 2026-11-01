@@ -4,6 +4,7 @@
   {{ datetime .W.StartTime }}
   {{ if .W.Trainer }}<span class="tag">станок</span>{{ end }}
   {{ if .W.IsTest }}<span class="tag">тест</span>{{ end }}
+  {{ if .FTPHint }}<span class="tag warn" title="20 мин × 0.95 дают {{ trimFloat .FTPHint.Estimate }} Вт — выше текущего FTP на {{ trimFloat .FTPHint.DeltaPct }}%">FTP +{{ trimFloat .FTPHint.DeltaPct }}%</span>{{ end }}
   {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
 </h1>
 
@@ -70,6 +71,14 @@
   </div>
   {{ end }}
 </div>
+
+{{ if .FTPHint }}
+<div class="stat" style="border-color:#d4a72c; background:#fff8c5; margin-bottom:16px">
+  <div class="v">{{ trimFloat .FTPHint.Estimate }} Вт</div>
+  <div class="k">возможно, пора обновить FTP по этой тренировке · сейчас {{ trimFloat .FTPHint.Current }} Вт · +{{ trimFloat .FTPHint.DeltaPct }}%</div>
+  {{ template "ftpUpdate" .FTPHint }}
+</div>
+{{ end }}
 
 <div style="margin-bottom:16px">
   Тип тренировки:

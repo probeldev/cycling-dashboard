@@ -110,8 +110,21 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		hints, err := store.FTPHints(db, time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var ftpHint *store.FTPHint
+		for i := range hints {
+			if hints[i].WorkoutID == id {
+				ftpHint = &hints[i]
+				break
+			}
+		}
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes, "RPEOptions": rpeOptions,
+			"FTPHint": ftpHint,
 		})
 	})
 
@@ -327,6 +340,20 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		writeJSON(w, readiness)
+	})
+
+	r.Get("/api/ftp-hint", func(w http.ResponseWriter, req *http.Request) {
+		hints, err := store.FTPHints(db, time.Now())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// одна подсказка или null: [] клиенту пришлось бы разбирать отдельно
+		if len(hints) == 0 {
+			writeJSON(w, nil)
+			return
+		}
+		writeJSON(w, hints[0])
 	})
 
 	r.Get("/api/records", func(w http.ResponseWriter, req *http.Request) {

@@ -10,6 +10,16 @@
   {{ if .Wkg.HasValue }}<div class="stat"><div class="v">{{ trimFloat .Wkg.Value }}</div><div class="k">Вт/кг (станок) · {{ .Wkg.Text }}</div></div>{{ end }}
 </div>
 
+{{ if .FTPHint }}
+<div class="stats">
+  <div class="stat" style="border-color:#d4a72c; background:#fff8c5">
+    <div class="v">{{ trimFloat .FTPHint.Estimate }} Вт</div>
+    <div class="k">возможно, пора обновить FTP · по заезду <a href="/workout/{{ .FTPHint.WorkoutID }}">{{ date .FTPHint.Date }}</a> (id {{ .FTPHint.WorkoutID }}) · +{{ trimFloat .FTPHint.DeltaPct }}% к {{ trimFloat .FTPHint.Current }} Вт</div>
+    {{ template "ftpUpdate" .FTPHint }}
+  </div>
+</div>
+{{ end }}
+
 <h2>Готовность к длинным дистанциям</h2>
 <div class="stats">
   <div class="stat"><div class="v">{{ if .Readiness.Longest90d }}{{ km .Readiness.Longest90d.KM }} км{{ else }}—{{ end }}</div><div class="k">макс. выезд за 90 дней{{ with .Readiness.Longest90d }} · {{ date .Date }}{{ end }}</div></div>

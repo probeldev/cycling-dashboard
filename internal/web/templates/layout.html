@@ -77,3 +77,8 @@
 </body>
 </html>
 {{ end }}
+
+{{ define "ftpUpdate" }}
+<button hx-post="/profile/entry" hx-swap="none"
+  hx-vals='{"kind":"{{ if eq .Kind "outdoor" }}ftp_outdoor{{ else }}ftp{{ end }}","value":"{{ trimFloat .Estimate }}","date":"{{ .Date.Format "2006-01-02" }}"}'>Обновить FTP</button>
+{{ end }}
