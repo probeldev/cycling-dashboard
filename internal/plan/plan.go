@@ -297,7 +297,7 @@ func ftpValue(in Input) string {
 
 func weekFactor(in Input) string {
 	if in.TargetTSS <= 0 {
-		return tss(in.WeekTSS) + " / — TSS"
+		return "—"
 	}
 	return tss(in.WeekTSS) + " / " + tss(in.TargetTSS) + " TSS"
 }

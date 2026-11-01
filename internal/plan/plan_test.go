@@ -453,8 +453,8 @@ func TestRuleSevenDoesNotClaimUncheckedVolume(t *testing.T) {
 	for _, f := range rec.Factors {
 		got[f.Label] = f.Value
 	}
-	if got["Неделя"] != "50 / — TSS" {
-		t.Errorf("Неделя = %q, хочу «50 / — TSS»", got["Неделя"])
+	if got["Неделя"] != "—" {
+		t.Errorf("Неделя = %q, хочу «—»", got["Неделя"])
 	}
 }
 

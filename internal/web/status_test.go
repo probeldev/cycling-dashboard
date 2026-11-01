@@ -457,7 +457,7 @@ func TestZ2Minutes(t *testing.T) {
 		tss  float64
 		want int
 	}{
-		{0, 0}, {-10, 0}, {100, 130}, {220, 290}, {10, 15},
+		{0, 0}, {-10, 0}, {100, 130}, {220, 290}, {10, 15}, {100000, 600},
 	} {
 		if got := z2Minutes(tt.tss); got != tt.want {
 			t.Errorf("z2Minutes(%v) = %d, хочу %d", tt.tss, got, tt.want)

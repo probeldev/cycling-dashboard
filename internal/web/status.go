@@ -167,12 +167,16 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	trainerFTP, _ := store.ProfileAt(db, "ftp", now)
 	outdoorFTP, _ := store.ProfileAt(db, "ftp_outdoor", now)
 
+	pmcDay := cur
+	if len(days) >= 2 {
+		pmcDay = days[len(days)-2]
+	}
 	in := plan.Input{
 		DataDays:      facts.dataDays,
 		LoadDays42:    facts.loadDays42,
-		TSB:           cur.TSB,
-		CTL:           cur.CTL,
-		ATL:           cur.ATL,
+		TSB:           pmcDay.CTL - pmcDay.ATL,
+		CTL:           pmcDay.CTL,
+		ATL:           pmcDay.ATL,
 		DaysSinceHard: facts.daysSinceHard,
 		DaysSinceTest: facts.daysSinceTest,
 		WeekTSS:       weekTSS,
@@ -190,10 +194,6 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		rec = plan.Recommend(in)
 	}
 
-	pmcDay := cur
-	if len(days) >= 2 {
-		pmcDay = days[len(days)-2]
-	}
 	state := buildState(cur, pmcDay, facts, days)
 
 	latest, err := store.LatestWorkoutBefore(db, now)
