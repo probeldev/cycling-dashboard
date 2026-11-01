@@ -41,7 +41,7 @@ type Recommendation struct {
 	Kind        string   `json:"kind"` // rest|z1|z1z2|z2|z2long|ftp_test
 	DurationMin [2]int   `json:"durationMin"`
 	Zone        string   `json:"zone"` // Z1|Z1-Z2|Z2|Z4-Z5; у теста пусто
-	Watts       [2]int   `json:"watts"`
+	Watts       *[2]int  `json:"watts"`
 	PctFTP      [2]int   `json:"pctFTP"`
 	Cadence     [2]int   `json:"cadence"`
 	Rationale   string   `json:"rationale"`
@@ -231,41 +231,66 @@ func ftpTest(in Input) Recommendation {
 		Factors: []Factor{
 			{Label: "TSB", Value: num(in.TSB)},
 			{Label: "Без теста", Value: daysOrNever(in.DaysSinceTest)},
+			{Label: "FTP", Value: ftpValue(in)},
+			{Label: "Z2", Value: wattsRange(in)},
 			{Label: "Станок", Value: pct(in.TrainerShare*100) + "%"},
-			{Label: "FTP", Value: wattsRange(in)},
 		},
 	}
 }
 
-// activeFTP — действующий FTP по доле станка; без уличного значения
-// возвращаемся к станковому. Ноль означает, что FTP вообще не задан.
+// activeFTP — действующий FTP по доле станка. Нулевой, NaN или Inf FTP не
+// считается заданным: переходим к другому виду, а не показываем 0 Вт.
 func activeFTP(in Input) float64 {
+	trainerOK, outdoorOK := validFTP(in.FTPTrainer), validFTP(in.FTPOutdoor)
 	if in.TrainerShare >= 0.5 {
-		return in.FTPTrainer
+		if trainerOK {
+			return in.FTPTrainer
+		}
+		if outdoorOK {
+			return in.FTPOutdoor
+		}
+		return 0
 	}
-	if in.FTPOutdoor > 0 {
+	if outdoorOK {
 		return in.FTPOutdoor
 	}
-	return in.FTPTrainer
+	if trainerOK {
+		return in.FTPTrainer
+	}
+	return 0
 }
 
-func watts(in Input, fromPct, toPct int) [2]int {
+func validFTP(v float64) bool {
+	return v > 0 && !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
+// watts возвращает nil, если FTP не задан: [0,0] в JSON выглядел бы как
+// реальные нулевые ватты.
+func watts(in Input, fromPct, toPct int) *[2]int {
 	ftp := activeFTP(in)
 	if ftp <= 0 {
-		return [2]int{0, 0}
+		return nil
 	}
-	return [2]int{
+	w := [2]int{
 		int(math.Round(float64(fromPct) / 100 * ftp)),
 		int(math.Round(float64(toPct) / 100 * ftp)),
 	}
+	return &w
 }
 
 func wattsRange(in Input) string {
 	w := watts(in, 60, 75)
-	if w[0] == 0 && w[1] == 0 {
+	if w == nil {
 		return "нет"
 	}
 	return fmt.Sprintf("%d–%d Вт", w[0], w[1])
+}
+
+func ftpValue(in Input) string {
+	if ftp := activeFTP(in); ftp > 0 {
+		return fmt.Sprintf("%.0f Вт", ftp)
+	}
+	return "не задан"
 }
 
 func weekFactor(in Input) string {

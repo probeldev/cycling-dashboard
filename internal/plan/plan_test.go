@@ -133,8 +133,8 @@ func TestRules(t *testing.T) {
 			if !strings.Contains(rec.Rationale, tt.want) {
 				t.Errorf("Rationale = %q, хочу подстроку %q", rec.Rationale, tt.want)
 			}
-			if len(rec.Factors) == 0 || len(rec.Factors) > 4 {
-				t.Errorf("Factors = %d, хочу 1..4", len(rec.Factors))
+			if len(rec.Factors) == 0 || len(rec.Factors) > 5 {
+				t.Errorf("Factors = %d, хочу 1..5", len(rec.Factors))
 			}
 		})
 	}
@@ -314,13 +314,16 @@ func TestWattsFromActiveFTP(t *testing.T) {
 		trainerShare float64
 		trainerFTP   float64
 		outdoorFTP   float64
-		want         [2]int
+		want         *[2]int
 	}{
-		{"станок", 0.5, 200, 300, [2]int{120, 150}},
-		{"улица", 0.49, 200, 300, [2]int{180, 225}},
-		{"нет уличного FTP — станковый", 0.2, 200, 0, [2]int{120, 150}},
-		{"нулевой FTP", 0.7, 0, 0, [2]int{0, 0}},
-		{"дробный FTP округляется", 0.7, 157, 0, [2]int{94, 118}},
+		{"станок", 0.5, 200, 300, &[2]int{120, 150}},
+		{"улица", 0.49, 200, 300, &[2]int{180, 225}},
+		{"нет уличного FTP — станковый", 0.2, 200, 0, &[2]int{120, 150}},
+		{"станковый FTP 0 — уличный", 0.5, 0, 300, &[2]int{180, 225}},
+		{"нулевой FTP", 0.7, 0, 0, nil},
+		{"NaN FTP", 0.5, math.NaN(), 200, &[2]int{120, 150}},
+		{"Inf FTP", 0.5, math.Inf(1), 0, nil},
+		{"дробный FTP округляется", 0.7, 157, 0, &[2]int{94, 118}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			in := baseInput()
@@ -328,12 +331,21 @@ func TestWattsFromActiveFTP(t *testing.T) {
 			in.FTPTrainer = tt.trainerFTP
 			in.FTPOutdoor = tt.outdoorFTP
 			rec := Recommend(in)
-			if rec.Watts != tt.want {
-				t.Errorf("Watts = %v, хочу %v", rec.Watts, tt.want)
+			if tt.want == nil {
+				if rec.Watts != nil {
+					t.Fatalf("Watts = %v, хочу null", *rec.Watts)
+				}
+				return
+			}
+			if rec.Watts == nil {
+				t.Fatalf("Watts = null, хочу %v", *tt.want)
+			}
+			if *rec.Watts != *tt.want {
+				t.Errorf("Watts = %v, хочу %v", *rec.Watts, *tt.want)
 			}
 			for _, w := range rec.Watts {
 				if math.IsNaN(float64(w)) || math.IsInf(float64(w), 0) {
-					t.Errorf("Watts = %v: NaN/Inf", rec.Watts)
+					t.Errorf("Watts = %v: NaN/Inf", *rec.Watts)
 				}
 			}
 		})
@@ -383,5 +395,25 @@ func TestSafetyBeforeLowData(t *testing.T) {
 	rec := Recommend(in)
 	if rec.RuleID != 2 || rec.Kind != "z1z2" || rec.DurationMin != [2]int{40, 60} {
 		t.Fatalf("rec = %+v, хочу правило 2 Z1–Z2 40–60, а не 60 мин Z2", rec)
+	}
+}
+
+func TestFTPFactorSeparateFromZone(t *testing.T) {
+	in := baseInput()
+	in.TSB = 20
+	in.DaysSinceTest = 30
+	in.TrainerShare = 0.7
+	in.FTPTrainer = 200
+	in.FTPOutdoor = 300
+	rec := Recommend(in)
+	got := map[string]string{}
+	for _, f := range rec.Factors {
+		got[f.Label] = f.Value
+	}
+	if got["FTP"] != "200 Вт" {
+		t.Errorf("FTP = %q, хочу действующий 200 Вт", got["FTP"])
+	}
+	if got["Z2"] != "120–150 Вт" {
+		t.Errorf("Z2 = %q, хочу диапазон 120–150 Вт", got["Z2"])
 	}
 }

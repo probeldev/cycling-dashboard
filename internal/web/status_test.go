@@ -169,7 +169,8 @@ func TestStatusGolden(t *testing.T) {
 	if rec.RuleID != 7 || rec.Kind != "z2" || rec.Zone != "Z2" {
 		t.Errorf("recommendation = %+v", rec)
 	}
-	if rec.DurationMin != [2]int{60, 75} || rec.Watts != [2]int{120, 150} ||
+	if rec.DurationMin != [2]int{60, 75} ||
+		rec.Watts == nil || *rec.Watts != [2]int{120, 150} ||
 		rec.PctFTP != [2]int{60, 75} || rec.Cadence != [2]int{85, 90} {
 		t.Errorf("recommendation ranges = %+v", rec)
 	}
