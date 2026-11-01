@@ -395,7 +395,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		records, err := store.BestRecords(db, from, to, includeTests)
+		records, err := store.BestRecordsUntil(db, from, to, includeTests)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -449,7 +449,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		records, err := store.BestRecords(db, from, to, includeTests)
+		records, err := store.BestRecordsUntil(db, from, to, includeTests)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

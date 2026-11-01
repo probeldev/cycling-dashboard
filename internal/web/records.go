@@ -10,8 +10,10 @@ import (
 
 // parseRecordsPeriod разбирает ?period (30d|90d|365d|all) в диапазон [from, to)
 // и длину предыдущего периода в днях (0 — предыдущего нет). По умолчанию all.
+// Верхняя граница — now, а не конец сегодняшнего дня: будущая тренировка не
+// должна попадать в рекорды и CP-фит.
 func parseRecordsPeriod(q url.Values, now time.Time) (from, to time.Time, prevDays int, err error) {
-	to = store.StartOfDay(now).AddDate(0, 0, 1)
+	to = now
 	switch q.Get("period") {
 	case "", "all":
 		from = time.Time{}

@@ -16,13 +16,38 @@ type Record struct {
 // побеждает более ранняя тренировка: рекорд принадлежит тому, кто установил
 // его первым. Тестовые тренировки (is_test=1) по умолчанию не участвуют:
 // пик из ramp-теста — не рабочее достижение; includeTests возвращает их в
-// выборку. Результат отсортирован по окну.
+// выборку. Результат отсортирован по окну. Для окон «на сейчас» нужен
+// BestRecordsUntil: полуоткрытый to=now теряет тренировку, начавшуюся в
+// текущую секунду.
 func BestRecords(db DBTX, from, to time.Time, includeTests bool) ([]Record, error) {
-	rows, err := db.Query(`SELECT r.window_sec, r.watts, w.id, w.start_time, COALESCE(w.name, '')
+	return bestRecords(db, from, to, time.Time{}, includeTests)
+}
+
+// BestRecordsUntil — лучшие значения за [from, until] с включительной верхней
+// границей: тренировка ровно в until входит, будущая — нет. Используется для
+// рекордов и CP-фита «на сейчас», чтобы будущая тренировка не протекала в
+// текущие показатели.
+func BestRecordsUntil(db DBTX, from, until time.Time, includeTests bool) ([]Record, error) {
+	return bestRecords(db, from, time.Time{}, until, includeTests)
+}
+
+func bestRecords(db DBTX, from, to, until time.Time, includeTests bool) ([]Record, error) {
+	query := `SELECT r.window_sec, r.watts, w.id, w.start_time, COALESCE(w.name, '')
 	    FROM power_records r JOIN workouts w ON w.id = r.workout_id
-	    WHERE w.start_time >= ? AND w.start_time < ? AND (? OR w.is_test = 0)
-	    ORDER BY r.window_sec, r.watts DESC, w.start_time ASC`,
-		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339), includeTests)
+	    WHERE w.start_time >= ?`
+	args := []any{from.UTC().Format(time.RFC3339)}
+	if !to.IsZero() {
+		query += ` AND w.start_time < ?`
+		args = append(args, to.UTC().Format(time.RFC3339))
+	}
+	if !until.IsZero() {
+		query += ` AND w.start_time <= ?`
+		args = append(args, until.UTC().Format(time.RFC3339))
+	}
+	query += ` AND (? OR w.is_test = 0)
+	    ORDER BY r.window_sec, r.watts DESC, w.start_time ASC`
+	args = append(args, includeTests)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +80,9 @@ func BestRecords(db DBTX, from, to time.Time, includeTests bool) ([]Record, erro
 // (и не отнимают рекорд у рабочих): includeTests меняет это для обоих сторон.
 // Четыре скана таблицы (по одному на период) — осознанно: power_records
 // маленькая (окна × тренировки с мощностью), а запрос только на деталке.
+// Верхняя граница — now: будущая тренировка не получает PR и не отнимает
+// рекорды у прошлых.
 func WorkoutPRs(db DBTX, id int64, now time.Time, includeTests bool) (map[int][]string, error) {
-	to := StartOfDay(now).AddDate(0, 0, 1)
 	periods := []struct {
 		label string
 		from  time.Time
@@ -68,7 +94,7 @@ func WorkoutPRs(db DBTX, id int64, now time.Time, includeTests bool) (map[int][]
 	}
 	out := map[int][]string{}
 	for _, p := range periods {
-		best, err := BestRecords(db, p.from, to, includeTests)
+		best, err := BestRecordsUntil(db, p.from, now, includeTests)
 		if err != nil {
 			return nil, err
 		}

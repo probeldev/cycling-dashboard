@@ -48,8 +48,9 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 		// TSB считаем от округлённых CTL/ATL — тех же чисел, что в карточках:
 		// иначе на границе −10.04 число и подпись расходились бы со статусом.
 		tsb := round1(round1(pmcDay.CTL) - round1(pmcDay.ATL))
-		// CP/W' по всем данным: окна MMP за всё время
-		allRecords, err := store.BestRecords(db, time.Time{}, to.AddDate(0, 0, 1), false)
+		// CP/W' по всем данным: окна MMP за всё время, но не позже now —
+		// будущая тренировка не должна менять фит.
+		allRecords, err := store.BestRecordsUntil(db, time.Time{}, now, false)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

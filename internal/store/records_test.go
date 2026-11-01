@@ -2,6 +2,7 @@ package store
 
 import (
 	"math"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -70,11 +71,40 @@ func TestBestRecords(t *testing.T) {
 	}
 }
 
+// TestBestRecordsUntil — верхняя граница включительная: запись ровно в
+// until входит, будущая — нет.
+func TestBestRecordsUntil(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now()
+	mk := func(hash string, start time.Time, watts float64) int64 {
+		t.Helper()
+		id, err := InsertWorkout(db, &Workout{StartTime: start, Duration: time.Hour},
+			hash, "/tmp/"+hash+".fit", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SetWorkoutMMP(db, id, []PowerRecord{{WindowSec: 60, Watts: watts}}, 1); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	atNow := mk("hash-until-now", now, 300)
+	mk("hash-until-future", now.Add(2*time.Hour), 500)
+
+	recs, err := BestRecordsUntil(db, time.Time{}, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].WorkoutID != atNow {
+		t.Errorf("записи до now: %+v, хочу только %d", recs, atNow)
+	}
+}
+
 // TestWorkoutPRs — рекордные окна по периодам; равенство отдаётся ранней.
 func TestWorkoutPRs(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now()
-	id, err := InsertWorkout(db, &Workout{StartTime: now, Duration: time.Hour},
+	id, err := InsertWorkout(db, &Workout{StartTime: now.Add(-time.Hour), Duration: time.Hour},
 		"hash-pr-1", "/tmp/pr.fit", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +122,65 @@ func TestWorkoutPRs(t *testing.T) {
 		got := prs[w]
 		if len(got) != 4 || got[0] != "all" || got[1] != "365d" || got[2] != "90d" || got[3] != "30d" {
 			t.Errorf("окно %d: %v, хочу [all 365d 90d 30d]", w, got)
+		}
+	}
+}
+
+// TestWorkoutPRsIgnoreFuture — будущая тренировка не отнимает PR у прошлой и
+// до наступления не получает собственных флагов.
+func TestWorkoutPRsIgnoreFuture(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now()
+	mk := func(hash string, start time.Time, watts float64) int64 {
+		t.Helper()
+		id, err := InsertWorkout(db, &Workout{StartTime: start, Duration: time.Hour},
+			hash, "/tmp/"+hash+".fit", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := SetWorkoutMMP(db, id, []PowerRecord{
+			{WindowSec: 60, Watts: watts},
+			{WindowSec: 300, Watts: watts - 50},
+			{WindowSec: 1200, Watts: watts - 100},
+		}, 1); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	past := mk("hash-pr-future-past", now.Add(-24*time.Hour), 300)
+	before, err := WorkoutPRs(db, past, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before[60]) == 0 || before[60][0] != "all" {
+		t.Fatalf("у прошлой тренировки нет PR: %v", before)
+	}
+
+	future := mk("hash-pr-future", now.Add(2*time.Hour), 500)
+	after, err := WorkoutPRs(db, past, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("PR прошлой изменились от будущей:\nдо  %v\nпосле %v", before, after)
+	}
+
+	prs, err := WorkoutPRs(db, future, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prs) != 0 {
+		t.Errorf("PR будущей тренировки: %v, хочу пусто", prs)
+	}
+
+	recs, err := BestRecordsUntil(db, time.Time{}, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if r.WorkoutID == future {
+			t.Errorf("окно %d: будущая тренировка попала в рекорды", r.WindowSec)
 		}
 	}
 }
