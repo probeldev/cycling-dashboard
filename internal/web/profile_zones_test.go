@@ -47,13 +47,15 @@ func TestProfileZonesPage(t *testing.T) {
 	for _, w := range []struct {
 		hash    string
 		trainer bool
+		ftpKind string
 		zones   [7]int
 	}{
-		{"hash-zones-trainer", true, [7]int{60, 120, 180, 0, 0, 0, 0}},
-		{"hash-zones-outdoor", false, [7]int{0, 3600, 0, 0, 0, 0, 0}},
+		{"hash-zones-trainer", true, "trainer", [7]int{60, 120, 180, 0, 0, 0, 0}},
+		{"hash-zones-outdoor", false, "outdoor", [7]int{0, 3600, 0, 0, 0, 0, 0}},
 	} {
 		id, err := store.InsertWorkout(db, &store.Workout{
 			StartTime: time.Now().Add(-time.Hour), Duration: time.Hour, Trainer: w.trainer,
+			FTPKind: w.ftpKind,
 		}, w.hash, filepath.Join(t.TempDir(), "x.fit"), 1)
 		if err != nil {
 			t.Fatal(err)

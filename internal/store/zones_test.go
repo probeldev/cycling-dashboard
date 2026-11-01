@@ -90,6 +90,51 @@ func TestWeeksEmpty(t *testing.T) {
 	}
 }
 
+// TestZoneTimeByFTPKind — время в зонах группируется по базе FTP (ftp_kind),
+// а не по типу тренировки: уличная с fallback на станковый FTP попадает в
+// станковую базу, а тренировки без FTP в сумме не участвуют.
+func TestZoneTimeByFTPKind(t *testing.T) {
+	db := openTestDB(t)
+	from := time.Date(2026, 10, 15, 0, 0, 0, 0, time.Local)
+	to := from.AddDate(0, 0, 1)
+	start := from.Add(time.Hour)
+	add := func(hash, kind string, trainer bool, z [7]int) int64 {
+		t.Helper()
+		id := insertTimelineWorkout(t, db, hash, start, 50, 60, 20, trainer)
+		if kind != "" {
+			if _, err := db.Exec(`UPDATE workouts SET ftp_kind = ? WHERE id = ?`, kind, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := SetWorkoutZones(db, id, z, 1); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	add("hash-zt-trainer", "trainer", true, [7]int{100, 0, 0, 0, 0, 0, 0})
+	add("hash-zt-fallback", "trainer", false, [7]int{200, 0, 0, 0, 0, 0, 0})
+	add("hash-zt-outdoor", "outdoor", false, [7]int{300, 0, 0, 0, 0, 0, 0})
+	add("hash-zt-none", "", true, [7]int{400, 0, 0, 0, 0, 0, 0})
+
+	trainer, err := ZoneTime(db, from, to, "trainer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trainer[0] != 300 {
+		t.Errorf("станковая база: Z1=%d, хочу 300 (тренировка + fallback)", trainer[0])
+	}
+	outdoor, err := ZoneTime(db, from, to, "outdoor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outdoor[0] != 300 {
+		t.Errorf("уличная база: Z1=%d, хочу 300", outdoor[0])
+	}
+	if got := trainer[1] + trainer[2] + trainer[3] + trainer[4] + trainer[5] + trainer[6]; got != 0 {
+		t.Errorf("в станковую базу попали чужие зоны: %v", trainer)
+	}
+}
+
 // TestSetWorkoutZonesTransactional — сбой на INSERT откатывает и DELETE:
 // старые зоны и версия остаются нетронутыми.
 func TestSetWorkoutZonesTransactional(t *testing.T) {
