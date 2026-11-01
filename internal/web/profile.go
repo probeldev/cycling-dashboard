@@ -23,6 +23,11 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			return
 		}
 		now := time.Now()
+		target, err := store.WeeklyTarget(db, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		weight, hasWeight := store.ProfileAt(db, "weight", now)
 		ftp, hasFTP := store.ProfileAt(db, "ftp", now)
 		ftpOutdoor, hasFTPOutdoor := store.ProfileAt(db, "ftp_outdoor", now)
@@ -47,16 +52,19 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			outdoorZones = buildPowerZones(ftpOutdoor, secs)
 		}
 		render(w, "profile.html", map[string]any{
-			"History":       history,
-			"Weight":        weight,
-			"HasWeight":     hasWeight,
-			"FTP":           ftp,
-			"HasFTP":        hasFTP,
-			"FTPOutdoor":    ftpOutdoor,
-			"HasFTPOutdoor": hasFTPOutdoor,
-			"TrainerZones":  trainerZones,
-			"OutdoorZones":  outdoorZones,
-			"Today":         now.Format("2006-01-02"),
+			"History":            history,
+			"Weight":             weight,
+			"HasWeight":          hasWeight,
+			"FTP":                ftp,
+			"HasFTP":             hasFTP,
+			"FTPOutdoor":         ftpOutdoor,
+			"HasFTPOutdoor":      hasFTPOutdoor,
+			"TrainerZones":       trainerZones,
+			"OutdoorZones":       outdoorZones,
+			"Today":              now.Format("2006-01-02"),
+			"WeeklyTarget":       target.TSS,
+			"HasWeeklyTarget":    target.Source != store.TargetSourceNone,
+			"WeeklyTargetSource": targetSourceText(target.Source),
 		})
 	})
 
@@ -114,6 +122,27 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			return
 		}
 		if err := tx.Commit(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("HX-Redirect", "/profile")
+	})
+
+	r.Post("/profile/weekly-target", func(w http.ResponseWriter, req *http.Request) {
+		value, err := strconv.ParseFloat(req.FormValue("value"), 64)
+		if err != nil {
+			http.Error(w, "недельная цель: нужно число", http.StatusBadRequest)
+			return
+		}
+		if err := store.SetWeeklyTarget(db, value); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("HX-Redirect", "/profile")
+	})
+
+	r.Post("/profile/weekly-target/reset", func(w http.ResponseWriter, req *http.Request) {
+		if err := store.ClearWeeklyTarget(db); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

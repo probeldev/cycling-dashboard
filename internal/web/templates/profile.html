@@ -10,6 +10,21 @@
 </div>
 {{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="color:var(--dim); font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ watts .FTP }} Вт.</p>{{ end }}
 
+<h2>Цель недели</h2>
+<p class="sub" style="color:var(--dim); font-size:14px">
+  {{ if .HasWeeklyTarget }}Текущая цель: <b>{{ trimFloat .WeeklyTarget }} TSS</b> — {{ .WeeklyTargetSource }}.{{ else }}Цель не задана — автоматическая не посчиталась: нет полных недель с нагрузкой.{{ end }}
+</p>
+<form hx-post="/profile/weekly-target" hx-swap="none" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin:10px 0">
+  <label style="font-size:14px">Цель недели, TSS<br>
+    <input type="number" name="value" min="100" max="1500" step="1" required
+           value="{{ if .HasWeeklyTarget }}{{ trimFloat .WeeklyTarget }}{{ end }}"
+           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:120px">
+  </label>
+  <button type="submit">Сохранить</button>
+  <button type="button" hx-post="/profile/weekly-target/reset" hx-swap="none">Сбросить на авто</button>
+</form>
+<p class="sub" style="color:var(--dim); font-size:13px">Без ручной цели — медиана последних 4 полных недель с нагрузкой; если истории меньше, последняя полная неделя; если полных недель с нагрузкой нет — цель не задана.</p>
+
 {{ if or .HasFTP .HasFTPOutdoor }}
 <h2>Мощностные зоны</h2>
 <p class="sub" style="color:var(--dim); font-size:14px">Границы — от текущего FTP, правая граница зоны не входит. Время — за последние 90 дней из зон тренировок.</p>

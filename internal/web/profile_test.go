@@ -293,3 +293,51 @@ func TestProfileHistoryFractionalFTP(t *testing.T) {
 		t.Error("история профиля не показывает дробный FTP 156.5")
 	}
 }
+
+func TestProfileWeeklyTargetForm(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func() (int, string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+		return rec.Code, rec.Body.String()
+	}
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	code, body := get()
+	if code != http.StatusOK || !strings.Contains(body, "Цель недели") || !strings.Contains(body, "не задана") {
+		t.Fatalf("GET /profile: код %d, нет формы цели", code)
+	}
+	if rec := post("/profile/weekly-target", "value=450"); rec.Code != http.StatusOK {
+		t.Errorf("POST weekly-target: код %d: %s", rec.Code, rec.Body.String())
+	}
+	_, body = get()
+	for _, want := range []string{"450", "вручную"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("после сохранения нет %q", want)
+		}
+	}
+	if rec := post("/profile/weekly-target", "value=50"); rec.Code != http.StatusBadRequest {
+		t.Errorf("POST value=50: код %d, хочу 400", rec.Code)
+	}
+	if rec := post("/profile/weekly-target/reset", ""); rec.Code != http.StatusOK {
+		t.Errorf("POST reset: код %d", rec.Code)
+	}
+	_, body = get()
+	if !strings.Contains(body, "не задана") {
+		t.Error("после сброса цель всё ещё задана")
+	}
+}
