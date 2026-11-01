@@ -30,13 +30,15 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"secs":      func(s int) time.Duration { return time.Duration(s) * time.Second },
 	"date":      func(t time.Time) string { return t.Format("02.01.2006") },
 	"trimFloat": trimFloat,
+	"watts":     watts,
 	"deref": func(v *float64) float64 {
 		if v == nil {
 			return 0
 		}
 		return *v
 	},
-	"divf": func(a int, b float64) float64 { return float64(a) / b },
+	"divf":  func(a int, b float64) float64 { return float64(a) / b },
+	"divff": func(a, b float64) float64 { return a / b },
 	"pizzas": func(kcal int) string {
 		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
 		if p < 0.3 {

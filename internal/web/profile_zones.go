@@ -30,17 +30,19 @@ var powerZonePurposes = [7]string{
 }
 
 // buildPowerZones строит таблицу от тех же границ, что расчёт зон и /dist:
-// 0.56×156 = 87.36 печатается как 87.4, а не округляется до 87. Правая
-// граница зоны не входит, поэтому проценты показываем как 56–75%, а не 56–76%.
-func buildPowerZones(ftp int, secs [7]int) []powerZone {
+// 0.56×156 = 87.36 печатается как 87.4, а не округляется до 87. FTP дробный
+// (156.5) сохраняется: int(ftp) сдвигал бы границы и подписи от реальной базы.
+// Правая граница зоны не входит, поэтому проценты показываем как 56–75%,
+// а не 56–76%.
+func buildPowerZones(ftp float64, secs [7]int) []powerZone {
 	bounds := ridedata.ZoneBounds()
 	rows := make([]powerZone, len(bounds))
 	for i := range bounds {
-		from := bounds[i] * float64(ftp)
+		from := bounds[i] * ftp
 		wattsRange := watts(from) + "+"
 		pct := fmt.Sprintf("%d%%+", int(math.Round(bounds[i]*100)))
 		if i+1 < len(bounds) {
-			wattsRange = watts(from) + "–" + watts(bounds[i+1]*float64(ftp))
+			wattsRange = watts(from) + "–" + watts(bounds[i+1]*ftp)
 			pct = fmt.Sprintf("%d–%d%%", int(math.Round(bounds[i]*100)), int(math.Round(bounds[i+1]*100))-1)
 		}
 		rows[i] = powerZone{

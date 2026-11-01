@@ -3,18 +3,18 @@
 
 <div class="stats">
   {{ if .HasWeight }}<div class="stat"><div class="v">{{ km .Weight }} кг</div><div class="k">вес</div></div>{{ end }}
-  {{ if .HasFTP }}<div class="stat"><div class="v">{{ .FTP }} Вт</div><div class="k">FTP (станок)</div></div>{{ end }}
-  {{ if .HasFTPOutdoor }}<div class="stat"><div class="v">{{ .FTPOutdoor }} Вт</div><div class="k">FTP (улица)</div></div>{{ end }}
-  {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divf .FTP .Weight) }}</div><div class="k">Вт/кг (станок)</div></div>{{ end }}
-  {{ if and .HasFTPOutdoor .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divf .FTPOutdoor .Weight) }}</div><div class="k">Вт/кг (улица)</div></div>{{ end }}
+  {{ if .HasFTP }}<div class="stat"><div class="v">{{ watts .FTP }} Вт</div><div class="k">FTP (станок)</div></div>{{ end }}
+  {{ if .HasFTPOutdoor }}<div class="stat"><div class="v">{{ watts .FTPOutdoor }} Вт</div><div class="k">FTP (улица)</div></div>{{ end }}
+  {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divff .FTP .Weight) }}</div><div class="k">Вт/кг (станок)</div></div>{{ end }}
+  {{ if and .HasFTPOutdoor .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divff .FTPOutdoor .Weight) }}</div><div class="k">Вт/кг (улица)</div></div>{{ end }}
 </div>
-{{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="color:var(--dim); font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ .FTP }} Вт.</p>{{ end }}
+{{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="color:var(--dim); font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ watts .FTP }} Вт.</p>{{ end }}
 
 {{ if or .HasFTP .HasFTPOutdoor }}
 <h2>Мощностные зоны</h2>
 <p class="sub" style="color:var(--dim); font-size:14px">Границы — от текущего FTP, правая граница зоны не входит. Время — за последние 90 дней из зон тренировок.</p>
 {{ with .TrainerZones }}
-<h3>Станок · FTP {{ $.FTP }} Вт</h3>
+<h3>Станок · FTP {{ watts $.FTP }} Вт</h3>
 <table>
   <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
   {{ range . }}
@@ -23,7 +23,7 @@
 </table>
 {{ end }}
 {{ with .OutdoorZones }}
-<h3>Улица · FTP {{ $.FTPOutdoor }} Вт</h3>
+<h3>Улица · FTP {{ watts $.FTPOutdoor }} Вт</h3>
 <table>
   <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
   {{ range . }}

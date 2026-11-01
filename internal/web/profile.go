@@ -36,7 +36,7 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			trainerZones = buildPowerZones(int(ftp), secs)
+			trainerZones = buildPowerZones(ftp, secs)
 		}
 		if hasFTPOutdoor {
 			secs, err := store.ZoneTime(db, zoneFrom, zoneTo, "outdoor")
@@ -44,15 +44,15 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			outdoorZones = buildPowerZones(int(ftpOutdoor), secs)
+			outdoorZones = buildPowerZones(ftpOutdoor, secs)
 		}
 		render(w, "profile.html", map[string]any{
 			"History":       history,
 			"Weight":        weight,
 			"HasWeight":     hasWeight,
-			"FTP":           int(ftp),
+			"FTP":           ftp,
 			"HasFTP":        hasFTP,
-			"FTPOutdoor":    int(ftpOutdoor),
+			"FTPOutdoor":    ftpOutdoor,
 			"HasFTPOutdoor": hasFTPOutdoor,
 			"TrainerZones":  trainerZones,
 			"OutdoorZones":  outdoorZones,

@@ -105,6 +105,41 @@ func TestProfileZonesPage(t *testing.T) {
 	}
 }
 
+// TestProfileFractionalFTP — дробный FTP не усекается до целого: заголовок,
+// границы зон и Вт/кг считаются от 156.5, а не от 156.
+func TestProfileFractionalFTP(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().Add(-time.Hour)
+	if err := store.AddProfileEntry(db, "ftp", 156.5, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "weight", 75, at); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"156.5 Вт", "Станок · FTP 156.5 Вт", "0–87.6", "2.1"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на /profile нет %q", want)
+		}
+	}
+	if strings.Contains(body, "87.4") {
+		t.Errorf("границы зон посчитаны от усечённого FTP 156")
+	}
+}
+
 // TestProfileZonesEmptyHistory — без тренировок за 90 дней зоны всё равно
 // показаны, а время — прочерк, а не «0 мин».
 func TestProfileZonesEmptyHistory(t *testing.T) {
