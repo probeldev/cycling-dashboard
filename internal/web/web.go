@@ -340,6 +340,8 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		writeJSON(w, days)
 	})
 
+	r.Get("/api/status", handleStatus(db))
+
 	r.Get("/api/readiness", func(w http.ResponseWriter, req *http.Request) {
 		readiness, err := store.Readiness(db, time.Now())
 		if err != nil {
