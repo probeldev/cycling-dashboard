@@ -29,8 +29,10 @@ type statusResponse struct {
 	LastWorkout    any                  `json:"lastWorkout"`
 	Readiness      store.ReadinessStats `json:"readiness"`
 	Alerts         []statusAlert        `json:"alerts"`
-	AlertsAll      []statusAlert        `json:"alertsAll"`
+	AlertsAll      []statusAlert        `json:"alertsAll,omitempty"`
 	Rules          []plan.RuleCheck     `json:"rules,omitempty"`
+
+	AllAlerts []statusAlert `json:"-"` // для страницы «Сегодня»: все, без обрезки
 }
 
 // statusState — общая оценка дня и разбор трёх метрик PMC по отдельности.
@@ -170,7 +172,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	}
 	state := buildState(cur, pmcDay, facts, days)
 
-	latest, err := store.LatestWorkout(db)
+	latest, err := store.LatestWorkoutBefore(db, now)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -202,6 +204,10 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	if len(alerts) > 3 {
 		alerts = alerts[:3]
 	}
+	var alertsDebug []statusAlert
+	if debug {
+		alertsDebug = alertsAll
+	}
 
 	yesterday := 0.0
 	if len(days) >= 2 {
@@ -219,8 +225,9 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		LastWorkout:    lastWorkout,
 		Readiness:      readiness,
 		Alerts:         alerts,
-		AlertsAll:      alertsAll,
+		AlertsAll:      alertsDebug,
 		Rules:          checks,
+		AllAlerts:      alertsAll,
 	}
 	return out, nil
 }
@@ -599,8 +606,7 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 	if err != nil {
 		return nil, err
 	}
-	if len(hints) > 0 {
-		h := hints[0]
+	for _, h := range hints {
 		kind := "станковый"
 		if h.Kind == "outdoor" {
 			kind = "уличный"
@@ -620,7 +626,7 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 				facts.dataDays, facts.loadDays42),
 		})
 	}
-	rank := map[string]int{"stale": 0, "data_gaps": 1, "no_hr": 2, "no_rpe": 3, "ftp_hint": 4, "lowdata": 5}
+	rank := map[string]int{"stale": 0, "data_gaps": 1, "no_hr": 2, "lowdata": 3, "no_rpe": 4, "ftp_hint": 5}
 	sort.SliceStable(alerts, func(i, j int) bool { return rank[alerts[i].Code] < rank[alerts[j].Code] })
 	return alerts, nil
 }

@@ -1159,10 +1159,18 @@ func avgPower(db *sql.DB, where string, args ...any) int {
 	return int(v.Int64)
 }
 
-// LatestWorkout возвращает последнюю по дате старта тренировку.
+// LatestWorkout возвращает последнюю по дате старта тренировку, не заглядывая
+// в будущее: ошибочная дата в файле не должна подменять «последнюю».
 func LatestWorkout(db *sql.DB) (*Workout, error) {
+	return LatestWorkoutBefore(db, time.Now())
+}
+
+// LatestWorkoutBefore — LatestWorkout на фиксированный момент (для статуса,
+// который считает день по переданному now).
+func LatestWorkoutBefore(db *sql.DB, now time.Time) (*Workout, error) {
 	var id int64
-	if err := db.QueryRow(`SELECT id FROM workouts ORDER BY start_time DESC LIMIT 1`).Scan(&id); err != nil {
+	if err := db.QueryRow(`SELECT id FROM workouts WHERE start_time <= ? ORDER BY start_time DESC, id DESC LIMIT 1`,
+		now.UTC().Format(time.RFC3339)).Scan(&id); err != nil {
 		return nil, err
 	}
 	return GetWorkout(db, id)

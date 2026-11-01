@@ -193,8 +193,8 @@ func TestStatusGolden(t *testing.T) {
 	if len(got.Alerts) != 2 || got.Alerts[0].Code != "no_hr" || got.Alerts[1].Code != "no_rpe" {
 		t.Errorf("alerts = %+v", got.Alerts)
 	}
-	if len(got.AlertsAll) != 2 {
-		t.Errorf("alertsAll = %+v", got.AlertsAll)
+	if len(got.AllAlerts) != 2 || got.AlertsAll != nil {
+		t.Errorf("alerts/all = %+v / %+v", got.Alerts, got.AlertsAll)
 	}
 }
 
@@ -243,11 +243,11 @@ func TestStatusEmptyDB(t *testing.T) {
 	almostEqual(t, "ctl", got.State.CTL.Value, 0)
 	almostEqual(t, "atl", got.State.ATL.Value, 0)
 	almostEqual(t, "tsb", got.State.TSB.Value, 0)
-	if len(got.AlertsAll) == 0 {
+	if len(got.AllAlerts) == 0 {
 		t.Error("alertsAll пуст, хочу stale и lowdata")
 	}
 	codes := map[string]bool{}
-	for _, a := range got.AlertsAll {
+	for _, a := range got.AllAlerts {
 		codes[a.Code] = true
 	}
 	if !codes["stale"] || !codes["lowdata"] {
@@ -393,6 +393,9 @@ func TestStatusAPIAndDebug(t *testing.T) {
 	if _, ok := body["rules"]; ok {
 		t.Error("без ?debug=1 поля rules быть не должно")
 	}
+	if _, ok := body["alertsAll"]; ok {
+		t.Error("без ?debug=1 поля alertsAll быть не должно")
+	}
 
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/status?debug=1", nil))
@@ -406,6 +409,9 @@ func TestStatusAPIAndDebug(t *testing.T) {
 	rules, ok := debugBody["rules"].([]any)
 	if !ok || len(rules) == 0 {
 		t.Errorf("rules = %#v", debugBody["rules"])
+	}
+	if all, ok := debugBody["alertsAll"].([]any); !ok || len(all) == 0 {
+		t.Errorf("debug alertsAll = %#v", debugBody["alertsAll"])
 	}
 }
 
@@ -467,4 +473,185 @@ func openStatusDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+func hasAlertCode(alerts []statusAlert, code string) bool {
+	for _, a := range alerts {
+		if a.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStatusStaleBoundary(t *testing.T) {
+	for _, tt := range []struct {
+		days int
+		want bool
+	}{{7, false}, {8, true}} {
+		db := openStatusDB(t)
+		now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: now.AddDate(0, 0, -tt.days), Duration: time.Hour, TSS: 30,
+		}, "hash-stale", filepath.Join(t.TempDir(), "s.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+		got, err := buildStatus(db, now, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hasAlertCode(got.AllAlerts, "stale") != tt.want {
+			t.Errorf("%d дн.: stale = %v, хочу %v (%+v)", tt.days, !tt.want, tt.want, got.AllAlerts)
+		}
+	}
+}
+
+func TestStatusMixedHRAndRPE(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	workouts := []store.Workout{
+		{StartTime: now.AddDate(0, 0, -1), Duration: time.Hour, TSS: 30, AvgPower: 100, AvgHR: 120},
+		{StartTime: now.AddDate(0, 0, -2), Duration: time.Hour, TSS: 30, AvgPower: 100, RPE: 5},
+		{StartTime: now.AddDate(0, 0, -3), Duration: time.Hour, TSS: 30, AvgPower: 100},
+	}
+	for i := range workouts {
+		id, err := store.InsertWorkout(db, &workouts[i], fmt.Sprintf("hash-mixed-%d", i), filepath.Join(t.TempDir(), "m.fit"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			rpe := 5
+			if err := store.SetWorkoutContext(db, id, store.WorkoutContextUpdate{RPE: &rpe}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasAlertCode(got.AllAlerts, "no_hr") {
+		t.Errorf("no_hr при наличии пульса хотя бы в одной тренировке: %+v", got.AllAlerts)
+	}
+	if hasAlertCode(got.AllAlerts, "no_rpe") {
+		t.Errorf("no_rpe при наличии RPE хотя бы в одной тренировке: %+v", got.AllAlerts)
+	}
+}
+
+func TestStatusAlertsTruncatedAndComplete(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	for i := 0; i < 3; i++ {
+		w := &store.Workout{
+			StartTime: now.AddDate(0, 0, -i), Duration: time.Hour, TSS: 30, AvgPower: 100,
+		}
+		if i == 0 {
+			w.NoPowerSec = 600 // > 5% времени — data_gaps
+		}
+		if _, err := store.InsertWorkout(db, w, fmt.Sprintf("hash-alerts-%d", i), filepath.Join(t.TempDir(), "a.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Alerts) != 3 {
+		t.Errorf("alerts = %d, хочу 3", len(got.Alerts))
+	}
+	if len(got.AllAlerts) < 4 {
+		t.Fatalf("allAlerts = %+v, хочу 4+", got.AllAlerts)
+	}
+	for _, code := range []string{"data_gaps", "no_hr", "lowdata", "no_rpe"} {
+		if !hasAlertCode(got.AllAlerts, code) {
+			t.Errorf("нет алерта %s: %+v", code, got.AllAlerts)
+		}
+	}
+	if got.AlertsAll != nil {
+		t.Errorf("без debug alertsAll должен быть пуст: %+v", got.AlertsAll)
+	}
+	debug, err := buildStatus(db, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(debug.AlertsAll) != len(debug.AllAlerts) {
+		t.Errorf("debug alertsAll = %d, all = %d", len(debug.AlertsAll), len(debug.AllAlerts))
+	}
+}
+
+func TestStatusLatestWorkoutIgnoresFuture(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	past, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, -1), Duration: time.Hour, TSS: 30,
+	}, "hash-latest-past", filepath.Join(t.TempDir(), "p.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, 1), Duration: time.Hour, TSS: 30,
+	}, "hash-latest-future", filepath.Join(t.TempDir(), "f.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, _ := got.LastWorkout.(map[string]any)
+	if last == nil {
+		t.Fatal("lastWorkout = null")
+	}
+	if id, _ := last["ID"].(float64); int64(id) != past {
+		t.Errorf("lastWorkout.ID = %v, хочу %d (не будущую)", last["ID"], past)
+	}
+}
+
+func TestStatePMCOnSameMoment(t *testing.T) {
+	db, now := statusFixture(t)
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	almostEqual(t, "tsb", got.State.TSB.Value, got.State.CTL.Value-got.State.ATL.Value)
+	if got.PMCAsOf != "2026-10-29" || got.TSBAsOf != "2026-10-29" {
+		t.Errorf("asOf = %q/%q, хочу конец предыдущего дня", got.PMCAsOf, got.TSBAsOf)
+	}
+	if !strings.Contains(got.TSBNote, "до нагрузки сегодняшнего дня") {
+		t.Errorf("tsbNote = %q", got.TSBNote)
+	}
+
+	// пустой день: TSB всё равно равен CTL − ATL на конец предыдущего дня
+	empty := openStatusDB(t)
+	got, err = buildStatus(empty, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	almostEqual(t, "empty tsb", got.State.TSB.Value, got.State.CTL.Value-got.State.ATL.Value)
+}
+
+func TestStatusIncludesBothFTPHints(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	if err := store.AddProfileEntry(db, "ftp", 200, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp_outdoor", 250, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	addHintWorkout(t, db, true, now.AddDate(0, 0, -2), 250)
+	addHintWorkout(t, db, false, now.AddDate(0, 0, -3), 300)
+
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, a := range got.AllAlerts {
+		if a.Code == "ftp_hint" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("ftp_hint = %d, хочу обе подсказки: %+v", n, got.AllAlerts)
+	}
 }
