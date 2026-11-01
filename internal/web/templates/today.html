@@ -1,0 +1,145 @@
+{{ template "head" . }}
+{{ $s := .S }}
+<div class="today">
+  <section class="statusbar label-{{ $s.State.Label }}">
+    <div class="d">{{ $s.AsOf }}</div>
+    <div class="label">{{ $s.State.LabelText }}</div>
+    <div class="summary">{{ $s.Summary }}</div>
+  </section>
+
+  <section class="panel rec">
+    <div class="rec-head">
+      <div>
+        <div class="kicker">Рекомендация</div>
+        <h2>{{ kindLabel $s.Recommendation.Kind }}</h2>
+      </div>
+      <div class="rec-facts">
+        <span>{{ durationText $s.Recommendation.DurationMin }}</span>
+        {{ with $s.Recommendation.Zone }}<span>{{ . }}</span>{{ end }}
+        {{ with $s.Recommendation.Watts }}<span class="w"><b>{{ wattsText . }}</b> Вт</span>{{ end }}
+        {{ if $s.Recommendation.Zone }}<span>· {{ rangeText $s.Recommendation.PctFTP }}% FTP</span>{{ end }}
+        {{ with cadenceText $s.Recommendation.Cadence }}<span>· {{ . }}</span>{{ end }}
+      </div>
+    </div>
+    <p class="rec-why">{{ $s.Recommendation.Rationale }}</p>
+    <details class="rec-details">
+      <summary>Почему так</summary>
+      <ul class="factors">
+        {{ range $s.Recommendation.Factors }}
+        <li><span>{{ .Label }}</span><b>{{ .Value }}</b></li>
+        {{ end }}
+      </ul>
+      <p class="muted" style="font-size:13px; margin:8px 0 0">{{ $s.TSBNote }}. PMC на {{ $s.PMCAsOf }}.</p>
+    </details>
+  </section>
+
+  <div class="cards">
+    <section class="metric">
+      <div class="k">Форма (CTL)</div>
+      <div class="v">{{ trimFloat $s.State.CTL.Value }}</div>
+      <div class="verdict">{{ $s.State.CTL.Verdict }}</div>
+      <div class="action">{{ $s.State.CTL.Action }}</div>
+      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.CTL.Spark }}"/></svg>
+      {{ if eq $s.State.Label "lowdata" }}<div class="note">(мало данных)</div>{{ end }}
+    </section>
+    <section class="metric">
+      <div class="k">Усталость (ATL)</div>
+      <div class="v">{{ trimFloat $s.State.ATL.Value }}</div>
+      <div class="verdict">{{ $s.State.ATL.Verdict }}</div>
+      <div class="action">{{ $s.State.ATL.Action }}</div>
+      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.ATL.Spark }}"/></svg>
+      {{ if eq $s.State.Label "lowdata" }}<div class="note">(мало данных)</div>{{ end }}
+    </section>
+    <section class="metric">
+      <div class="k">Свежесть (TSB)</div>
+      <div class="v">{{ trimFloat $s.State.TSB.Value }}</div>
+      <div class="verdict">{{ $s.State.TSB.Verdict }}</div>
+      <div class="action">{{ $s.State.TSB.Action }}</div>
+      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.TSB.Spark }}"/></svg>
+      {{ if eq $s.State.Label "lowdata" }}<div class="note">(мало данных)</div>{{ end }}
+    </section>
+  </div>
+  <p class="muted" style="font-size:13px; margin:-4px 0 0">{{ $s.TSBNote }} · PMC на {{ $s.PMCAsOf }}.</p>
+
+  <div class="grid2">
+    <section class="panel">
+      <h2>Последняя тренировка</h2>
+      {{ with $s.Last }}
+      <div class="week-top"><a href="/workout/{{ .ID }}">{{ .Date }}</a><span class="tag">{{ .Kind }}</span>{{ if .Name }}<b style="font-size:18px">{{ .Name }}</b>{{ end }}</div>
+      <div class="facts" style="margin-top:8px">
+        <span>время <b>{{ hours .DurationH }} ч</b></span>
+        {{ if .KM }}<span>дистанция <b>{{ km .KM }} км</b></span>{{ end }}
+        {{ if .HasPower }}<span>средняя <b>{{ .AvgPower }} Вт</b></span>{{ end }}
+        {{ if .NormPower }}<span>NP <b>{{ .NormPower }} Вт</b></span>{{ end }}
+        {{ with .TSS }}<span>TSS <b>{{ trimFloat (deref .) }}</b></span>{{ end }}
+        {{ with .IF }}<span>IF <b>{{ printf "%.2f" (deref .) }}</b></span>{{ end }}
+        {{ with .VI }}<span>VI <b>{{ printf "%.2f" (deref .) }}</b></span>{{ end }}
+        {{ if .RPE }}<span>RPE <b>{{ .RPE }}</b></span>{{ end }}
+        {{ with .Bike }}<span>велосипед <b>{{ . }}</b></span>{{ end }}
+      </div>
+      {{ range .Advice }}
+      <div class="mini {{ .Level }}"><b>{{ .Title }}</b> — {{ .Text }}</div>
+      {{ end }}
+      <p style="margin:10px 0 0"><a href="/workout/{{ .ID }}">Открыть тренировку →</a></p>
+      {{ else }}
+      <p class="empty">Тренировок пока нет — импортируйте .fit или синхронизируйте велокомп на странице «Поездки».</p>
+      {{ end }}
+    </section>
+
+    <section class="panel">
+      <h2>Неделя</h2>
+      {{ if $s.Week.Target }}
+      <div class="week-top"><b>{{ trimFloat $s.Week.TSS }}</b><span>/ {{ trimFloat (deref $s.Week.Target) }} TSS</span></div>
+      <div class="bar"><i class="{{ progressClass $s.Week.TSS $s.Week.Target }}" style="width:{{ meterWidth $s.Week.TSS $s.Week.Target }}%"></i></div>
+      <div class="week-line">на сегодня {{ trimFloat (deref $s.Week.TargetToDate) }} · на неделю {{ trimFloat (deref $s.Week.Target) }}</div>
+      <div class="week-line">осталось {{ trimFloat (deref $s.Week.Remaining) }} TSS{{ with $s.Week.RemainingMinZ2Total }} · ≈ {{ derefInt . }} мин Z2{{ end }}</div>
+      <div class="week-line">источник цели: {{ targetSourceText $s.Week.TargetSource }}</div>
+      {{ else }}
+      <div class="week-top"><b>{{ trimFloat $s.Week.TSS }}</b><span>TSS</span></div>
+      <p class="empty">Цель не задана — <a href="/profile">задать в профиле</a>.</p>
+      {{ end }}
+      <div class="facts" style="margin-top:10px">
+        <span><b>{{ hours $s.Week.Hours }} ч</b></span>
+        <span><b>{{ km $s.Week.KM }} км</b></span>
+        <span><b>{{ $s.Week.Rides }}</b> поездок</span>
+      </div>
+      <div class="week-line">станок {{ hours $s.Week.TrainerHours }} ч · улица {{ hours $s.Week.OutdoorHours }} ч</div>
+      <div class="week-line">полярность: Z1–Z2 {{ trimFloat $s.Week.Zones.LowPct }}% · Z3 {{ trimFloat $s.Week.Zones.GrayPct }}% · Z4+ {{ trimFloat $s.Week.Zones.HighPct }}% — {{ $s.Week.PolarityVerdict }}</div>
+      <div class="week-line">к прошлой неделе: {{ signedPct $s.Week.DeltaPct }}{{ if not $s.Week.DeltaPct }} (нет прошлой нагрузки){{ end }}</div>
+    </section>
+  </div>
+
+  <div class="grid2 equal">
+    <section class="panel">
+      <h2>Готовность</h2>
+      <div class="facts">
+        <span>макс. выезд 90 дней:
+          {{ with $s.Readiness.Longest90d }}<b>{{ km .KM }} км</b> ({{ date .Date }}){{ else }}<b>—</b>{{ end }}
+        </span>
+        <span>100+ км: <b>{{ $s.Readiness.CenturyCount }}</b></span>
+      </div>
+      <div class="facts" style="margin-top:8px">
+        <span>7 дней: <b>{{ km $s.Readiness.Rolling7.KM }} км</b> · {{ hours $s.Readiness.Rolling7.Hours }} ч · {{ trimFloat $s.Readiness.Rolling7.TSS }} TSS</span>
+        <span>28 дней: <b>{{ km $s.Readiness.Rolling28.KM }} км</b> · {{ hours $s.Readiness.Rolling28.Hours }} ч · {{ trimFloat $s.Readiness.Rolling28.TSS }} TSS</span>
+      </div>
+    </section>
+
+    {{ if $s.AllAlerts }}
+    <section class="panel alerts">
+      <h2>Внимание</h2>
+      {{ range $s.Alerts }}
+      <div class="alert {{ .Level }}"><span class="badge">{{ if eq .Level "warn" }}важно{{ else }}инфо{{ end }}</span><span>{{ .Text }}</span></div>
+      {{ end }}
+      {{ if gt (len $s.AllAlerts) 3 }}
+      <details>
+        <summary>Показать все ({{ len $s.AllAlerts }})</summary>
+        {{ range $i, $a := $s.AllAlerts }}{{ if ge $i 3 }}
+        <div class="alert {{ $a.Level }}"><span class="badge">{{ if eq $a.Level "warn" }}важно{{ else }}инфо{{ end }}</span><span>{{ $a.Text }}</span></div>
+        {{ end }}{{ end }}
+      </details>
+      {{ end }}
+    </section>
+    {{ end }}
+  </div>
+</div>
+{{ template "foot" . }}

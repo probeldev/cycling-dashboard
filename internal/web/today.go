@@ -1,0 +1,137 @@
+package web
+
+import (
+	"database/sql"
+	"fmt"
+	"math"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"cycling-dashboard/internal/store"
+)
+
+// todayRoutes — главная «Сегодня» и прежний список поездок на /rides.
+func todayRoutes(r chi.Router, db *sql.DB) {
+	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		st, err := buildStatus(db, time.Now(), false)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		render(w, "today.html", map[string]any{"S": st, "Wide": true})
+	})
+}
+
+func kindLabel(kind string) string {
+	switch kind {
+	case "rest":
+		return "Отдых"
+	case "z1":
+		return "Лёгкая Z1"
+	case "z1z2":
+		return "Лёгкая Z1–Z2"
+	case "z2":
+		return "Ровная Z2"
+	case "z2long":
+		return "Длинная Z2"
+	case "ftp_test":
+		return "FTP-тест"
+	default:
+		return "Тренировка"
+	}
+}
+
+func durationText(d [2]int) string {
+	switch {
+	case d[0] <= 0 && d[1] <= 0:
+		return "—"
+	case d[0] == d[1]:
+		return fmt.Sprintf("%d мин", d[0])
+	default:
+		return fmt.Sprintf("%d–%d мин", d[0], d[1])
+	}
+}
+
+func rangeText(r [2]int) string {
+	if r[0] <= 0 && r[1] <= 0 {
+		return "—"
+	}
+	if r[0] == r[1] {
+		return fmt.Sprintf("%d", r[0])
+	}
+	return fmt.Sprintf("%d–%d", r[0], r[1])
+}
+
+// wattsText — только число или диапазон: «Вт» добавляет шаблон, чтобы не
+// получить «0 Вт», когда FTP не задан.
+func wattsText(w *[2]int) string {
+	if w == nil {
+		return ""
+	}
+	return rangeText(*w)
+}
+
+func cadenceText(c [2]int) string {
+	if c[0] <= 0 && c[1] <= 0 {
+		return ""
+	}
+	return "каденс " + rangeText(c)
+}
+
+func meterWidth(tss float64, target *float64) int {
+	if target == nil || *target <= 0 {
+		return 0
+	}
+	pct := tss / *target * 100
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return int(math.Round(pct))
+}
+
+func progressClass(tss float64, target *float64) string {
+	if target == nil || *target <= 0 {
+		return "red"
+	}
+	pct := tss / *target * 100
+	switch {
+	case pct >= 90 && pct <= 110:
+		return "green"
+	case (pct >= 70 && pct < 90) || (pct > 110 && pct <= 125):
+		return "yellow"
+	default:
+		return "red"
+	}
+}
+
+func signedPct(v *float64) string {
+	if v == nil {
+		return "—"
+	}
+	if *v == 0 {
+		*v = 0
+	}
+	s := fmt.Sprintf("%+.1f%%", *v)
+	if *v < 0 {
+		s = fmt.Sprintf("−%.1f%%", math.Abs(*v))
+	}
+	return s
+}
+
+func targetSourceText(s store.TargetSource) string {
+	switch s {
+	case store.TargetSourceManual:
+		return "вручную"
+	case store.TargetSourceMedian4:
+		return "медиана 4 недель"
+	case store.TargetSourceLastFull:
+		return "последняя полная неделя"
+	default:
+		return "не задана"
+	}
+}

@@ -88,3 +88,75 @@ func TestRenderErrorReturns500(t *testing.T) {
 		t.Error("в ответе остался HTML")
 	}
 }
+
+func TestRenderTodayAndRidesRoutes(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now().AddDate(0, 0, -1), Duration: time.Hour, TSS: 80,
+		Trainer: true, AvgPower: 150, AvgCadence: 85,
+	}, "hash-today-rides", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) (int, string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+
+	code, body := get("/")
+	if code != http.StatusOK || !strings.Contains(body, "</html>") {
+		t.Fatalf("GET /: код %d, тело %d байт", code, len(body))
+	}
+	for _, want := range []string{"Сегодня", "Рекомендация", "Форма (CTL)", "Усталость (ATL)",
+		"Свежесть (TSB)", "Последняя тренировка", "Неделя", "Готовность", "Поездки"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /: нет блока %q", want)
+		}
+	}
+	for _, bad := range []string{"NaN", "<no value>", "<b>0 Вт</b>", ">0 Вт<"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("GET /: в вёрстке %q", bad)
+		}
+	}
+
+	code, body = get("/rides")
+	if code != http.StatusOK || !strings.Contains(body, "Поездки") || !strings.Contains(body, "</html>") {
+		t.Errorf("GET /rides: код %d, тело %d байт", code, len(body))
+	}
+}
+
+func TestRenderEmptyToday(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /: код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Мало данных", "Цель не задана", "Тренировок пока нет"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("пустая главная: нет %q", want)
+		}
+	}
+	for _, bad := range []string{"NaN", "<no value>", "0 из 0"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("пустая главная: в вёрстке %q", bad)
+		}
+	}
+}

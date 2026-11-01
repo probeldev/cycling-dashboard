@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"cycling-dashboard/internal/advice"
@@ -32,13 +33,15 @@ type statusResponse struct {
 	AlertsAll      []statusAlert        `json:"alertsAll,omitempty"`
 	Rules          []plan.RuleCheck     `json:"rules,omitempty"`
 
-	AllAlerts []statusAlert `json:"-"` // для страницы «Сегодня»: все, без обрезки
+	AllAlerts []statusAlert    `json:"-"` // для страницы «Сегодня»: все, без обрезки
+	Last      *lastWorkoutView `json:"-"` // типизированное представление для шаблона
 }
 
 // statusState — общая оценка дня и разбор трёх метрик PMC по отдельности.
 // ctl/atl/tsb — объекты, потому что у каждой карточки свои verdict/action/trend.
 type statusState struct {
 	Label      string       `json:"label"`
+	LabelText  string       `json:"labelText"`
 	Verdict    string       `json:"verdict"`
 	Action     string       `json:"action"`
 	Confidence string       `json:"confidence"`
@@ -52,6 +55,27 @@ type statusMetric struct {
 	Verdict string  `json:"verdict"`
 	Action  string  `json:"action"`
 	Trend   float64 `json:"trend"`
+	Spark   string  `json:"-"` // готовая строка points для инлайн-SVG
+}
+
+// lastWorkoutView — последняя тренировка для карточки на главной. Отдельно от
+// JSON-карты: шаблону нужны типы, а API сохраняет прежнюю форму workout.
+type lastWorkoutView struct {
+	ID        int64
+	Date      string
+	Name      string
+	Kind      string
+	DurationH float64
+	KM        float64
+	AvgPower  int
+	NormPower int
+	TSS       *float64
+	IF        *float64
+	VI        *float64
+	RPE       int
+	Bike      string
+	HasPower  bool
+	Advice    []advice.Card
 }
 
 type statusWeek struct {
@@ -177,6 +201,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		return nil, err
 	}
 	var lastWorkout any
+	var lastView *lastWorkoutView
 	if latest != nil {
 		cards, err := workoutAdvice(db, latest)
 		if err != nil {
@@ -189,6 +214,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		if err != nil {
 			return nil, err
 		}
+		lastView = makeLastWorkoutView(latest, cards)
 	}
 
 	readiness, err := store.Readiness(db, now)
@@ -228,6 +254,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		AlertsAll:      alertsDebug,
 		Rules:          checks,
 		AllAlerts:      alertsAll,
+		Last:           lastView,
 	}
 	return out, nil
 }
@@ -461,20 +488,24 @@ func buildState(cur, pmcDay store.Day, facts historyFacts, days []store.Day) sta
 	tsbVerdict, tsbAction := tsbText(tsb)
 	return statusState{
 		Label:      label,
+		LabelText:  stateLabelText(label),
 		Verdict:    verdict,
 		Action:     action,
 		Confidence: confidence,
 		CTL: statusMetric{
 			Value: round1(ctl), Verdict: ctlVerdict, Action: ctlAction,
 			Trend: ctlTrend,
+			Spark: sparkPoints(days, func(d store.Day) float64 { return d.CTL }),
 		},
 		ATL: statusMetric{
 			Value: round1(atl), Verdict: atlVerdict, Action: atlAction,
 			Trend: round1(atl - valueDaysAgo(days, 7, func(d store.Day) float64 { return d.ATL })),
+			Spark: sparkPoints(days, func(d store.Day) float64 { return d.ATL }),
 		},
 		TSB: statusMetric{
 			Value: round1(tsb), Verdict: tsbVerdict, Action: tsbAction,
 			Trend: round1(tsb - valueDaysAgo(days, 14, func(d store.Day) float64 { return d.TSB })),
+			Spark: sparkPoints(days, func(d store.Day) float64 { return d.TSB }),
 		},
 	}
 }
@@ -496,10 +527,89 @@ func stateText(label string) (verdict, action string) {
 	case "overloaded":
 		return "Перегружен", "Отдых 1–2 дня, только Z1"
 	case "lowdata":
-		return "Мало данных", "Собери минимум 3 недели истории"
+		return "Мало данных", "Собери 3 недели истории и хотя бы 9 дней с нагрузкой за 42 дня"
 	default:
 		return "Форма в норме", "Тренируйся по плану, следи за восстановлением"
 	}
+}
+
+func stateLabelText(label string) string {
+	switch label {
+	case "fresh":
+		return "Свежий"
+	case "loaded":
+		return "Загружен"
+	case "overloaded":
+		return "Перегружен"
+	case "lowdata":
+		return "Мало данных"
+	default:
+		return "Норма"
+	}
+}
+
+// makeLastWorkoutView готовит типизированные поля для шаблона главной.
+func makeLastWorkoutView(w *store.Workout, cards []advice.Card) *lastWorkoutView {
+	v := &lastWorkoutView{
+		ID:        w.ID,
+		Date:      w.StartTime.Format("02.01.2006 15:04"),
+		Name:      w.Name,
+		Kind:      "Улица",
+		DurationH: round2(w.Duration.Hours()),
+		KM:        round1(w.DistanceKm),
+		AvgPower:  w.AvgPower,
+		NormPower: w.NormPower,
+		RPE:       w.RPE,
+		Bike:      w.Bike,
+		HasPower:  w.HasPower,
+		Advice:    cards,
+	}
+	if w.Trainer {
+		v.Kind = "Станок"
+	}
+	if w.HasTSS {
+		tss := round1(w.TSS)
+		v.TSS = &tss
+	}
+	if w.HasIF {
+		v.IF = &w.IF
+	}
+	if w.HasVI {
+		v.VI = &w.VI
+	}
+	return v
+}
+
+// sparkPoints — points для SVG-полилинии за последние 14 дней. Масштаб
+// считается по самому ряду, поэтому карточки не зависят от абсолютных величин.
+func sparkPoints(days []store.Day, pick func(store.Day) float64) string {
+	if len(days) > 14 {
+		days = days[len(days)-14:]
+	}
+	if len(days) == 0 {
+		return ""
+	}
+	values := make([]float64, len(days))
+	minV, maxV := math.Inf(1), math.Inf(-1)
+	for i, d := range days {
+		v := pick(d)
+		values[i] = v
+		minV = math.Min(minV, v)
+		maxV = math.Max(maxV, v)
+	}
+	var b strings.Builder
+	for i, v := range values {
+		x := 0.0
+		if len(values) > 1 {
+			x = float64(i) * 120 / float64(len(values)-1)
+		}
+		y := 14.0
+		if maxV > minV {
+			y = 26 - (v-minV)/(maxV-minV)*24
+		}
+		fmt.Fprintf(&b, "%.1f,%.1f ", x, y)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // ctlText оценивает не уровень формы, а её тренд: высокий CTL может падать,

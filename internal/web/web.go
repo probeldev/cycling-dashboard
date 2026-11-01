@@ -37,8 +37,23 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return *v
 	},
-	"divf":  func(a int, b float64) float64 { return float64(a) / b },
-	"divff": func(a, b float64) float64 { return a / b },
+	"derefInt": func(v *int) int {
+		if v == nil {
+			return 0
+		}
+		return *v
+	},
+	"kindLabel":        kindLabel,
+	"durationText":     durationText,
+	"rangeText":        rangeText,
+	"wattsText":        wattsText,
+	"cadenceText":      cadenceText,
+	"meterWidth":       meterWidth,
+	"progressClass":    progressClass,
+	"signedPct":        signedPct,
+	"targetSourceText": targetSourceText,
+	"divf":             func(a int, b float64) float64 { return float64(a) / b },
+	"divff":            func(a, b float64) float64 { return a / b },
 	"pizzas": func(kcal int) string {
 		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
 		if p < 0.3 {
@@ -78,16 +93,17 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	r := chi.NewRouter()
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(static)))
 	sync.routes(r, syncDir, afterSync)
+	todayRoutes(r, db)
 	profileRoutes(r, db)
 	progressRoutes(r, db)
 
-	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+	r.Get("/rides", func(w http.ResponseWriter, req *http.Request) {
 		years, err := store.ListTree(db)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		render(w, "index.html", map[string]any{"Years": years})
+		render(w, "rides.html", map[string]any{"Years": years})
 	})
 
 	r.Get("/workout/{id}", func(w http.ResponseWriter, req *http.Request) {
