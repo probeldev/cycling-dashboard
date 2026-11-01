@@ -413,6 +413,28 @@ func TestProfileAtTieBreak(t *testing.T) {
 	}
 }
 
+// TestProfileAtStrictTieBreak — строгий поиск не откатывается на самую раннюю
+// запись, а при одинаковом recorded_at выбирает более позднюю по id.
+func TestProfileAtStrictTieBreak(t *testing.T) {
+	db := openTestDB(t)
+	at := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	if err := AddProfileEntry(db, "ftp_outdoor", 150, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddProfileEntry(db, "ftp_outdoor", 160, at); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := profileAtStrict(db, "ftp_outdoor", at.Add(-time.Hour)); ok {
+		t.Error("строгий поиск до первой записи вернул значение, хочу «нет»")
+	}
+	if got, ok := profileAtStrict(db, "ftp_outdoor", at); !ok || got != 160 {
+		t.Errorf("строгий поиск на recorded_at: %v ok=%v, хочу 160", got, ok)
+	}
+	if got, ok := profileAtStrict(db, "ftp_outdoor", at.Add(time.Hour)); !ok || got != 160 {
+		t.Errorf("строгий поиск после записей: %v ok=%v, хочу 160", got, ok)
+	}
+}
+
 // TestProfileStampsByKind — FTP станка и улицы берутся из разных видов профиля,
 // у улицы при отсутствии ftp_outdoor — fallback на станковый.
 func TestProfileStampsByKind(t *testing.T) {

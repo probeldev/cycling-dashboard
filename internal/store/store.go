@@ -692,14 +692,26 @@ func ProfileAt(db DBTX, kind string, t time.Time) (float64, bool) {
 }
 
 func profileAt(q DBTX, kind string, t time.Time) (float64, bool) {
+	if v, ok := profileAtStrict(q, kind, t); ok {
+		return v, true
+	}
+	var v float64
+	err := q.QueryRow(`SELECT value FROM profile_history
+		WHERE kind = ? ORDER BY recorded_at ASC, id DESC LIMIT 1`, kind).Scan(&v)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// profileAtStrict ищет только запись, действовавшую на момент t, без fallback
+// на самую раннюю: новая запись профиля не должна применяться к прошлому.
+// Записи с одинаковым recorded_at разрешаются по id DESC, как в ProfileAt.
+func profileAtStrict(q DBTX, kind string, t time.Time) (float64, bool) {
 	ts := t.UTC().Format(time.RFC3339)
 	var v float64
 	err := q.QueryRow(`SELECT value FROM profile_history
 		WHERE kind = ? AND recorded_at <= ? ORDER BY recorded_at DESC, id DESC LIMIT 1`, kind, ts).Scan(&v)
-	if err == sql.ErrNoRows {
-		err = q.QueryRow(`SELECT value FROM profile_history
-			WHERE kind = ? ORDER BY recorded_at ASC, id DESC LIMIT 1`, kind).Scan(&v)
-	}
 	if err != nil {
 		return 0, false
 	}
@@ -732,15 +744,20 @@ func FTPAt(db DBTX, trainer bool, t time.Time) (float64, string, bool) {
 
 func effectiveFTPAt(q DBTX, trainer bool, t time.Time) (float64, string, bool) {
 	if trainer {
+		// станковый FTP оставляем с fallback на самую раннюю запись: иначе
+		// исторические тренировки до первой записи потеряли бы значение
 		if v, ok := profileAt(q, "ftp", t); ok {
 			return v, "trainer", true
 		}
 		return 0, "", false
 	}
-	if v, ok := profileAt(q, "ftp_outdoor", t); ok {
+	// для улицы — только запись, действовавшая на дату тренировки: первая
+	// ftp_outdoor, добавленная сейчас, не должна перештамповывать прошлое
+	if v, ok := profileAtStrict(q, "ftp_outdoor", t); ok {
 		return v, "outdoor", true
 	}
-	// уличного FTP ещё нет — считаем от станкового, источник так и помечаем
+	// уличного FTP на дату ещё нет — считаем от станкового, источник так и
+	// помечаем; здесь сохраняем прежнюю семантику с fallback на самую раннюю
 	if v, ok := profileAt(q, "ftp", t); ok {
 		return v, "trainer", true
 	}

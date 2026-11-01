@@ -403,3 +403,153 @@ func TestFTPHintUpdateKeepsWorkoutsBeforeEntry(t *testing.T) {
 		t.Errorf("старая запись = %+v, хочу ftp 156 на %v", history[1], profileAt)
 	}
 }
+
+// TestFirstFTPOutdoorKeepsPastWorkouts — первая ftp_outdoor, добавленная
+// сейчас, действует только на тренировки после записи: прошлые уличные
+// сохраняют станковый FTP, IF/TSS; подсказка исчезает, а новая уличная
+// тренировка получает новый FTP.
+func TestFirstFTPOutdoorKeepsPastWorkouts(t *testing.T) {
+	db, h := ftpTestServer(t)
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Now().AddDate(0, 0, -30)); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().Add(-24 * time.Hour)
+	var ids []int64
+	for i := 0; i < 3; i++ {
+		id, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: start.Add(time.Duration(i) * time.Hour),
+			Duration:  time.Hour,
+			NormPower: 140,
+			AvgPower:  130,
+			HasPower:  true,
+		}, fmt.Sprintf("hash-first-outdoor-%d", i), filepath.Join(t.TempDir(), fmt.Sprintf("%d.fit", i)), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	sourceID := ids[0]
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	type snapshot struct {
+		ftp  int
+		kind string
+		iff  float64
+		tss  float64
+		ver  int
+	}
+	snap := func(id int64) snapshot {
+		t.Helper()
+		w, err := store.GetWorkout(db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot{w.FTP, w.FTPKind, w.IF, w.TSS, w.MetricsVersion}
+	}
+	before := make([]snapshot, len(ids))
+	for i, id := range ids {
+		before[i] = snap(id)
+		if before[i].ftp != 156 || before[i].kind != "trainer" {
+			t.Fatalf("id=%d до записи: FTP=%d kind=%q, хочу 156/trainer", id, before[i].ftp, before[i].kind)
+		}
+	}
+
+	hint := getFTPHint(t, h)
+	if hint == nil {
+		t.Fatal("нет подсказки до первой записи ftp_outdoor")
+	}
+	if hint.Kind != "outdoor" || hint.Current != 156 || hint.Estimate != 209 ||
+		hint.DeltaPct != 34 || hint.WorkoutID != sourceID {
+		t.Fatalf("подсказка = %+v, хочу outdoor/156/209/+34/id %d", hint, sourceID)
+	}
+
+	if code := postProfileEntry(t, h, url.Values{
+		"kind": {"ftp_outdoor"}, "value": {"209"},
+	}); code != http.StatusOK {
+		t.Fatalf("POST ftp_outdoor: код %d, хочу 200", code)
+	}
+	for i, id := range ids {
+		if got := snap(id); got != before[i] {
+			t.Errorf("id=%d перештампована задним числом: было %+v, стало %+v", id, before[i], got)
+		}
+	}
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("подсказка не исчезла после первой ftp_outdoor: %+v", got)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "209 Вт") {
+		t.Errorf("/profile: код %d, нет текущего уличного FTP 209 Вт", rec.Code)
+	}
+
+	newID, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now().Add(time.Hour),
+		Duration:  time.Hour,
+		NormPower: 140,
+		AvgPower:  130,
+		HasPower:  true,
+	}, "hash-first-outdoor-new", filepath.Join(t.TempDir(), "new.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	w, err := store.GetWorkout(db, newID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.FTP != 209 || w.FTPKind != "outdoor" {
+		t.Errorf("новая уличная после записи: FTP=%d kind=%q, хочу 209/outdoor", w.FTP, w.FTPKind)
+	}
+}
+
+// TestFTPHintOutdoorPageAndPost — уличная подсказка рендерится на деталке,
+// кнопка отправляет kind=ftp_outdoor, после POST подсказка исчезает.
+func TestFTPHintOutdoorPageAndPost(t *testing.T) {
+	db, h := ftpHintServer(t, map[string]float64{"ftp_outdoor": 180})
+	id := addHintWorkout(t, db, false, time.Now().Add(-2*time.Hour), 210)
+	hint := getFTPHint(t, h)
+	if hint == nil || hint.Kind != "outdoor" || hint.Current != 180 || hint.Estimate != 199.5 {
+		t.Fatalf("подсказка = %+v, хочу outdoor/180/199.5", hint)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /workout/%d: код %d", id, rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, fmt.Sprintf("/workout/%d", id)) || !strings.Contains(body, "Обновить FTP") {
+		t.Error("деталка не показывает уличную подсказку с кнопкой обновления")
+	}
+	tag := ftpUpdateTag(t, body)
+	for _, want := range []string{`hx-post="/profile/entry"`, "ftp_outdoor", "199.5"} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("кнопка уличной подсказки не содержит %q: %s", want, tag)
+		}
+	}
+	if strings.Contains(tag, "date") {
+		t.Errorf("кнопка передаёт дату тренировки: %s", tag)
+	}
+
+	if code := postProfileEntry(t, h, url.Values{
+		"kind": {"ftp_outdoor"}, "value": {"199.5"},
+	}); code != http.StatusOK {
+		t.Fatalf("POST ftp_outdoor: код %d, хочу 200", code)
+	}
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("подсказка не исчезла после POST ftp_outdoor: %+v", got)
+	}
+}
