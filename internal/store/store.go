@@ -261,6 +261,12 @@ CREATE TABLE IF NOT EXISTS profile_history (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_profile_history ON profile_history(kind, recorded_at);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `)
 	if err != nil {
 		return err
