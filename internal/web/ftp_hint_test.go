@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,7 +37,7 @@ func ftpTestServer(t *testing.T) (*sql.DB, http.Handler) {
 func ftpHintServer(t *testing.T, profile map[string]float64) (*sql.DB, http.Handler) {
 	t.Helper()
 	db, h := ftpTestServer(t)
-	at := time.Now().Add(-time.Hour)
+	at := time.Now().AddDate(0, 0, -30)
 	for kind, value := range profile {
 		if err := store.AddProfileEntry(db, kind, value, at); err != nil {
 			t.Fatal(err)
@@ -270,10 +271,15 @@ func TestFTPHintPagesAndButton(t *testing.T) {
 		if strings.Contains(tag, "date") {
 			t.Errorf("%s: кнопка передаёт дату тренировки: %s", name, tag)
 		}
+		if !strings.Contains(tag, fmt.Sprintf(`"workoutId":%d`, id)) {
+			t.Errorf("%s: кнопка не передаёт тренировку-источник: %s", name, tag)
+		}
 	}
 
 	if code := postProfileEntry(t, h, url.Values{
-		"kind": {"ftp"}, "value": {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(hint.WorkoutID, 10)},
 	}); code != http.StatusOK {
 		t.Fatalf("POST кнопки: код %d, хочу 200", code)
 	}
@@ -310,8 +316,9 @@ func TestFTPHintUpdateHidesHint(t *testing.T) {
 				t.Fatalf("подсказка до POST = %+v, хочу вид %s", hint, tt.kind)
 			}
 			code := postProfileEntry(t, h, url.Values{
-				"kind":  {tt.postKind},
-				"value": {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+				"kind":      {tt.postKind},
+				"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+				"workoutId": {strconv.FormatInt(hint.WorkoutID, 10)},
 			})
 			if code != http.StatusOK {
 				t.Fatalf("POST: код %d, хочу 200", code)
@@ -323,9 +330,9 @@ func TestFTPHintUpdateHidesHint(t *testing.T) {
 	}
 }
 
-// TestFTPHintUpdateKeepsWorkoutsBeforeEntry — сценарий 308: запись на now не
-// перештамповывает тренировки, начавшиеся до её применения (52 сохраняет
-// 156/IF/TSS), а подсказка +9.6% после нажатия кнопки исчезает.
+// TestFTPHintUpdateKeepsWorkoutsBeforeEntry — ручная запись без workoutId
+// (старая форма /profile) действует с момента сохранения и не
+// перештамповывает тренировки, начавшиеся до него (52 сохраняет 156/IF/TSS).
 func TestFTPHintUpdateKeepsWorkoutsBeforeEntry(t *testing.T) {
 	db, h := ftpTestServer(t)
 	oldID, err := store.InsertWorkout(db, &store.Workout{
@@ -544,7 +551,8 @@ func TestFTPHintOutdoorPageAndPost(t *testing.T) {
 		t.Error("деталка не показывает уличную подсказку с кнопкой обновления")
 	}
 	tag := ftpUpdateTag(t, body)
-	for _, want := range []string{`hx-post="/profile/entry"`, "ftp_outdoor", "199.5"} {
+	for _, want := range []string{`hx-post="/profile/entry"`, "ftp_outdoor", "199.5",
+		fmt.Sprintf(`"workoutId":%d`, id)} {
 		if !strings.Contains(tag, want) {
 			t.Errorf("кнопка уличной подсказки не содержит %q: %s", want, tag)
 		}
@@ -554,11 +562,323 @@ func TestFTPHintOutdoorPageAndPost(t *testing.T) {
 	}
 
 	if code := postProfileEntry(t, h, url.Values{
-		"kind": {"ftp_outdoor"}, "value": {"199.5"},
+		"kind": {"ftp_outdoor"}, "value": {"199.5"}, "workoutId": {strconv.FormatInt(id, 10)},
 	}); code != http.StatusOK {
 		t.Fatalf("POST ftp_outdoor: код %d, хочу 200", code)
 	}
 	if got := getFTPHint(t, h); got != nil {
 		t.Errorf("подсказка не исчезла после POST ftp_outdoor: %+v", got)
+	}
+}
+
+// ftpSnapshot — состояние полей, которые меняет обновление FTP.
+type ftpSnapshot struct {
+	ftp  int
+	kind string
+	iff  float64
+	tss  float64
+	ver  int
+}
+
+func snapshotFTP(t *testing.T, db *sql.DB, id int64) ftpSnapshot {
+	t.Helper()
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ftpSnapshot{w.FTP, w.FTPKind, w.IF, w.TSS, w.MetricsVersion}
+}
+
+func insertFTPWorkout(t *testing.T, db *sql.DB, hash string, start time.Time, trainer bool,
+	dur time.Duration, np, avg int) int64 {
+	t.Helper()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: start, Duration: dur, Trainer: trainer,
+		NormPower: np, AvgPower: avg, HasPower: true,
+	}, hash, filepath.Join(t.TempDir(), hash+".fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// TestFTPHintUpdateOutdoorUsesSourceDate — кнопка обновляет только уличный FTP,
+// запись действует с начала тренировки-источника: источник и последующие
+// уличные пересчитаны, прошлые уличные и станковые — нет, подсказка исчезла.
+func TestFTPHintUpdateOutdoorUsesSourceDate(t *testing.T) {
+	db, h := ftpTestServer(t)
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Now().AddDate(0, 0, -30)); err != nil {
+		t.Fatal(err)
+	}
+	olderID := insertFTPWorkout(t, db, "hash-upd-out-old", time.Now().AddDate(0, 0, -1), false, time.Hour, 140, 123)
+	trainerID := insertFTPWorkout(t, db, "hash-upd-out-tr", time.Now().Add(-5*time.Hour), true, time.Hour, 96, 95)
+	sourceID := insertFTPWorkout(t, db, "hash-upd-out-src", time.Now().Add(-2*time.Hour), false, 4292*time.Second, 162, 146)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 175.8}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeOlder, beforeTrainer := snapshotFTP(t, db, olderID), snapshotFTP(t, db, trainerID)
+	hint := getFTPHint(t, h)
+	if hint == nil {
+		t.Fatal("нет уличной подсказки")
+	}
+	if hint.Kind != "outdoor" || hint.Current != 156 || hint.WorkoutID != sourceID {
+		t.Fatalf("подсказка = %+v, хочу outdoor/156/id %d", hint, sourceID)
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind":      {"ftp_outdoor"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}); code != http.StatusOK {
+		t.Fatalf("POST: код %d, хочу 200", code)
+	}
+
+	source, err := store.GetWorkout(db, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.FTP != int(hint.Estimate) || source.FTPKind != "outdoor" {
+		t.Errorf("источник: FTP=%d kind=%q, хочу %v/outdoor", source.FTP, source.FTPKind, hint.Estimate)
+	}
+	wantIF := 162 / hint.Estimate
+	if math.Abs(source.IF-wantIF) > 1e-9 {
+		t.Errorf("IF источника = %v, хочу %v", source.IF, wantIF)
+	}
+	wantTSS := 4292 * 162 * wantIF / (hint.Estimate * 3600) * 100
+	if math.Abs(source.TSS-wantTSS) > 1e-6 {
+		t.Errorf("TSS источника = %v, хочу %v", source.TSS, wantTSS)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("прошлая уличная изменилась: было %+v, стало %+v", beforeOlder, got)
+	}
+	if got := snapshotFTP(t, db, trainerID); got != beforeTrainer {
+		t.Errorf("станковая изменилась: было %+v, стало %+v", beforeTrainer, got)
+	}
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("подсказка не исчезла: %+v", got)
+	}
+
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outdoor []store.ProfileEntry
+	for _, e := range history {
+		if e.Kind == "ftp_outdoor" {
+			outdoor = append(outdoor, e)
+		}
+	}
+	if len(outdoor) != 1 || outdoor[0].Value != hint.Estimate ||
+		!outdoor[0].RecordedAt.Equal(source.StartTime) {
+		t.Errorf("запись ftp_outdoor = %+v, хочу %v на %v", outdoor, hint.Estimate, source.StartTime)
+	}
+}
+
+// TestFTPHintUpdateTrainerUsesSourceDate — станковая кнопка пишет только `ftp`,
+// запись действует с начала источника; более старые станковые не меняются.
+func TestFTPHintUpdateTrainerUsesSourceDate(t *testing.T) {
+	db, h := ftpTestServer(t)
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Now().AddDate(0, 0, -30)); err != nil {
+		t.Fatal(err)
+	}
+	olderID := insertFTPWorkout(t, db, "hash-upd-tr-old", time.Now().AddDate(0, 0, -2), true, time.Hour, 120, 110)
+	outdoorID := insertFTPWorkout(t, db, "hash-upd-tr-out", time.Now().AddDate(0, 0, -1), false, time.Hour, 140, 123)
+	sourceID := insertFTPWorkout(t, db, "hash-upd-tr-src", time.Now().Add(-2*time.Hour), true, time.Hour, 140, 130)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeOlder, beforeOutdoor := snapshotFTP(t, db, olderID), snapshotFTP(t, db, outdoorID)
+	hint := getFTPHint(t, h)
+	if hint == nil {
+		t.Fatal("нет станковой подсказки")
+	}
+	if hint.Kind != "trainer" || hint.Current != 156 || hint.WorkoutID != sourceID {
+		t.Fatalf("подсказка = %+v, хочу trainer/156/id %d", hint, sourceID)
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}); code != http.StatusOK {
+		t.Fatalf("POST: код %d, хочу 200", code)
+	}
+
+	source, err := store.GetWorkout(db, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.FTP != int(hint.Estimate) || source.FTPKind != "trainer" {
+		t.Errorf("источник: FTP=%d kind=%q, хочу %v/trainer", source.FTP, source.FTPKind, hint.Estimate)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("старая станковая изменилась: было %+v, стало %+v", beforeOlder, got)
+	}
+	if got := snapshotFTP(t, db, outdoorID); got != beforeOutdoor {
+		t.Errorf("уличная до источника изменилась: было %+v, стало %+v", beforeOutdoor, got)
+	}
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("подсказка не исчезла: %+v", got)
+	}
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range history {
+		if e.Kind == "ftp_outdoor" {
+			t.Errorf("станковая кнопка создала запись ftp_outdoor: %+v", e)
+		}
+	}
+	if history[0].Kind != "ftp" || history[0].Value != hint.Estimate ||
+		!history[0].RecordedAt.Equal(source.StartTime) {
+		t.Errorf("новая запись = %+v, хочу ftp %v на %v", history[0], hint.Estimate, source.StartTime)
+	}
+}
+
+// TestFTPHintUpdateTrainerKeepsBeforeFirstEntry — новая запись оказалась самой
+// ранней: fallback на самую раннюю не должен перештамповать более старыв
+// станковые. Старое значение держит запись-граница за секунду до источника,
+// в том числе после повторного BackfillProfileStamps на старте.
+func TestFTPHintUpdateTrainerKeepsBeforeFirstEntry(t *testing.T) {
+	db, h := ftpTestServer(t)
+	// Запись в будущем: сейчас действует 156 через fallback, но до источника
+	// записей нет — новая запись стала бы самой ранней.
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	olderID := insertFTPWorkout(t, db, "hash-upd-tr-edge", time.Now().AddDate(0, 0, -1), true, time.Hour, 120, 110)
+	source := time.Now().Add(-2 * time.Hour)
+	sourceID := insertFTPWorkout(t, db, "hash-upd-tr-edge-src", source, true, time.Hour, 140, 130)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	beforeOlder := snapshotFTP(t, db, olderID)
+	hint := getFTPHint(t, h)
+	if hint == nil || hint.Kind != "trainer" || hint.WorkoutID != sourceID {
+		t.Fatalf("подсказка = %+v", hint)
+	}
+	if code := postProfileEntry(t, h, url.Values{
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}); code != http.StatusOK {
+		t.Fatalf("POST: код %d, хочу 200", code)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("старая станковая изменилась: было %+v, стало %+v", beforeOlder, got)
+	}
+	// Повторная перештамповка при старте сервера не должна откатить прошлое.
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshotFTP(t, db, olderID); got != beforeOlder {
+		t.Errorf("после BackfillProfileStamps старая станковая изменилась: было %+v, стало %+v", beforeOlder, got)
+	}
+	w, err := store.GetWorkout(db, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.FTP != int(hint.Estimate) || w.FTPKind != "trainer" {
+		t.Errorf("источник: FTP=%d kind=%q, хочу %v/trainer", w.FTP, w.FTPKind, hint.Estimate)
+	}
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("подсказка не исчезла: %+v", got)
+	}
+}
+
+// TestFTPHintUpdateKindMismatch — подсказка и тренировка-источник разного вида
+// (улица/станок) — 400, запись профиля не создаётся.
+func TestFTPHintUpdateKindMismatch(t *testing.T) {
+	db, h := ftpTestServer(t)
+	trainerID := insertFTPWorkout(t, db, "hash-upd-mismatch-tr", time.Now().Add(-2*time.Hour), true, time.Hour, 140, 130)
+	outdoorID := insertFTPWorkout(t, db, "hash-upd-mismatch-out", time.Now().Add(-2*time.Hour), false, time.Hour, 140, 130)
+	for _, form := range []url.Values{
+		{"kind": {"ftp_outdoor"}, "value": {"200"}, "workoutId": {strconv.FormatInt(trainerID, 10)}},
+		{"kind": {"ftp"}, "value": {"200"}, "workoutId": {strconv.FormatInt(outdoorID, 10)}},
+	} {
+		if code := postProfileEntry(t, h, form); code != http.StatusBadRequest {
+			t.Errorf("%v: код %d, хочу 400", form, code)
+		}
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM profile_history`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("создано %d записей профиля при ошибке, хочу 0", n)
+	}
+}
+
+// TestFTPHintUpdateWorkoutNotFound — неизвестный workoutId — 404.
+func TestFTPHintUpdateWorkoutNotFound(t *testing.T) {
+	_, h := ftpTestServer(t)
+	if code := postProfileEntry(t, h, url.Values{
+		"kind": {"ftp"}, "value": {"200"}, "workoutId": {"999999"},
+	}); code != http.StatusNotFound {
+		t.Errorf("код %d, хочу 404", code)
+	}
+}
+
+// TestFTPHintUpdateTwiceIsIdempotent — повторное нажатие не создаёт дубль
+// записи на ту же дату и значение.
+func TestFTPHintUpdateTwiceIsIdempotent(t *testing.T) {
+	db, h := ftpTestServer(t)
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Now().AddDate(0, 0, -30)); err != nil {
+		t.Fatal(err)
+	}
+	sourceID := insertFTPWorkout(t, db, "hash-upd-twice", time.Now().Add(-2*time.Hour), true, time.Hour, 140, 130)
+	if err := store.SetWorkoutMMP(db, sourceID, []store.PowerRecord{{WindowSec: 1200, Watts: 220}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BackfillProfileStamps(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := importer.BackfillMetrics(db); err != nil {
+		t.Fatal(err)
+	}
+	hint := getFTPHint(t, h)
+	if hint == nil {
+		t.Fatal("нет подсказки")
+	}
+	form := url.Values{
+		"kind":      {"ftp"},
+		"value":     {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+		"workoutId": {strconv.FormatInt(sourceID, 10)},
+	}
+	for i := 0; i < 2; i++ {
+		if code := postProfileEntry(t, h, form); code != http.StatusOK {
+			t.Fatalf("POST %d: код %d, хочу 200", i+1, code)
+		}
+	}
+	history, err := store.ProfileHistory(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var same int
+	for _, e := range history {
+		if e.Kind == "ftp" && e.Value == hint.Estimate {
+			same++
+		}
+	}
+	if same != 1 {
+		t.Errorf("записей ftp %v — %d, хочу 1: %+v", hint.Estimate, same, history)
 	}
 }

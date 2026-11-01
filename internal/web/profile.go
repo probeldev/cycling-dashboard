@@ -106,13 +106,44 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			}
 			at = t
 		}
+		// workoutId приходит только от кнопки «Обновить FTP»: запись должна
+		// действовать с начала тренировки-источника, а не с момента нажатия.
+		var workoutID int64
+		if raw := req.FormValue("workoutId"); raw != "" {
+			id, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || id <= 0 {
+				http.Error(w, "workoutId: нужно положительное целое число", http.StatusBadRequest)
+				return
+			}
+			workoutID = id
+		}
 		tx, err := db.Begin()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		defer tx.Rollback()
-		if err := store.AddProfileEntryTx(tx, kind, value, at); err != nil {
+		if workoutID != 0 {
+			source, err := store.GetWorkout(tx, workoutID)
+			if err != nil {
+				notFoundOr500(w, req, err)
+				return
+			}
+			wantTrainer := kind == "ftp"
+			if source.Trainer != wantTrainer {
+				http.Error(w, "вид подсказки не совпадает с типом тренировки", http.StatusBadRequest)
+				return
+			}
+			hintKind := "trainer"
+			if kind == "ftp_outdoor" {
+				hintKind = "outdoor"
+			}
+			if _, err := store.ApplyFTPHintTx(tx, hintKind, value, source); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			at = source.StartTime
+		} else if err := store.AddProfileEntryTx(tx, kind, value, at); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -126,7 +157,11 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("HX-Redirect", "/profile")
+		if workoutID != 0 {
+			w.Header().Set("HX-Redirect", "/workout/"+strconv.FormatInt(workoutID, 10))
+		} else {
+			w.Header().Set("HX-Redirect", "/profile")
+		}
 	})
 
 	r.Post("/profile/weekly-target", func(w http.ResponseWriter, req *http.Request) {

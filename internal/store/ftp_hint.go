@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"math"
 	"sort"
 	"time"
@@ -115,4 +116,74 @@ func FTPHints(db DBTX, now time.Time) ([]FTPHint, error) {
 // подписью «+2.0%».
 func roundHint(v float64) float64 {
 	return math.Round(v*10) / 10
+}
+
+// ApplyFTPHintTx применяет подсказку «Обновить FTP» в переданной транзакции.
+// Запись профиля действует с начала тренировки-источника: она и все следующие
+// тренировки того же вида перештамповываются, прошлые — нет. Повторный вызов с
+// теми же датой и значением не создаёт дубль и возвращает false.
+func ApplyFTPHintTx(tx *sql.Tx, kind string, value float64, source *Workout) (bool, error) {
+	profileKind := "ftp"
+	if kind == "outdoor" {
+		profileKind = "ftp_outdoor"
+	}
+	at := source.StartTime.UTC()
+	// У станка нет строгого поиска: если запись оказывается самой ранней,
+	// fallback применил бы новое значение и к тренировкам до источника.
+	// Держим прежнее значение отдельной записью за секунду до источника —
+	// так прошлое не перештамповывается ни сейчас, ни при следующем старте.
+	if profileKind == "ftp" {
+		before, err := hasProfileAtOrBefore(tx, profileKind, at)
+		if err != nil {
+			return false, err
+		}
+		if !before {
+			var older int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM workouts WHERE trainer = 1 AND start_time < ?`,
+				at.Format(time.RFC3339)).Scan(&older); err != nil {
+				return false, err
+			}
+			if older > 0 {
+				if prev, ok := ProfileAt(tx, profileKind, at); ok {
+					if _, err := insertProfileEntryOnceTx(tx, profileKind, prev, at.Add(-time.Second)); err != nil {
+						return false, err
+					}
+				}
+			}
+		}
+	}
+	inserted, err := insertProfileEntryOnceTx(tx, profileKind, value, at)
+	if err != nil {
+		return false, err
+	}
+	if err := backfillProfileStampsTx(tx); err != nil {
+		return false, err
+	}
+	return inserted, nil
+}
+
+// hasProfileAtOrBefore — есть ли запись вида, действовавшая не позже t.
+func hasProfileAtOrBefore(q DBTX, kind string, t time.Time) (bool, error) {
+	var exists bool
+	err := q.QueryRow(`SELECT EXISTS(SELECT 1 FROM profile_history
+	    WHERE kind = ? AND recorded_at <= ?)`, kind, t.UTC().Format(time.RFC3339)).Scan(&exists)
+	return exists, err
+}
+
+// insertProfileEntryOnceTx вставляет запись, только если такой же
+// (kind, value, recorded_at) ещё нет: повторное нажатие кнопки идемпотентно.
+func insertProfileEntryOnceTx(tx *sql.Tx, kind string, value float64, at time.Time) (bool, error) {
+	ts := at.UTC().Format(time.RFC3339)
+	res, err := tx.Exec(`INSERT INTO profile_history (kind, value, recorded_at)
+	    SELECT ?, ?, ? WHERE NOT EXISTS (
+	      SELECT 1 FROM profile_history WHERE kind = ? AND value = ? AND recorded_at = ?
+	    )`, kind, value, ts, kind, value, ts)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }

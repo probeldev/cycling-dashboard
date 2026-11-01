@@ -845,6 +845,10 @@ func restampWorkoutTx(tx *sql.Tx, id int64) error {
 	ftp, kind, _ := effectiveFTPAt(tx, trainer, t)
 	weight, _ := profileAt(tx, "weight", t)
 
+	// Workout.FTP и колонка ftp_w — целые: дробный FTP профиля (156.5) на
+	// штампе округляется вниз так же, как при импорте. Иначе GetWorkout не
+	// прочитает REAL из INTEGER-колонки и рестарт будет вечно перештамповывать.
+	ftp = float64(int(ftp))
 	newFTP := sql.NullFloat64{Float64: ftp, Valid: ftp > 0}
 	newKg := sql.NullFloat64{Float64: weight, Valid: weight > 0}
 	ftpChanged := !sameNullFloat(ftpW, newFTP)
