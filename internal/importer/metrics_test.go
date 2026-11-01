@@ -58,6 +58,43 @@ func TestApplyMetricsSynthetic(t *testing.T) {
 	checkFinite(t, w.IF, w.TSS, w.VI, w.WorkKJ)
 }
 
+// TestApplyMetricsCadenceActive — каденс «в работе» считается только по
+// сэмплам cadence > 0: 90 об/мин 60 с + 0 об/мин 30 с дают 90, общий — 60.
+func TestApplyMetricsCadenceActive(t *testing.T) {
+	samples := make([]store.Sample, 90)
+	for i := range samples {
+		cadence := 90
+		if i >= 60 {
+			cadence = 0
+		}
+		samples[i] = store.Sample{Offset: int64(i), Cadence: cadence, HasCad: true}
+	}
+	w := &store.Workout{Duration: 60 * time.Second}
+	applyMetrics(w, samples, 0, 0)
+
+	if w.AvgCadenceActive != 90 {
+		t.Errorf("AvgCadenceActive = %d, хочу 90", w.AvgCadenceActive)
+	}
+	if avg, ok := avgValid(samples, func(s store.Sample) (int, bool) { return s.Cadence, s.HasCad }); !ok || avg != 60 {
+		t.Errorf("AvgCadence = %d (ok=%v), хочу 60 (все валидные записи)", avg, ok)
+	}
+}
+
+// TestApplyMetricsCadenceAllZero — все каденсы нулевые: активного значения нет
+// (в JSON null), а не 0 из деления на ноль.
+func TestApplyMetricsCadenceAllZero(t *testing.T) {
+	samples := make([]store.Sample, 30)
+	for i := range samples {
+		samples[i] = store.Sample{Offset: int64(i), Cadence: 0, HasCad: true}
+	}
+	w := &store.Workout{Duration: 30 * time.Second}
+	applyMetrics(w, samples, 0, 0)
+	if w.AvgCadenceActive != 0 {
+		t.Errorf("AvgCadenceActive = %d, хочу 0 (неизвестно)", w.AvgCadenceActive)
+	}
+	checkFinite(t, float64(w.AvgCadenceActive))
+}
+
 // TestApplyMetricsNoPower — без данных поверметра IF/TSS/VI не считаются,
 // а время пропусков учитывается.
 func TestApplyMetricsNoPower(t *testing.T) {
@@ -135,6 +172,8 @@ func TestMetrics418Golden(t *testing.T) {
 		{"NP", float64(w.NormPower), 140, 0},
 		{"AvgPower", float64(w.AvgPower), 123, 0},
 		{"AvgPowerActive", float64(w.AvgPowerActive), 145, 2},
+		{"AvgCadence", float64(w.AvgCadence), 66, 0},
+		{"AvgCadenceActive", float64(w.AvgCadenceActive), 78, 2},
 		{"CoastingSec", float64(w.CoastingSec), 818, 0},
 		{"NoPowerSec", float64(w.NoPowerSec), 100, 3},
 		{"WorkKJ", w.WorkKJ, 637, 5},

@@ -30,7 +30,7 @@ func TestWorkoutJSONNullMetrics(t *testing.T) {
 	}
 	full, err := store.InsertWorkout(db, &store.Workout{
 		StartTime: time.Now(), Duration: time.Hour,
-		NormPower: 140, AvgPower: 123, FTP: 156,
+		NormPower: 140, AvgPower: 123, FTP: 156, AvgCadenceActive: 82,
 		IF: 0.9, TSS: 100, VI: 1.1, WorkKJ: 0, // нулевая работа при наличии данных
 		HasIF: true, HasTSS: true, HasVI: true, HasWork: true,
 		MetricsVersion: 1,
@@ -58,7 +58,7 @@ func TestWorkoutJSONNullMetrics(t *testing.T) {
 	}
 
 	got := get(none)
-	for _, key := range []string{"IF", "TSS", "VI", "WorkKJ"} {
+	for _, key := range []string{"IF", "TSS", "VI", "WorkKJ", "AvgCadenceActive"} {
 		v, ok := got[key]
 		if !ok || v != nil {
 			t.Errorf("без мощности: %s = %v, хочу null", key, v)
@@ -66,7 +66,7 @@ func TestWorkoutJSONNullMetrics(t *testing.T) {
 	}
 
 	got = get(full)
-	for key, want := range map[string]float64{"IF": 0.9, "TSS": 100, "VI": 1.1, "WorkKJ": 0} {
+	for key, want := range map[string]float64{"IF": 0.9, "TSS": 100, "VI": 1.1, "WorkKJ": 0, "AvgCadenceActive": 82} {
 		v, ok := got[key].(float64)
 		if !ok || v != want {
 			t.Errorf("%s = %v, хочу %v", key, got[key], want)
@@ -87,9 +87,9 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 	}, "hash-prof-fail", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
 		t.Fatal(err)
 	}
-	// падаем только на записи метрик (metrics_version=1), штампы проходят
+	// падаем только на записи метрик (metrics_version=2), штампы проходят
 	if _, err := db.Exec(`CREATE TRIGGER fail_metrics BEFORE UPDATE ON workouts
-	    WHEN NEW.metrics_version = 1 BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+	    WHEN NEW.metrics_version = 2 BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
 		t.Fatal(err)
 	}
 	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
@@ -113,7 +113,7 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 	}
 }
 
-// TestWorkoutsListJSON — список отдаёт массив; у объекта 45 полей, Override и IsTest
+// TestWorkoutsListJSON — список отдаёт массив; у объекта 46 полей, Override и IsTest
 // присутствует (контракт JSON не должен незаметно меняться).
 func TestWorkoutsListJSON(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -144,12 +144,12 @@ func TestWorkoutsListJSON(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("%d элементов, хочу 2", len(list))
 	}
-	if got := len(list[0]); got != 45 {
+	if got := len(list[0]); got != 46 {
 		keys := make([]string, 0, got)
 		for k := range list[0] {
 			keys = append(keys, k)
 		}
-		t.Errorf("полей в объекте %d, хочу 45: %v", got, keys)
+		t.Errorf("полей в объекте %d, хочу 46: %v", got, keys)
 	}
 	if _, ok := list[0]["Override"]; !ok {
 		t.Errorf("в объекте нет поля Override")

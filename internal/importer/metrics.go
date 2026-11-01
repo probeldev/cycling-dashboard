@@ -12,11 +12,12 @@ import (
 
 // metricsVersion — версия расчёта метрик нагрузки. Поднимать при изменении
 // формул: бэкфилл при старте пересчитает строки с metrics_version < metricsVersion.
-const metricsVersion = 1
+const metricsVersion = 2
 
 // sampleMetrics — метрики, которые выводятся из сэмплов и общего правила времени.
 type sampleMetrics struct {
 	AvgPowerActive    int     // средняя по записям с power > 0
+	AvgCadenceActive  int     // средняя по записям с cadence > 0
 	CoastingSec       int     // время с power == 0
 	NoPowerSec        int     // время без данных поверметра (power IS NULL)
 	SuspectDropoutSec int     // power == 0 при cadence > 0 — похоже на отвал датчика
@@ -31,6 +32,7 @@ type sampleMetrics struct {
 func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 	times := ridedata.Timings(samples)
 	var sumActive, secsActive, coast, noPower, suspect, workJ, tempSum float64
+	var sumCadence, secsCadence float64
 	var tempN int
 	var hasPower bool
 	for i, s := range samples {
@@ -42,6 +44,10 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 			tempN++
 		}
 		dt := times[i].Secs
+		if s.Cadence > 0 {
+			sumCadence += float64(s.Cadence) * dt
+			secsCadence += dt
+		}
 		switch {
 		case !s.HasPwr:
 			noPower += dt
@@ -70,6 +76,9 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 	if secsActive > 0 {
 		sm.AvgPowerActive = int(math.Round(sumActive / secsActive))
 	}
+	if secsCadence > 0 {
+		sm.AvgCadenceActive = int(math.Round(sumCadence / secsCadence))
+	}
 	return sm
 }
 
@@ -81,13 +90,15 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, workKJ float64) {
 	w.IF, w.TSS, w.VI = 0, 0, 0
 	w.HasIF, w.HasTSS, w.HasVI, w.HasWork = false, false, false, false
-	w.AvgPowerActive, w.CoastingSec, w.NoPowerSec, w.SuspectDropoutSec = 0, 0, 0, 0
+	w.AvgPowerActive, w.AvgCadenceActive = 0, 0
+	w.CoastingSec, w.NoPowerSec, w.SuspectDropoutSec = 0, 0, 0
 	w.ElapsedSec, w.PauseSec, w.WorkKJ = 0, 0, 0
 	w.AvgTemp, w.HasTemp = 0, false
 	w.MetricsVersion = 0
 
 	sm := sampleMetricsOf(samples)
 	w.AvgPowerActive = sm.AvgPowerActive
+	w.AvgCadenceActive = sm.AvgCadenceActive
 	w.CoastingSec = sm.CoastingSec
 	w.NoPowerSec = sm.NoPowerSec
 	w.SuspectDropoutSec = sm.SuspectDropoutSec

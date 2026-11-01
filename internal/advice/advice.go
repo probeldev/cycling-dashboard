@@ -68,8 +68,10 @@ func For(w store.Workout, ctx Context) []Card {
 		cards = append(cards, Card{Level: level, Title: title, Text: text})
 	}
 
-	if !w.Trainer && w.AvgCadence > 0 && w.AvgCadence < LowCadenceRPM {
-		add(LevelInfo, "Низкий каденс", "попробуй передачу полегче, 80–90 об/мин разгружает ноги")
+	// средний каденс по всем записям смешивает педалирование с накатом и
+	// занижает картину — правило смотрит только на каденс «в работе»
+	if !w.Trainer && w.AvgCadenceActive > 0 && w.AvgCadenceActive < LowCadenceRPM {
+		add(LevelInfo, "Низкий каденс", "в работе: попробуй передачу полегче, 80–90 об/мин разгружает ноги")
 	}
 	if w.HasVI && w.VI > HighVI {
 		add(LevelWarn, "Рваная езда", "TSS завышен, для ровной Z2 нужен участок без светофоров")

@@ -32,7 +32,7 @@ func TestWorkoutAdviceBlock(t *testing.T) {
 	defer db.Close()
 	id, err := store.InsertWorkout(db, &store.Workout{
 		StartTime: time.Now().Add(-time.Hour), Duration: time.Hour,
-		AvgCadence: 66, AvgPower: 120, MaxPower: 300,
+		AvgCadence: 66, AvgCadenceActive: 66, AvgPower: 120, MaxPower: 300,
 	}, "hash-advice", filepath.Join(t.TempDir(), "x.fit"), 1)
 	if err != nil {
 		t.Fatal(err)

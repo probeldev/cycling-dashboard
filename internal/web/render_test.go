@@ -237,3 +237,35 @@ func TestRidesPageCountAndFilterData(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkoutCadenceActive — на деталке основная цифра каденса — «в работе»,
+// а общий средний подписан явно «с накатом».
+func TestWorkoutCadenceActive(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now().Add(-time.Hour), Duration: time.Hour,
+		AvgCadence: 66, AvgCadenceActive: 78,
+	}, "hash-cadence-render", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{">78<", "в работе", "66 с накатом"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на деталке нет %q", want)
+		}
+	}
+}

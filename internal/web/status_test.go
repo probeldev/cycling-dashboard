@@ -65,7 +65,8 @@ func statusFixture(t *testing.T) (*sql.DB, time.Time) {
 			start := monday.AddDate(0, 0, day).Add(12 * time.Hour)
 			id, err := store.InsertWorkout(db, &store.Workout{
 				StartTime: start, Duration: time.Hour, TSS: tss,
-				Trainer: trainer, DistanceKm: km, AvgPower: 100, AvgCadence: cadence,
+				Trainer: trainer, DistanceKm: km, AvgPower: 100,
+				AvgCadence: cadence, AvgCadenceActive: cadence,
 			}, fmt.Sprintf("hash-status-%d-%d", w, day), filepath.Join(t.TempDir(), "x.fit"), 1)
 			if err != nil {
 				t.Fatal(err)

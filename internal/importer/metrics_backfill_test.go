@@ -237,6 +237,51 @@ func TestBackfillMetricsFromFIT(t *testing.T) {
 	}
 }
 
+// TestBackfillMetricsCadenceActive — бэкфилл версии 2 считает каденс «в работе»
+// из сохранённых сэмплов, без FIT; повторный прогон идемпотентен.
+func TestBackfillMetricsCadenceActive(t *testing.T) {
+	db := openTestDB(t)
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: 90 * time.Second,
+	}, "hash-metrics-cadence", "/nonexistent/cadence.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := make([]store.Sample, 90)
+	for i := range samples {
+		cadence := 90
+		if i >= 60 {
+			cadence = 0
+		}
+		samples[i] = store.Sample{Offset: int64(i), Cadence: cadence, HasCad: true}
+	}
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := BackfillMetrics(db); err != nil || n != 1 {
+		t.Fatalf("бэкфилл: %d, %v; хочу 1", n, err)
+	}
+	w, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.AvgCadenceActive != 90 || w.MetricsVersion != metricsVersion {
+		t.Errorf("после бэкфилла: AvgCadenceActive=%d version=%d, хочу 90/%d",
+			w.AvgCadenceActive, w.MetricsVersion, metricsVersion)
+	}
+	if n, err := BackfillMetrics(db); err != nil || n != 0 {
+		t.Errorf("повторный бэкфилл: %d, %v; хочу 0", n, err)
+	}
+	again, err := store.GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.AvgCadenceActive != w.AvgCadenceActive || again.MetricsVersion != w.MetricsVersion {
+		t.Errorf("повторный бэкфилл изменил данные: %+v → %+v", *w, *again)
+	}
+}
+
 // TestMetricsClearedWhenFTPRemoved — удаление последней записи FTP обнуляет
 // IF/TSS (VI от FTP не зависит и пересчитывается), повторный прогон старые
 // значения не воскрешает.

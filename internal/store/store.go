@@ -41,15 +41,18 @@ type Workout struct {
 	MaxSpeedKmh float64
 	AvgCadence  int
 	MaxCadence  int
-	AvgPower    int
-	MaxPower    int
-	NormPower   int
-	AvgHR       int
-	MaxHR       int
-	Calories    int
-	AscentM     int
-	DescentM    int
-	HasPower    bool
+	// AvgCadenceActive — средний каденс только по сэмплам с cadence > 0
+	// (без наката). В JSON неизвестное значение отдаётся null, а не 0.
+	AvgCadenceActive int `json:"-"`
+	AvgPower         int
+	MaxPower         int
+	NormPower        int
+	AvgHR            int
+	MaxHR            int
+	Calories         int
+	AscentM          int
+	DescentM         int
+	HasPower         bool
 
 	// штампы профиля на момент тренировки — зоны считаются от них,
 	// чтобы история не пересчитывалась при изменении FTP/веса
@@ -101,11 +104,12 @@ func (w Workout) MarshalJSON() ([]byte, error) {
 	type plain Workout // без метода, чтобы не было рекурсии
 	out := struct {
 		plain
-		IF     *float64 `json:"IF"`
-		TSS    *float64 `json:"TSS"`
-		VI     *float64 `json:"VI"`
-		WorkKJ *float64 `json:"WorkKJ"`
-		SRPE   *float64 `json:"SRPE"`
+		IF               *float64 `json:"IF"`
+		TSS              *float64 `json:"TSS"`
+		VI               *float64 `json:"VI"`
+		WorkKJ           *float64 `json:"WorkKJ"`
+		SRPE             *float64 `json:"SRPE"`
+		AvgCadenceActive *int     `json:"AvgCadenceActive"`
 	}{plain: plain(w)}
 	if w.HasIF {
 		out.IF = &out.plain.IF
@@ -121,6 +125,9 @@ func (w Workout) MarshalJSON() ([]byte, error) {
 	}
 	if w.RPE > 0 {
 		out.SRPE = &out.plain.SRPE
+	}
+	if w.AvgCadenceActive > 0 {
+		out.AvgCadenceActive = &out.plain.AvgCadenceActive
 	}
 	return json.Marshal(out)
 }
@@ -303,6 +310,7 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"workouts", "metrics_version", `ALTER TABLE workouts ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "avg_temp", `ALTER TABLE workouts ADD COLUMN avg_temp REAL`},
 		{"workouts", "is_test", `ALTER TABLE workouts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "avg_cadence_active", `ALTER TABLE workouts ADD COLUMN avg_cadence_active INTEGER`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -430,11 +438,12 @@ func InsertWorkout(db DBTX, w *Workout, hash, path string, mtime int64) (int64, 
 	_, err := db.Exec(`INSERT INTO workouts
 	    (file_hash, file_path, file_mtime, start_time, year, month, subsport, subsport_checked, has_gps, trainer,
 	     duration_sec, distance_m, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence,
+	     avg_cadence_active,
 	     avg_power, max_power, norm_power, np_version, avg_hr, max_hr, calories,
 	     total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	     if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	     elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version)
-	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	    VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	    ON CONFLICT(file_hash) DO UPDATE SET
 	      file_path=excluded.file_path, file_mtime=excluded.file_mtime,
 	      start_time=excluded.start_time, year=excluded.year, month=excluded.month,
@@ -443,6 +452,7 @@ func InsertWorkout(db DBTX, w *Workout, hash, path string, mtime int64) (int64, 
 	      duration_sec=excluded.duration_sec, distance_m=excluded.distance_m,
 	      avg_speed_ms=excluded.avg_speed_ms, max_speed_ms=excluded.max_speed_ms,
 	      avg_cadence=excluded.avg_cadence, max_cadence=excluded.max_cadence,
+	      avg_cadence_active=excluded.avg_cadence_active,
 	      avg_power=excluded.avg_power, max_power=excluded.max_power,
 	      norm_power=excluded.norm_power, np_version=excluded.np_version,
 	      avg_hr=excluded.avg_hr, max_hr=excluded.max_hr,
@@ -461,7 +471,7 @@ func InsertWorkout(db DBTX, w *Workout, hash, path string, mtime int64) (int64, 
 		w.StartTime.Year(), int(w.StartTime.Month()), w.SubSport, gps, tr,
 		int64(w.Duration.Seconds()), dist,
 		nullableFloat(w.AvgSpeedKmh/3.6), nullableFloat(w.MaxSpeedKmh/3.6),
-		nullableInt(w.AvgCadence), nullableInt(w.MaxCadence),
+		nullableInt(w.AvgCadence), nullableInt(w.MaxCadence), nullableInt(w.AvgCadenceActive),
 		nullableInt(w.AvgPower), nullableInt(w.MaxPower), nullableInt(w.NormPower), w.NPVersion,
 		nullableInt(w.AvgHR), nullableInt(w.MaxHR), nullableInt(w.Calories),
 		nullableInt(w.AscentM), nullableInt(w.DescentM),
@@ -973,10 +983,11 @@ func WorkoutsNeedingMetrics(db DBTX, version int) ([]FileRef, error) {
 func SetWorkoutMetricsBatch(db DBTX, works []*Workout) error {
 	for _, w := range works {
 		if _, err := db.Exec(`UPDATE workouts SET
-		    if=?, tss=?, vi=?, avg_power_active=?, coasting_sec=?, no_power_sec=?,
+		    if=?, tss=?, vi=?, avg_cadence_active=?, avg_power_active=?, coasting_sec=?, no_power_sec=?,
 		    suspect_dropout_sec=?, elapsed_sec=?, pause_sec=?, work_kj=?, avg_temp=?, metrics_version=?
 		    WHERE id = ?`,
 			nullableFloat(w.IF), nullableFloat(w.TSS), nullableFloat(w.VI),
+			nullableInt(w.AvgCadenceActive),
 			nullableInt(w.AvgPowerActive), nullableInt(w.CoastingSec), nullableInt(w.NoPowerSec),
 			nullableInt(w.SuspectDropoutSec), nullableInt(w.ElapsedSec), nullableInt(w.PauseSec),
 			nullableMetric(w.WorkKJ, w.HasWork),
@@ -1204,7 +1215,7 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var durSec int64
 	var dist sql.NullInt64
 	var spd, mspd sql.NullFloat64
-	var cad, mcad, ap, mp, np, hr, mhr, kcal, asc, desc, ftp sql.NullInt64
+	var cad, mcad, cadActive, ap, mp, np, hr, mhr, kcal, asc, desc, ftp sql.NullInt64
 	var wkg sql.NullFloat64
 	var ifv, tss, vi, work, temp sql.NullFloat64
 	var ftpKind sql.NullString
@@ -1217,7 +1228,7 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var ov sql.NullInt64
 	var isTest int
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
-	    trainer_override, is_test, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_power, max_power,
+	    trainer_override, is_test, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_cadence_active, avg_power, max_power,
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	    elapsed_sec, pause_sec, work_kj, avg_temp, metrics_version, bike_id,
@@ -1225,7 +1236,7 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	    rpe, notes
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov, &isTest,
-		&spd, &mspd, &cad, &mcad, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
+		&spd, &mspd, &cad, &mcad, &cadActive, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &temp, &w.MetricsVersion,
 		&bikeID, &bikeName, &rpe, &notes)
 	if err != nil {
@@ -1257,6 +1268,7 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.DescentM = int(desc.Int64)
 	w.AvgCadence = int(cad.Int64)
 	w.MaxCadence = int(mcad.Int64)
+	w.AvgCadenceActive = int(cadActive.Int64)
 	w.AvgPower = int(ap.Int64)
 	w.MaxPower = int(mp.Int64)
 	w.NormPower = int(np.Int64)

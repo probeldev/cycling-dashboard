@@ -59,7 +59,11 @@
   {{ if .W.AvgCadence }}
   <h3>Каденс</h3>
   <div class="stats">
-    <div class="stat"><div class="v">{{ .W.AvgCadence }}</div><div class="k">средний</div></div>
+    <div class="stat">
+      <div class="v">{{ if .W.AvgCadenceActive }}{{ .W.AvgCadenceActive }}{{ else }}—{{ end }}</div>
+      <div class="k">в работе</div>
+      <div class="k">{{ .W.AvgCadence }} с накатом</div>
+    </div>
     {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс</div></div>{{ end }}
   </div>
   {{ end }}

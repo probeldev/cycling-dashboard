@@ -12,17 +12,18 @@ import (
 // меняет только нужное поле, чтобы проверять правило изолированно.
 func baseWorkout() (store.Workout, Context) {
 	return store.Workout{
-		Duration:   time.Hour,
-		AvgCadence: 85,
-		HasPower:   true,
-		AvgPower:   150,
-		HasVI:      true,
-		VI:         1.0,
-		HasTSS:     true,
-		TSS:        50,
-		AvgHR:      130,
-		MaxHR:      160,
-		RPE:        5,
+		Duration:         time.Hour,
+		AvgCadence:       85,
+		AvgCadenceActive: 85,
+		HasPower:         true,
+		AvgPower:         150,
+		HasVI:            true,
+		VI:               1.0,
+		HasTSS:           true,
+		TSS:              50,
+		AvgHR:            130,
+		MaxHR:            160,
+		RPE:              5,
 	}, Context{}
 }
 
@@ -38,18 +39,22 @@ func hasCard(cards []Card, title string) bool {
 func TestRuleLowCadence(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
-		cadence int
+		active  int
+		all     int
 		trainer bool
 		want    bool
 	}{
-		{"69 на улице", 69, false, true},
-		{"70 на улице", 70, false, false},
-		{"60 на станке", 60, true, false},
-		{"каденса нет", 0, false, false},
+		{"69 в работе", 69, 66, false, true},
+		{"70 в работе", 70, 66, false, false},
+		{"60 на станке", 60, 60, true, false},
+		{"каденса нет", 0, 0, false, false},
+		// общий средний ниже порога, но в работе 85 — правило молчит:
+		// накат больше не выдаёт низкий каденс
+		{"66 с накатом, 85 в работе", 85, 66, false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			w, ctx := baseWorkout()
-			w.AvgCadence, w.Trainer = tt.cadence, tt.trainer
+			w.AvgCadenceActive, w.AvgCadence, w.Trainer = tt.active, tt.all, tt.trainer
 			if got := hasCard(For(w, ctx), "Низкий каденс"); got != tt.want {
 				t.Errorf("Низкий каденс = %v, хочу %v", got, tt.want)
 			}
@@ -294,7 +299,7 @@ func ptr(v float64) *float64 { return &v }
 // карточка «Нет RPE» отброшена.
 func TestPriorityAndLimit(t *testing.T) {
 	w, ctx := baseWorkout()
-	w.AvgCadence = 60                               // info
+	w.AvgCadenceActive = 60                         // info
 	w.VI = 1.2                                      // warn
 	w.CoastingSec = int(w.Duration.Seconds() * 0.3) // info
 	w.NoPowerSec = int(w.Duration.Seconds() * 0.1)  // warn
@@ -319,7 +324,7 @@ func TestPriorityAndLimit(t *testing.T) {
 // TestSortWarnInfoGood — все три уровня идут в порядке warn → info → good.
 func TestSortWarnInfoGood(t *testing.T) {
 	w, ctx := baseWorkout()
-	w.AvgCadence = 60
+	w.AvgCadenceActive = 60
 	w.NoPowerSec = 400
 	ctx.Decoupling = ptr(4.0)
 	cards := For(w, ctx)
