@@ -268,3 +268,28 @@ func TestProfileSeriesEncodeError(t *testing.T) {
 		t.Errorf("тело ошибки: %q", rec.Body.String())
 	}
 }
+
+// TestProfileHistoryFractionalFTP — история профиля показывает дробный FTP
+// так же, как карточки: 156.5, а не округлённые 157 или 156.
+func TestProfileHistoryFractionalFTP(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.AddProfileEntry(db, "ftp", 156.5, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /profile: код %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "156.5 Вт") {
+		t.Error("история профиля не показывает дробный FTP 156.5")
+	}
+}
