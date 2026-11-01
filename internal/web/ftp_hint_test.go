@@ -187,6 +187,72 @@ func postProfileEntry(t *testing.T, h http.Handler, form url.Values) int {
 	return rec.Code
 }
 
+// ftpUpdateTag — HTML-тег кнопки «Обновить FTP» из отрендеренной страницы.
+func ftpUpdateTag(t *testing.T, body string) string {
+	t.Helper()
+	text := strings.Index(body, "Обновить FTP")
+	if text < 0 {
+		t.Fatalf("на странице нет кнопки «Обновить FTP»")
+	}
+	start := strings.LastIndex(body[:text], "<button")
+	if start < 0 {
+		t.Fatalf("нет открывающего тега кнопки «Обновить FTP»")
+	}
+	return body[start:text]
+}
+
+// TestFTPHintPagesAndButton — /progress и /workout показывают подсказку со
+// ссылкой на тренировку, кнопка не передаёт дату тренировки, а её POST
+// (kind/value, без date) убирает подсказку.
+func TestFTPHintPagesAndButton(t *testing.T) {
+	db, h := ftpHintServer(t, map[string]float64{"ftp": 200})
+	id := addHintWorkout(t, db, true, time.Now().Add(-2*time.Hour), 220)
+	hint := getFTPHint(t, h)
+	if hint == nil {
+		t.Fatal("нет подсказки")
+	}
+
+	get := func(path string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: код %d", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	progress := get("/progress")
+	if !strings.Contains(progress, fmt.Sprintf("/workout/%d", id)) {
+		t.Errorf("/progress не ссылается на тренировку-источник %d", id)
+	}
+	detail := get(fmt.Sprintf("/workout/%d", id))
+	if !strings.Contains(detail, "по этой тренировке") {
+		t.Errorf("/workout не показывает подсказку по тренировке")
+	}
+	for name, body := range map[string]string{"/progress": progress, "/workout": detail} {
+		tag := ftpUpdateTag(t, body)
+		if !strings.Contains(tag, `hx-post="/profile/entry"`) {
+			t.Errorf("%s: кнопка не отправляет профиль: %s", name, tag)
+		}
+		if strings.Contains(tag, "date") {
+			t.Errorf("%s: кнопка передаёт дату тренировки: %s", name, tag)
+		}
+	}
+
+	if code := postProfileEntry(t, h, url.Values{
+		"kind": {"ftp"}, "value": {strconv.FormatFloat(hint.Estimate, 'f', 1, 64)},
+	}); code != http.StatusOK {
+		t.Fatalf("POST кнопки: код %d, хочу 200", code)
+	}
+	if got := getFTPHint(t, h); got != nil {
+		t.Errorf("после POST кнопки подсказка осталась: %+v", got)
+	}
+	if body := get("/progress"); strings.Contains(body, "Обновить FTP") {
+		t.Error("/progress после POST всё ещё показывает кнопку обновления FTP")
+	}
+}
+
 // TestFTPHintUpdateHidesHint — кнопка пишет запись на момент нажатия, а не на
 // дату тренировки: после POST подсказка исчезает и для станка, и для улицы.
 func TestFTPHintUpdateHidesHint(t *testing.T) {

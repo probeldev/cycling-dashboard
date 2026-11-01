@@ -29,6 +29,25 @@ func TestBuildPowerZones(t *testing.T) {
 	}
 }
 
+// TestZoneTimeLabel — короткие зоны печатаются в секундах, дальше в минутах и
+// часах; ноль — прочерк.
+func TestZoneTimeLabel(t *testing.T) {
+	for _, tt := range []struct {
+		secs int
+		want string
+	}{
+		{0, "—"},
+		{45, "45 с"},
+		{60, "1 мин"},
+		{3599, "59 мин"},
+		{3600, "1 ч 0 мин"},
+	} {
+		if got := zoneTimeLabel(tt.secs); got != tt.want {
+			t.Errorf("zoneTimeLabel(%d) = %q, хочу %q", tt.secs, got, tt.want)
+		}
+	}
+}
+
 // TestProfileZonesPage — на /profile две секции зон (станок и улица) и время
 // из workout_zones соответствующего типа тренировки.
 func TestProfileZonesPage(t *testing.T) {
