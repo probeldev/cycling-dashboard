@@ -76,6 +76,23 @@
   {{ end }}
 </div>
 
+{{ if .PowerZones }}
+<h2>Мощностные зоны</h2>
+<p class="sub" style="color:var(--dim); font-size:14px">
+  База: FTP {{ .W.FTP }} Вт —
+  {{- if .W.FTPFallback }} станок, уличный FTP не задан
+  {{- else if eq .W.FTPKind "outdoor" }} улица
+  {{- else }} станок{{ end }}.
+  Время — из распределения мощности, % — от времени педалирования.
+</p>
+<table>
+  <tr><th>Зона</th><th>Время</th><th>% педалирования</th></tr>
+  {{ range .PowerZones }}
+  <tr><td>{{ .Label }}</td><td>{{ .Time }}</td><td>{{ .Pct }}%</td></tr>
+  {{ end }}
+</table>
+{{ end }}
+
 {{ if .FTPHint }}
 <div class="stat" style="border-color:#d4a72c; background:#fff8c5; margin-bottom:16px">
   <div class="v">{{ trimFloat .FTPHint.Estimate }} Вт</div>

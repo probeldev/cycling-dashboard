@@ -2,8 +2,14 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"cycling-dashboard/internal/ridedata"
 	"cycling-dashboard/internal/store"
@@ -373,6 +379,80 @@ func TestZoneTimeMatchesDist(t *testing.T) {
 	for j, z := range zones {
 		if got := power[j+1].Secs; got != int(math.Round(z)) {
 			t.Errorf("Z%d: /dist %d, PowerTime %d", j+1, got, int(math.Round(z)))
+		}
+	}
+}
+
+// TestWorkoutZonesHTMLMatchDist — мини-таблица зон на деталке строится из
+// того же /dist: метки, время и % от педалирования совпадают построчно.
+func TestWorkoutZonesHTMLMatchDist(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now().Add(-time.Hour), Duration: 120 * time.Second,
+		Trainer: false, HasPower: true, AvgPower: 120, NormPower: 140,
+		FTP: 156, FTPKind: "trainer",
+	}, "hash-zones-html", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples []store.Sample
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 100, HasPwr: true})
+	}
+	for i := 60; i < 90; i++ {
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 0, HasPwr: true})
+	}
+	for i := 90; i < 120; i++ {
+		samples = append(samples, store.Sample{Offset: int64(i), Power: 200, HasPwr: true})
+	}
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /workout/%d: код %d", id, rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Мощностные зоны", "База: FTP 156 Вт", "станок, уличный FTP не задан",
+		"% педалирования",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на деталке нет %q", want)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/workout/%d/dist", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /dist: код %d", rec.Code)
+	}
+	var d struct {
+		Power []distEntry `json:"power"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Power) != 8 {
+		t.Fatalf("бакетов мощности %d, хочу 8 (накат + Z1–Z7)", len(d.Power))
+	}
+	// html/template экранирует "+" в тексте как &#43; — для сверки возвращаем.
+	rows := strings.ReplaceAll(body, "&#43;", "+")
+	for _, e := range d.Power[1:] {
+		want := fmt.Sprintf("<td>%s</td><td>%s</td><td>%s%%</td>",
+			e.Label, zoneTimeLabel(e.Secs), trimFloat(e.Pct))
+		if !strings.Contains(rows, want) {
+			t.Errorf("нет строки зоны %q (в /dist: %+v)", want, e)
 		}
 	}
 }

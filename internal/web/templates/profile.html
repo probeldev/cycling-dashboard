@@ -28,24 +28,48 @@
 {{ if or .HasFTP .HasFTPOutdoor }}
 <h2>Мощностные зоны</h2>
 <p class="sub" style="color:var(--dim); font-size:14px">Границы — от текущего FTP, правая граница зоны не входит. Время — за последние 90 дней из зон тренировок.</p>
-{{ with .TrainerZones }}
-<h3>Станок · FTP {{ watts $.FTP }} Вт</h3>
-<table>
-  <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
-  {{ range . }}
-  <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+<div class="tabs" id="zoneTabs" style="margin-bottom:10px">
+  <button type="button" class="tab{{ if .HasFTP }} active{{ end }}" data-zone-tab="trainer">Станок</button>
+  <button type="button" class="tab{{ if not .HasFTP }} active{{ end }}" data-zone-tab="outdoor">Улица</button>
+</div>
+<div data-zone-panel="trainer"{{ if not .HasFTP }} hidden{{ end }}>
+  {{ if .HasFTP }}
+  <h3>Станок · FTP {{ watts .FTP }} Вт</h3>
+  <table>
+    <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
+    {{ range .TrainerZones }}
+    <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+    {{ end }}
+  </table>
+  {{ else }}
+  <p class="empty">станковый FTP не задан — зоны станка не посчитаны.</p>
   {{ end }}
-</table>
-{{ end }}
-{{ with .OutdoorZones }}
-<h3>Улица · FTP {{ watts $.FTPOutdoor }} Вт</h3>
-<table>
-  <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
-  {{ range . }}
-  <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+</div>
+<div data-zone-panel="outdoor"{{ if .HasFTP }} hidden{{ end }}>
+  {{ if .HasFTPOutdoor }}
+  <h3>Улица · FTP {{ watts .FTPOutdoor }} Вт</h3>
+  <table>
+    <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
+    {{ range .OutdoorZones }}
+    <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+    {{ end }}
+  </table>
+  {{ else }}
+  <p class="empty">уличный FTP не задан — зоны улицы не посчитаны.</p>
+  <p><a href="#add-ftp-outdoor" style="display:inline-block; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); text-decoration:none">Перейти к форме</a></p>
   {{ end }}
-</table>
-{{ end }}
+</div>
+<script>
+(() => {
+  const tabs = document.querySelectorAll("#zoneTabs [data-zone-tab]");
+  tabs.forEach(tab => tab.addEventListener("click", () => {
+    tabs.forEach(t => t.classList.toggle("active", t === tab));
+    document.querySelectorAll("[data-zone-panel]").forEach(panel => {
+      panel.hidden = panel.dataset.zonePanel !== tab.dataset.zoneTab;
+    });
+  }));
+})();
+</script>
 {{ end }}
 
 <h2>Вес и FTP</h2>
@@ -75,7 +99,7 @@
     <button hx-post="/profile/entry" hx-swap="none"
             hx-vals="js:{kind:'ftp', value: document.getElementById('fval').value, date: document.getElementById('fdate').value}">Сохранить</button>
   </div>
-  <div>
+  <div id="add-ftp-outdoor">
     <b>FTP (улица), Вт</b><br>
     <input id="foval" type="number" step="1" min="1" placeholder="280"
            style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">

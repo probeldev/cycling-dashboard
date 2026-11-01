@@ -168,3 +168,79 @@ func TestProfileZonesEmptyHistory(t *testing.T) {
 		t.Errorf("пустая история времени не даёт прочерк")
 	}
 }
+
+// TestProfileZonesTabs — станок и улица переключаются вкладками, обе таблицы
+// остаются в HTML (скрыта только панель), без новых зависимостей.
+func TestProfileZonesTabs(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	at := time.Now().Add(-time.Hour)
+	if err := store.AddProfileEntry(db, "ftp", 156, at); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddProfileEntry(db, "ftp_outdoor", 180, at); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-zone-tab="trainer"`, `data-zone-tab="outdoor"`,
+		`data-zone-panel="trainer"`, `data-zone-panel="outdoor"`,
+		"Станок · FTP 156 Вт", "Улица · FTP 180 Вт",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на /profile нет %q", want)
+		}
+	}
+	if strings.Contains(body, `data-zone-panel="trainer" hidden`) {
+		t.Error("панель станка скрыта, хотя станковый FTP задан")
+	}
+	if !strings.Contains(body, `data-zone-panel="outdoor" hidden`) {
+		t.Error("панель улицы не скрыта по умолчанию")
+	}
+}
+
+// TestProfileZonesNoOutdoor — уличного FTP нет: вкладка улицы показывает
+// подсказку и кнопку перехода к форме, а не пустую таблицу.
+func TestProfileZonesNoOutdoor(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := store.AddProfileEntry(db, "ftp", 156, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"уличный FTP не задан", `href="#add-ftp-outdoor"`, `id="add-ftp-outdoor"`,
+		`data-zone-tab="outdoor"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на /profile нет %q", want)
+		}
+	}
+	if strings.Contains(body, "Улица · FTP") {
+		t.Error("таблица улицы отрисована без ftp_outdoor")
+	}
+}

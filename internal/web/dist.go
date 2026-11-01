@@ -207,6 +207,30 @@ func zoneDistribution(samples []store.Sample, ftp int) ([]distEntry, powerBase, 
 	return entries, base, true
 }
 
+// workoutZoneRow — строка мини-таблицы зон на деталке. Строится из тех же
+// entries, что отдаёт /dist, поэтому второй формулы зон нет.
+type workoutZoneRow struct {
+	Label string
+	Time  string
+	Pct   string // % от времени педалирования
+}
+
+// workoutZoneRows отбрасывает бакет наката: таблица — только Z1–Z7.
+func workoutZoneRows(entries []distEntry) []workoutZoneRow {
+	if len(entries) <= 1 {
+		return nil
+	}
+	rows := make([]workoutZoneRow, 0, len(entries)-1)
+	for _, e := range entries[1:] {
+		rows = append(rows, workoutZoneRow{
+			Label: e.Label,
+			Time:  zoneTimeLabel(e.Secs),
+			Pct:   trimFloat(e.Pct),
+		})
+	}
+	return rows
+}
+
 // distributions считает время в каждом диапазоне. Если задан FTP (штамп
 // тренировки), мощность режется на зоны Коггана, иначе — по фиксированным
 // диапазонам. Нулевая мощность попадает в отдельный бакет наката, плюс

@@ -147,9 +147,22 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// зоны — из того же расчёта, что /api/workout/{id}/dist; второй
+		// формулы на странице нет
+		var powerZones []workoutZoneRow
+		if wo.FTP > 0 && wo.HasPower {
+			samples, err := store.RawSamples(db, id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if entries, _, ok := zoneDistribution(samples, wo.FTP); ok {
+				powerZones = workoutZoneRows(entries)
+			}
+		}
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes, "RPEOptions": rpeOptions,
-			"FTPHint": ftpHint, "Advice": cards,
+			"FTPHint": ftpHint, "Advice": cards, "PowerZones": powerZones,
 		})
 	})
 
