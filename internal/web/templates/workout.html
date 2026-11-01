@@ -80,6 +80,18 @@
 </div>
 {{ end }}
 
+{{ if .Advice }}
+<h2>Что говорят данные</h2>
+<div class="advice-list">
+  {{ range .Advice }}
+  <div class="advice {{ .Level }}">
+    <span class="icon">{{ if eq .Level "warn" }}!{{ else if eq .Level "info" }}i{{ else }}✓{{ end }}</span>
+    <div><div class="t">{{ .Title }}</div><div class="x">{{ .Text }}</div></div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+
 <div style="margin-bottom:16px">
   Тип тренировки:
   <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"0"}' hx-swap="none">улица</button>

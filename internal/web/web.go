@@ -122,9 +122,14 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 				break
 			}
 		}
+		cards, err := workoutAdvice(db, wo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes, "RPEOptions": rpeOptions,
-			"FTPHint": ftpHint,
+			"FTPHint": ftpHint, "Advice": cards,
 		})
 	})
 
