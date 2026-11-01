@@ -116,8 +116,25 @@ func TestWeeklyTargetOnlyCurrentWeek(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != defaultWeeklyTarget {
-		t.Errorf("WeeklyTarget = %v, хочу дефолт %v: полных недель ещё нет", got, defaultWeeklyTarget)
+	if got != 220 {
+		t.Errorf("WeeklyTarget = %v, хочу 220: полных недель нет, но текущая уже нагружена", got)
+	}
+}
+
+func TestWeeklyTargetEmptyFullWeeksUsesCurrent(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.Local)
+	ws := WeekStart(now)
+	// история есть, но все 4 полные недели пусты; нагрузка только в текущей
+	addWeekWorkout(t, db, ws.AddDate(0, 0, -35), 2, 0, "hash-target-empty-old")
+	addWeekWorkout(t, db, ws, 1, 219.6, "hash-target-empty-current")
+
+	got, err := WeeklyTarget(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 220 {
+		t.Errorf("WeeklyTarget = %v, хочу 220 из текущей недели", got)
 	}
 }
 

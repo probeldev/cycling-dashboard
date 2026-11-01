@@ -47,7 +47,7 @@ func WeeklyTarget(db DBTX, now time.Time) (float64, error) {
 	lastFull := WeekStart(now).AddDate(0, 0, -7)
 	firstWeek := WeekStart(first)
 	if firstWeek.After(lastFull) {
-		return defaultWeeklyTarget, nil
+		return currentWeekTarget(db, now)
 	}
 	weeks := int(lastFull.Sub(firstWeek).Hours()/24/7) + 1
 	if weeks > 4 {
@@ -60,7 +60,7 @@ func WeeklyTarget(db DBTX, now time.Time) (float64, error) {
 			return 0, err
 		}
 		if tss <= 0 {
-			return defaultWeeklyTarget, nil
+			return currentWeekTarget(db, now)
 		}
 		return math.Round(tss), nil
 	}
@@ -75,9 +75,23 @@ func WeeklyTarget(db DBTX, now time.Time) (float64, error) {
 	}
 	target := math.Round(median(values))
 	if target <= 0 {
-		return defaultWeeklyTarget, nil
+		return currentWeekTarget(db, now)
 	}
 	return target, nil
+}
+
+// currentWeekTarget — запасной вариант, когда полные недели пусты, а нагрузка
+// уже есть в текущей: цель 0 бессмысленна, а свежая неделя — единственный
+// ориентир. Пустая история по-прежнему даёт 150.
+func currentWeekTarget(db DBTX, now time.Time) (float64, error) {
+	tss, err := weeklyTSS(db, WeekStart(now))
+	if err != nil {
+		return 0, err
+	}
+	if tss <= 0 {
+		return defaultWeeklyTarget, nil
+	}
+	return math.Round(tss), nil
 }
 
 // SetWeeklyTarget сохраняет ручную цель недельного TSS. Значение вне
