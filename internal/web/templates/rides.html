@@ -59,11 +59,15 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
       {{ range .Rides }}
         <a href="/workout/{{ .ID }}" class="ride" data-search="{{ .Search }}">
           <span class="ride-date">{{ .Date }}</span>
-          <span class="ride-title">{{ .Title }}</span>
+          <span class="ride-title-wrap">
+            <span class="ride-title">{{ .Title }}</span>
+            {{ if .Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
+          </span>
           {{ if .PowerSpark }}
           <svg class="ride-spark" viewBox="0 0 60 16" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ .PowerSpark }}"/></svg>
           {{ end }}
           <span class="ride-metrics">
+            {{ if .HasRecord }}<span class="chip chip--record">рекорд</span>{{ end }}
             {{ if .Trainer }}
               <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
             {{ else }}
@@ -78,9 +82,6 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
               <span class="ride-metric"><b>{{ .TSSText }}</b></span>
             {{ end }}
           </span>
-          {{ if .HasRecord }}<span class="chip chip--record">рекорд</span>{{ end }}
-          {{ if .Trainer }}<span class="chip chip--trainer">станок</span>{{ end }}
-          {{ if not .Trainer }}<span class="chip chip--outdoor">улица</span>{{ end }}
         </a>
       {{ end }}
       </div>
@@ -124,7 +125,7 @@ function filterRides(q) {
 .ride-list { display: flex; flex-direction: column; }
 .ride {
   display: grid;
-  grid-template-columns: 86px 1fr 70px auto auto;
+  grid-template-columns: 86px 1fr 70px auto;
   gap: 12px;
   align-items: center;
   padding: 10px 14px;
@@ -135,6 +136,8 @@ function filterRides(q) {
 }
 .ride:hover { background: var(--surface); text-decoration: none; }
 .ride-date { color: var(--text-2); font-feature-settings: "tnum"; }
+.ride-title-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ride-title-wrap .chip { flex: none; }
 .ride-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ride-spark { width: 60px; height: 16px; flex: none; }
 .ride-spark polyline { fill: none; stroke: var(--brand); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
@@ -146,10 +149,9 @@ function filterRides(q) {
 @media (max-width: 700px) {
   .ride { grid-template-columns: 1fr auto; gap: 6px 12px; }
   .ride-date { order: 1; }
-  .ride-title { order: 3; grid-column: 1 / -1; }
+  .ride-title-wrap { order: 3; grid-column: 1 / -1; }
   .ride-spark { order: 2; justify-self: end; }
   .ride-metrics { order: 4; grid-column: 1 / -1; justify-content: flex-start; }
-  .ride .chip { order: 5; }
 }
 </style>
 
