@@ -57,8 +57,33 @@
 
   .ftp-hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .ftp-hint .v { font-size: 20px; font-weight: 600; }
+
+  /* раскладка страницы: якорная навигация сбоку + контент (как в progress.html) */
+  .w-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 28px; align-items: start; }
+  .w-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 16px; }
+  .w-nav a { padding: 6px 12px; border-radius: 999px; color: var(--text-2); font-size: 14px; }
+  .w-nav a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
+  .w-nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .w-content { min-width: 0; }
+  .w-content section { scroll-margin-top: 10px; }
+  /* sticky-заголовки секций */
+  .sec-h { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 14px 0 2px; padding: 10px 0 8px; font-size: 19px; }
+  .w-content section > h3 { font-size: 15px; margin: 20px 0 8px; }
+  @media (max-width: 900px) {
+    .w-layout { grid-template-columns: 1fr; }
+    .w-nav { position: static; flex-direction: row; flex-wrap: wrap; padding: 0 0 6px; }
+  }
 </style>
 
+<div class="w-layout">
+<nav class="w-nav" aria-label="Разделы страницы">
+  <a href="#summary" class="active">Сводка</a>
+  <a href="#charts">Графики</a>
+</nav>
+<div class="w-content">
+
+<section id="summary">
+  <h2 class="sec-h">Сводка</h2>
 <header class="w-head">
   <a class="w-back" href="/rides">← Поездки</a>
   <h1>{{ datetime .W.StartTime }}</h1>
@@ -171,25 +196,6 @@
 </section>
 {{ end }}
 
-<section class="blk">
-  <div class="section-label">График</div>
-  <div id="chartCtl" class="chart-controls">
-    <span id="metricBtns" class="tabs"></span>
-    <span id="axisBtns" class="axis-toggles"></span>
-  </div>
-  <canvas id="chart"></canvas>
-</section>
-
-<section class="blk">
-  <div class="section-label">Распределения</div>
-  <div class="dist-grid" id="distGrid">
-    <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
-    {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
-    <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
-    <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
-  </div>
-</section>
-
 {{ if .MMP }}
 <section class="blk">
   <div class="section-label">Лучшие усилия</div>
@@ -259,6 +265,27 @@
 </details>
 
 {{ if not .W.Trainer }}<div id="map"></div>{{ end }}
+</section>
+
+<section id="charts">
+  <h2 class="sec-h">Графики</h2>
+  <div id="chartCtl" class="chart-controls">
+    <span id="metricBtns" class="tabs"></span>
+    <span id="axisBtns" class="axis-toggles"></span>
+  </div>
+  <canvas id="chart"></canvas>
+
+  <h3>Распределения</h3>
+  <div class="dist-grid" id="distGrid">
+    <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
+    {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
+    <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
+    <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
+  </div>
+</section>
+
+</div>
+</div>
 
 <script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/vendor/leaflet.js"></script>
@@ -495,6 +522,17 @@ if (mapEl && track.length > 1 && typeof L !== "undefined") {
 } else if (mapEl) {
   mapEl.style.display = "none";
 }
+
+// scroll-spy для якорной навигации
+const navLinks = [...document.querySelectorAll(".w-nav a")];
+const sections = navLinks.map(a => document.querySelector(a.hash));
+const spy = () => {
+  let cur = 0;
+  sections.forEach((s, i) => { if (s && s.getBoundingClientRect().top <= 90) cur = i; });
+  navLinks.forEach((a, i) => a.classList.toggle("active", i === cur));
+};
+addEventListener("scroll", spy, { passive: true });
+spy();
 })();
 </script>
 {{ template "foot" . }}
