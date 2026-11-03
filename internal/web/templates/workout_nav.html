@@ -1,0 +1,30 @@
+{{ define "workoutBaseStyles" }}
+  .w-head { margin: 0 0 10px; }
+  .w-back { color: var(--text-2); font-size: 14px; }
+  /* дата и название — одной логической строкой «дата · название» (§4.3) */
+  .w-head h1 { margin: 4px 0 2px; font-size: 26px; font-feature-settings: "tnum"; }
+  .w-name { color: var(--text-2); font-size: 17px; font-weight: 600; }
+
+  /* раскладка страницы: боковая навигация + контент */
+  .w-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 28px; align-items: start; }
+  .w-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 16px; }
+  .w-nav a { padding: 6px 12px; border-radius: 999px; color: var(--text-2); font-size: 14px; }
+  .w-nav a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
+  .w-nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .w-content { min-width: 0; }
+  .w-content section { scroll-margin-top: 10px; }
+  /* sticky-заголовки секций */
+  .sec-h { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 14px 0 2px; padding: 10px 0 8px; font-size: 19px; }
+  .w-content section > h3 { font-size: 15px; margin: 20px 0 8px; }
+  @media (max-width: 900px) {
+    .w-layout { grid-template-columns: 1fr; }
+    .w-nav { position: static; flex-direction: row; flex-wrap: wrap; padding: 0 0 6px; }
+  }
+{{ end }}
+
+{{ define "workoutNav" }}
+<nav class="w-nav" aria-label="Разделы страницы">
+  <a href="/workout/{{ .W.ID }}"{{ if eq .Tab "summary" }} class="active"{{ end }}>Сводка</a>
+  <a href="/workout/{{ .W.ID }}/charts"{{ if eq .Tab "charts" }} class="active"{{ end }}>Графики</a>
+</nav>
+{{ end }}

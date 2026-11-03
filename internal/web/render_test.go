@@ -63,8 +63,13 @@ func TestRenderPages(t *testing.T) {
 	}
 
 	code, body = get(fmt.Sprintf("/workout/%d", id))
-	if code != http.StatusOK || !strings.Contains(body, "Мощность") || !strings.Contains(body, "</html>") {
+	if code != http.StatusOK || !strings.Contains(body, "Сводка") || !strings.Contains(body, "</html>") {
 		t.Errorf("GET /workout: код %d, тело %d байт", code, len(body))
+	}
+
+	code, body = get(fmt.Sprintf("/workout/%d/charts", id))
+	if code != http.StatusOK || !strings.Contains(body, `<canvas id="chart"></canvas>`) || !strings.Contains(body, "</html>") {
+		t.Errorf("GET /workout/charts: код %d, тело %d байт", code, len(body))
 	}
 
 	code, body = get("/profile")

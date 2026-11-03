@@ -205,7 +205,20 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpC, "Bikes": bikes,
 			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx), "PowerZones": powerZones,
-			"Summary": advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP),
+			"Summary": advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "summary",
+		})
+	})
+
+	// отдельная страница «Графики»: только данные графика, без сводки
+	r.Get("/workout/{id}/charts", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		wo, err := store.GetWorkout(db, id)
+		if err != nil {
+			notFoundOr500(w, req, err)
+			return
+		}
+		render(w, "workout_charts.html", map[string]any{
+			"W": wo, "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "charts",
 		})
 	})
 

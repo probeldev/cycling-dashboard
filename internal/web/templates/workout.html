@@ -1,11 +1,7 @@
 {{ template "head" . }}
 <style>
   /* ===== деталка тренировки (TODO-UI §4.3), page-scoped ===== */
-  .w-head { margin: 0 0 10px; }
-  .w-back { color: var(--text-2); font-size: 14px; }
-  /* дата и название — одной логической строкой «дата · название» (§4.3) */
-  .w-head h1 { margin: 4px 0 2px; font-size: 26px; font-feature-settings: "tnum"; }
-  .w-name { color: var(--text-2); font-size: 17px; font-weight: 600; }
+  {{ template "workoutBaseStyles" . }}
   /* карандаш: сама кнопка поверх цветом текста, иначе svg не перекрасить */
   .w-name-btn { display: inline-flex; vertical-align: middle; background: transparent; border: none;
     padding: 0 4px; margin-left: 2px; cursor: pointer; color: var(--text-3); }
@@ -71,29 +67,10 @@
 
   .ftp-hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .ftp-hint .v { font-size: 20px; font-weight: 600; }
-
-  /* раскладка страницы: якорная навигация сбоку + контент (как в progress.html) */
-  .w-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 28px; align-items: start; }
-  .w-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 16px; }
-  .w-nav a { padding: 6px 12px; border-radius: 999px; color: var(--text-2); font-size: 14px; }
-  .w-nav a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
-  .w-nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
-  .w-content { min-width: 0; }
-  .w-content section { scroll-margin-top: 10px; }
-  /* sticky-заголовки секций */
-  .sec-h { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 14px 0 2px; padding: 10px 0 8px; font-size: 19px; }
-  .w-content section > h3 { font-size: 15px; margin: 20px 0 8px; }
-  @media (max-width: 900px) {
-    .w-layout { grid-template-columns: 1fr; }
-    .w-nav { position: static; flex-direction: row; flex-wrap: wrap; padding: 0 0 6px; }
-  }
 </style>
 
 <div class="w-layout">
-<nav class="w-nav" aria-label="Разделы страницы">
-  <a href="#summary" class="active">Сводка</a>
-  <a href="#charts">Графики</a>
-</nav>
+{{ template "workoutNav" . }}
 <div class="w-content">
 
 <section id="summary">
@@ -270,33 +247,14 @@
 {{ if not .W.Trainer }}<div id="map"></div>{{ end }}
 </section>
 
-<section id="charts">
-  <h2 class="sec-h">Графики</h2>
-  <div id="chartCtl" class="chart-controls">
-    <span id="metricBtns" class="tabs"></span>
-    <span id="axisBtns" class="axis-toggles"></span>
-  </div>
-  <canvas id="chart"></canvas>
-
-  <h3>Распределения</h3>
-  <div class="dist-grid" id="distGrid">
-    <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
-    {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
-    <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
-    <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
-  </div>
-</section>
-
 </div>
 </div>
 
-<script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/vendor/leaflet.js"></script>
 <link rel="stylesheet" href="/static/vendor/leaflet.css">
 <script>
 (async () => {
 const id = {{ .W.ID }};
-const isTrainer = {{ .W.Trainer }};
 
 // переименование в шапке: карандаш → инлайн-поле → POST /workout/{id}/name
 // (роут ждёт form-поле name); после сохранения — перезагрузка страницы
@@ -370,245 +328,23 @@ if (typeBtn && typePop) {
   });
 }
 
-const resp = await fetch(`/api/workout/${id}/samples`);
-const data = await resp.json();
-
-const css = getComputedStyle(document.documentElement);
-const cssVar = n => css.getPropertyValue(n).trim();
-// цвет+прозрачность: заливка area и полосы зон — 10–15% (TODO-UI §4.3)
-function alpha(hex, a) {
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return hex;
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${a})`;
-}
-const zoneColors = [1, 2, 3, 4, 5, 6, 7].map(i => cssVar(`--zone-z${i}`));
-
-const metrics = [
-  { key: "Power",     label: "Мощность, Вт",    color: cssVar("--brand"),   has: s => s.Power > 0, fill: true },
-  { key: "HR",        label: "Пульс, уд/мин",   color: cssVar("--danger"),  has: s => s.HR > 0 },
-  { key: "Cadence",   label: "Каденс, об/мин",  color: cssVar("--text-2"),  has: s => s.Cadence > 0 },
-  { key: "SpeedMs",   label: "Скорость, км/ч",  color: cssVar("--outdoor"), has: s => s.SpeedMs > 0, conv: v => v * 3.6, skip: isTrainer },
-  { key: "AltitudeM", label: "Высота, м",       color: cssVar("--text-3"),  has: s => s.HasAlt, skip: isTrainer, fill: true },
-].filter(m => !m.skip && data.some(m.has));
-
-const hasDist = data.some(s => s.HasDist && s.DistanceM > 0);
-let curMetric = metrics[0], curAxis = "time";
-let chart = null;
-
-// фоновые полосы зон по FTP и референсы NP/FTP — только для мощности
-const zoneEdges = {{ json .ZoneEdges }};
-const refNP = {{ .W.NormPower }}, refFTP = {{ .W.FTP }};
-
-const zoneBands = {
-  id: "zoneBands",
-  beforeDatasetsDraw(c) {
-    if (curMetric.key !== "Power" || !zoneEdges) return;
-    const { ctx, chartArea, scales: { y } } = c;
-    if (!chartArea) return;
-    ctx.save();
-    for (let i = 0; i < zoneEdges.length; i++) {
-      const lo = zoneEdges[i];
-      const hi = i + 1 < zoneEdges.length ? zoneEdges[i + 1] : y.max;
-      const yTop = Math.max(y.getPixelForValue(Math.min(hi, y.max)), chartArea.top);
-      const yBot = Math.min(y.getPixelForValue(Math.max(lo, y.min)), chartArea.bottom);
-      if (yBot <= yTop) continue;
-      ctx.fillStyle = alpha(zoneColors[i], 0.10);
-      ctx.fillRect(chartArea.left, yTop, chartArea.width, yBot - yTop);
-    }
-    ctx.restore();
-  },
-};
-
-const refLines = {
-  id: "refLines",
-  afterDatasetsDraw(c) {
-    if (curMetric.key !== "Power") return;
-    const { ctx, chartArea, scales: { y } } = c;
-    const lines = [];
-    if (refNP > 0) lines.push({ v: refNP, label: `NP ${refNP}`, color: cssVar("--brand") });
-    if (refFTP > 0) lines.push({ v: refFTP, label: `FTP ${refFTP}`, color: cssVar("--text-2") });
-    if (!lines.length) return;
-    ctx.save();
-    ctx.setLineDash([5, 4]);
-    ctx.font = "11px Inter, sans-serif";
-    ctx.textBaseline = "bottom";
-    lines.forEach(l => {
-      if (l.v < y.min || l.v > y.max) return;
-      const py = y.getPixelForValue(l.v);
-      ctx.strokeStyle = l.color;
-      ctx.beginPath();
-      ctx.moveTo(chartArea.left, py);
-      ctx.lineTo(chartArea.right, py);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = l.color;
-      ctx.fillText(l.label, chartArea.right - ctx.measureText(l.label).width - 4, py - 2);
-      ctx.setLineDash([5, 4]);
-    });
-    ctx.restore();
-  },
-};
-
-// скользящее среднее ~10 сек: режем пилу нулей при свободном ходе
-const spacing = data.length > 1 ? (data[data.length-1].Offset - data[0].Offset) / (data.length - 1) : 1;
-const win = Math.max(1, Math.min(25, Math.round(10 / Math.max(spacing, 0.1))));
-function smooth(y) {
-  const half = Math.floor(win / 2), out = new Array(y.length);
-  for (let i = 0; i < y.length; i++) {
-    // дропаут — разрыв: скользящее среднее не заполняет пропуск соседями
-    if (y[i] == null) { out[i] = null; continue; }
-    let sum = 0, n = 0;
-    for (let j = Math.max(0, i - half); j <= Math.min(y.length - 1, i + half); j++) {
-      if (y[j] != null) { sum += y[j]; n++; }
-    }
-    out[i] = n ? sum / n : null;
-  }
-  return out;
-}
-
-function btn(parent, text, active, onclick, cls) {
-  const b = document.createElement("button");
-  b.textContent = text;
-  b.className = cls;
-  if (active) b.classList.add("active");
-  b.onclick = () => { onclick(); redraw(); };
-  parent.appendChild(b);
-  return b;
-}
-
-function redraw() {
-  document.querySelectorAll("#metricBtns .tab").forEach((b, i) => b.classList.toggle("active", metrics[i] === curMetric));
-  document.querySelectorAll("#axisBtns .axis-btn").forEach(b => b.classList.toggle("active", b.dataset.axis === curAxis));
-  const x = curAxis === "km"
-    ? data.map(s => s.HasDist ? +(s.DistanceM / 1000).toFixed(2) : null)
-    : data.map(s => s.Offset);
-  const y = smooth(data.map(s => {
-    let v = s[curMetric.key];
-    if (curMetric.conv) v = curMetric.conv(v);
-    if (curMetric.key === "AltitudeM" && !s.HasAlt) return null;
-    // дропаут поверметра — разрыв, а не ложный ноль
-    if (curMetric.key === "Power" && !s.HasPwr) return null;
-    // каденс: дропаут или «не кручу» — разрыв, а не провал
-    if (curMetric.key === "Cadence" && (!s.HasCad || v === 0)) return null;
-    return v;
-  }));
-  chart.data.labels = x;
-  chart.data.datasets = [{
-    label: curMetric.label, data: y, borderWidth: 1.5, pointRadius: 0,
-    borderColor: curMetric.color, fill: !!curMetric.fill,
-    backgroundColor: alpha(curMetric.color, 0.12), spanGaps: false, // дропауты — разрыв линии, а не перемычка
-  }];
-  chart.options.scales.x.ticks.callback = curAxis === "km"
-    ? v => x[v] + " км"
-    : v => Math.round(x[v] / 60) + " мин";
-  chart.update();
-}
-
-if (metrics.length) {
-  metrics.forEach(m => btn(document.getElementById("metricBtns"), m.label.split(",")[0], m === curMetric, () => curMetric = m, "tab"));
-  if (hasDist) {
-    btn(document.getElementById("axisBtns"), "время", true, () => curAxis = "time", "axis-btn").dataset.axis = "time";
-    btn(document.getElementById("axisBtns"), "км", false, () => curAxis = "km", "axis-btn").dataset.axis = "km";
-  }
-  chart = new Chart(document.getElementById("chart"), {
-    type: "line",
-    data: { labels: [], datasets: [] },
-    options: {
-      animation: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => curMetric.label.split(",")[0] + ": " + Math.round(c.raw) } } },
-      scales: { x: { ticks: {} }, y: { position: "left" } },
-    },
-    plugins: [zoneBands, refLines],
-  });
-  redraw();
-} else {
-  document.getElementById("chart").style.display = "none";
-  document.getElementById("chartCtl").style.display = "none";
-}
-
-const dist = await (await fetch(`/api/workout/${id}/dist`)).json();
-const ftp = {{ .W.FTP }};
-const titles = { cadence: "Каденс, об/мин", speed: "Скорость, км/ч",
-  power: ftp ? `Зоны мощности (FTP ${ftp} Вт)` : "Мощность, Вт", hr: "Пульс, уд/мин" };
-
-// подпись времени на конце бара: короткие отрезки — в секундах
-const barLabels = {
-  id: "barLabels",
-  afterDatasetsDraw(c) {
-    const { ctx, chartArea } = c;
-    const meta = c.getDatasetMeta(0);
-    ctx.save();
-    ctx.fillStyle = cssVar("--text-2");
-    ctx.font = "11px Inter, sans-serif";
-    ctx.textBaseline = "middle";
-    meta.data.forEach((bar, i) => {
-      const v = c.data.datasets[0].data[i];
-      if (!v) return;
-      const txt = v < 1 ? `${Math.round(v * 60)} с` : `${v} мин`;
-      ctx.fillText(txt, Math.min(bar.x + 4, chartArea.right - 34), bar.y);
-    });
-    ctx.restore();
-  },
-};
-
-document.querySelectorAll("#distGrid .dist").forEach(el => {
-  const kind = el.dataset.kind;
-  const entries = dist[kind];
-  if (!entries) { el.style.display = "none"; return; }
-  el.querySelector("h3").textContent = titles[kind] + (kind === "power" && ftp ? " — время в зоне" : " — время в диапазоне");
-  // бары мощности — цветом зоны бакета (первый бакет — накат, нейтральный)
-  const colors = entries.map((_, i) => {
-    if (kind === "power" && ftp) return i === 0 ? cssVar("--text-3") : zoneColors[i - 1];
-    return cssVar("--text-2");
-  });
-  new Chart(el.querySelector("canvas"), {
-    type: "bar",
-    data: {
-      labels: entries.map(e => e.label),
-      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)), backgroundColor: colors }],
-    },
-    options: {
-      indexAxis: "y",
-      animation: false,
-      layout: { padding: { right: 40 } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + " мин" } } },
-      scales: { x: { title: { display: true, text: "минут" } } },
-    },
-    plugins: [barLabels],
-  });
-  // накат — отдельный бакет: подписываем обе базы времени
-  if (kind === "power" && dist.powerBase) {
-    const b = dist.powerBase;
-    // короткие отрезки показываем в секундах, чтобы «0 мин наката» не врало
-    const dur = s => s < 60 ? `${s} с` : `${Math.round(s / 60)} мин`;
-    const note = el.querySelector(".dist-note");
-    note.hidden = false;
-    note.textContent = `${dur(b.pedalSecs)} педалирования + ${dur(b.coastSecs)} наката = ${dur(b.totalSecs)}`;
-  }
-});
-if (!Object.keys(dist).length) document.getElementById("distGrid").style.display = "none";
-
+// карта: только сводка; без GPS-точек блок скрывается
 const mapEl = document.getElementById("map");
+if (!mapEl || typeof L === "undefined") {
+  if (mapEl) mapEl.style.display = "none";
+  return;
+}
+const data = await (await fetch(`/api/workout/${id}/samples`)).json();
 const track = data.filter(s => s.HasPos);
-if (mapEl && track.length > 1 && typeof L !== "undefined") {
+if (track.length > 1) {
+  const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const map = L.map("map").setView([track[0].Lat, track[0].Lon], 13);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
   L.polyline(track.map(s => [s.Lat, s.Lon]), { color: cssVar("--brand") }).addTo(map);
   map.fitBounds(L.latLngBounds(track.map(s => [s.Lat, s.Lon])).pad(0.05));
-} else if (mapEl) {
+} else {
   mapEl.style.display = "none";
 }
-
-// scroll-spy для якорной навигации
-const navLinks = [...document.querySelectorAll(".w-nav a")];
-const sections = navLinks.map(a => document.querySelector(a.hash));
-const spy = () => {
-  let cur = 0;
-  sections.forEach((s, i) => { if (s && s.getBoundingClientRect().top <= 90) cur = i; });
-  navLinks.forEach((a, i) => a.classList.toggle("active", i === cur));
-};
-addEventListener("scroll", spy, { passive: true });
-spy();
 })();
 </script>
 {{ template "foot" . }}

@@ -182,6 +182,80 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 	}
 }
 
+// TestWorkoutPagesSeparate — «Сводка» и «Графики» — отдельные страницы:
+// боковое меню ссылается на /workout/{id} и /workout/{id}/charts (без якорей),
+// графики живут только на своей странице, Leaflet — только на сводке.
+func TestWorkoutPagesSeparate(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour,
+		AvgPower: 150, NormPower: 180, MaxPower: 400, FTP: 200, HasPower: true,
+	}, "hash-pages", filepath.Join(t.TempDir(), "t.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+
+	summaryPath := fmt.Sprintf("/workout/%d", id)
+	code, body := get(summaryPath)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s: код %d", summaryPath, code)
+	}
+	for _, want := range []string{
+		fmt.Sprintf(`<a href="/workout/%d" class="active">Сводка</a>`, id),
+		fmt.Sprintf(`<a href="/workout/%d/charts">Графики</a>`, id),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET %s: нет навигации %q", summaryPath, want)
+		}
+	}
+	for _, bad := range []string{`href="#summary"`, `href="#charts"`, "chart.umd.min.js", "scroll-spy"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("GET %s: остался %q", summaryPath, bad)
+		}
+	}
+
+	chartsPath := fmt.Sprintf("/workout/%d/charts", id)
+	code, body = get(chartsPath)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s: код %d", chartsPath, code)
+	}
+	for _, want := range []string{
+		`<canvas id="chart"></canvas>`,
+		"/static/vendor/chart.umd.min.js",
+		fmt.Sprintf(`<a href="/workout/%d">Сводка</a>`, id),
+		fmt.Sprintf(`<a href="/workout/%d/charts" class="active">Графики</a>`, id),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET %s: нет %q", chartsPath, want)
+		}
+	}
+	for _, bad := range []string{`href="#`, "leaflet", "scroll-spy"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("GET %s: лишнее %q", chartsPath, bad)
+		}
+	}
+
+	for _, path := range []string{"/workout/999999", "/workout/999999/charts"} {
+		if code, _ := get(path); code != http.StatusNotFound {
+			t.Errorf("GET %s: код %d, хочу 404", path, code)
+		}
+	}
+}
+
 // TestWorkoutPageNamedHeader — тренировка С названием рендерит именную ветку
 // шапки: <span class="w-name">· Название</span> внутри h1, рядом карандаш
 // переименования; дубль редактирования названия в настройках убран (§4.3).
