@@ -101,6 +101,40 @@ func TestSamplesBound(t *testing.T) {
 	}
 }
 
+func TestHasTrackNeedsTwoPoints(t *testing.T) {
+	db := openTestDB(t)
+	id := insertWorkout(t, db, 0, func(int) int { return 0 })
+
+	check := func(label string, want bool) {
+		t.Helper()
+		got, err := HasTrack(db, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: HasTrack = %v, хочу %v", label, got, want)
+		}
+	}
+
+	check("0 точек", false)
+	if err := InsertSamples(db, id, []Sample{
+		{Offset: 0, Lat: 55.75, Lon: 37.61, HasPos: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check("1 точка", false)
+	if err := InsertSamples(db, id, []Sample{{Offset: 60}}); err != nil {
+		t.Fatal(err)
+	}
+	check("точка без координат", false)
+	if err := InsertSamples(db, id, []Sample{
+		{Offset: 120, Lat: 55.76, Lon: 37.62, HasPos: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	check("2 точки", true)
+}
+
 func TestRawSamplesKeepsPeaks(t *testing.T) {
 	db := openTestDB(t)
 	id := insertWorkout(t, db, 100, func(i int) int {

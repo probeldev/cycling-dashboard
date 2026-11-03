@@ -1,0 +1,53 @@
+{{ template "head" . }}
+<style>
+  /* ===== страница карты тренировки ===== */
+  {{ template "workoutBaseStyles" . }}
+</style>
+
+<div class="w-layout">
+{{ template "workoutNav" . }}
+<div class="w-content">
+
+<header class="w-head">
+  <a class="w-back" href="/rides">← Поездки</a>
+  <h1>{{ datetime .W.StartTime }}{{ if .W.Name }} <span class="w-name">· {{ .W.Name }}</span>{{ end }}</h1>
+</header>
+
+<section id="map-section">
+  <h2 class="sec-h">Карта</h2>
+  {{ if .HasMap }}<div id="map"></div>{{ end }}
+  <p id="mapEmpty" class="sub"{{ if .HasMap }} hidden{{ end }}>{{ if .W.Trainer }}Карта недоступна для тренировок на станке.{{ else }}У этой тренировки нет GPS-трека.{{ end }}</p>
+</section>
+
+</div>
+</div>
+
+{{ if .HasMap }}
+<link rel="stylesheet" href="/static/vendor/leaflet.css">
+<script src="/static/vendor/leaflet.js"></script>
+<script>
+(async () => {
+const id = {{ .W.ID }};
+const mapEl = document.getElementById("map");
+const emptyEl = document.getElementById("mapEmpty");
+if (!mapEl || typeof L === "undefined") {
+  if (mapEl) mapEl.style.display = "none";
+  if (emptyEl) emptyEl.hidden = false;
+  return;
+}
+const data = await (await fetch(`/api/workout/${id}/samples`)).json();
+const track = data.filter(s => s.HasPos);
+if (track.length > 1) {
+  const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const map = L.map("map").setView([track[0].Lat, track[0].Lon], 13);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+  L.polyline(track.map(s => [s.Lat, s.Lon]), { color: cssVar("--brand") }).addTo(map);
+  map.fitBounds(L.latLngBounds(track.map(s => [s.Lat, s.Lon])).pad(0.05));
+} else {
+  mapEl.style.display = "none";
+  if (emptyEl) emptyEl.hidden = false;
+}
+})();
+</script>
+{{ end }}
+{{ template "foot" . }}

@@ -26,5 +26,6 @@
 <nav class="w-nav" aria-label="Разделы страницы">
   <a href="/workout/{{ .W.ID }}"{{ if eq .Tab "summary" }} class="active"{{ end }}>Сводка</a>
   <a href="/workout/{{ .W.ID }}/charts"{{ if eq .Tab "charts" }} class="active"{{ end }}>Графики</a>
+  {{ if .HasMap }}<a href="/workout/{{ .W.ID }}/map"{{ if eq .Tab "map" }} class="active"{{ end }}>Карта</a>{{ end }}
 </nav>
 {{ end }}

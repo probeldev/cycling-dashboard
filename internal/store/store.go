@@ -1303,6 +1303,18 @@ func CountSamples(db *sql.DB, id int64) (int, error) {
 	return n, err
 }
 
+// HasTrack — есть ли у тренировки трек хотя бы из двух точек. Флаг
+// workouts.has_gps говорит лишь о том, что файл писался с GPS-устройством;
+// карта же строится по реальным координатам сэмплов, поэтому проверяем сами
+// данные. Одной точки мало для линии маршрута.
+func HasTrack(db *sql.DB, id int64) (bool, error) {
+	var n int
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM samples
+	    WHERE workout_id = ? AND lat IS NOT NULL AND lon IS NOT NULL
+	    LIMIT 1 OFFSET 1)`, id).Scan(&n)
+	return n != 0, err
+}
+
 // Samples возвращает сэмплы, уменьшая количество до maxN точек бакет-усреднением
 // (а не выборкой каждой N-й — иначе графики страдают от алиасинга).
 // Точек возвращается не больше maxN: бакет = ceil(total/maxN), поэтому число

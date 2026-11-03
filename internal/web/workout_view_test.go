@@ -182,9 +182,10 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 	}
 }
 
-// TestWorkoutPagesSeparate — «Сводка» и «Графики» — отдельные страницы:
-// боковое меню ссылается на /workout/{id} и /workout/{id}/charts (без якорей),
-// графики живут только на своей странице, Leaflet — только на сводке.
+// TestWorkoutPagesSeparate — «Сводка», «Графики» и «Карта» — отдельные
+// страницы: боковое меню ссылается на /workout/{id}, /workout/{id}/charts и
+// /workout/{id}/map (без якорей); графики живут только на своей странице,
+// Leaflet — только на карте. Без GPS пункта «Карта» в меню нет.
 func TestWorkoutPagesSeparate(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -222,10 +223,13 @@ func TestWorkoutPagesSeparate(t *testing.T) {
 			t.Errorf("GET %s: нет навигации %q", summaryPath, want)
 		}
 	}
-	for _, bad := range []string{`href="#summary"`, `href="#charts"`, "chart.umd.min.js", "scroll-spy"} {
+	for _, bad := range []string{`href="#summary"`, `href="#charts"`, "chart.umd.min.js", "leaflet", `id="map"`} {
 		if strings.Contains(body, bad) {
 			t.Errorf("GET %s: остался %q", summaryPath, bad)
 		}
+	}
+	if strings.Contains(body, fmt.Sprintf(`href="/workout/%d/map"`, id)) {
+		t.Errorf("GET %s: без GPS в меню не должно быть «Карты»", summaryPath)
 	}
 
 	chartsPath := fmt.Sprintf("/workout/%d/charts", id)
@@ -243,15 +247,150 @@ func TestWorkoutPagesSeparate(t *testing.T) {
 			t.Errorf("GET %s: нет %q", chartsPath, want)
 		}
 	}
-	for _, bad := range []string{`href="#`, "leaflet", "scroll-spy"} {
+	for _, bad := range []string{`href="#`, "leaflet", "scroll-spy", fmt.Sprintf(`href="/workout/%d/map"`, id)} {
 		if strings.Contains(body, bad) {
 			t.Errorf("GET %s: лишнее %q", chartsPath, bad)
 		}
 	}
 
-	for _, path := range []string{"/workout/999999", "/workout/999999/charts"} {
+	for _, path := range []string{"/workout/999999", "/workout/999999/charts", "/workout/999999/map"} {
 		if code, _ := get(path); code != http.StatusNotFound {
 			t.Errorf("GET %s: код %d, хочу 404", path, code)
+		}
+	}
+}
+
+// TestWorkoutMapPage — «Карта» — отдельная страница: Leaflet и #map живут
+// только там, пункт меню появляется только у уличной тренировки с треком.
+// Станку карта недоступна, даже если в сэмплах есть координаты (дрейф).
+func TestWorkoutMapPage(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	insertWorkout := func(hash string, w store.Workout) int64 {
+		t.Helper()
+		id, err := store.InsertWorkout(db, &w, hash, filepath.Join(t.TempDir(), hash+".fit"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	gpsID := insertWorkout("hash-map-gps", store.Workout{
+		StartTime: time.Now(), Duration: time.Hour, DistanceKm: 20,
+	})
+	if err := store.InsertSamples(db, gpsID, []store.Sample{
+		{Offset: 0, Lat: 55.75, Lon: 37.61, HasPos: true},
+		{Offset: 60, Lat: 55.76, Lon: 37.62, HasPos: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// станок с «GPS»-сэмплами: координаты дрейфуют на ~100–200 м, трека нет
+	trainerID := insertWorkout("hash-map-trainer", store.Workout{
+		StartTime: time.Now(), Duration: time.Hour, Trainer: true,
+	})
+	if err := store.InsertSamples(db, trainerID, []store.Sample{
+		{Offset: 0, Lat: 55.7500, Lon: 37.6100, HasPos: true},
+		{Offset: 60, Lat: 55.7510, Lon: 37.6100, HasPos: true},
+		{Offset: 120, Lat: 55.7500, Lon: 37.6110, HasPos: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// станок без сэмплов — то же сообщение
+	trainerEmptyID := insertWorkout("hash-map-trainer-empty", store.Workout{
+		StartTime: time.Now(), Duration: time.Hour, Trainer: true,
+	})
+
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec.Code, rec.Body.String()
+	}
+
+	assertNoMap := func(label string, id int64) {
+		t.Helper()
+		for _, path := range []string{
+			fmt.Sprintf("/workout/%d", id),
+			fmt.Sprintf("/workout/%d/charts", id),
+		} {
+			code, body := get(path)
+			if code != http.StatusOK {
+				t.Fatalf("%s GET %s: код %d", label, path, code)
+			}
+			if strings.Contains(body, fmt.Sprintf(`href="/workout/%d/map"`, id)) {
+				t.Errorf("%s GET %s: в меню не должно быть «Карты»", label, path)
+			}
+		}
+		mapPath := fmt.Sprintf("/workout/%d/map", id)
+		code, body := get(mapPath)
+		if code != http.StatusOK {
+			t.Fatalf("%s GET %s: код %d", label, mapPath, code)
+		}
+		if !strings.Contains(body, "Карта недоступна для тренировок на станке") {
+			t.Errorf("%s GET %s: нет сообщения про станок", label, mapPath)
+		}
+		for _, bad := range []string{"leaflet", `id="map"`} {
+			if strings.Contains(body, bad) {
+				t.Errorf("%s GET %s: не должно быть %q", label, mapPath, bad)
+			}
+		}
+	}
+	assertNoMap("станок с дрейфом", trainerID)
+	assertNoMap("станок без сэмплов", trainerEmptyID)
+
+	mapLink := fmt.Sprintf(`<a href="/workout/%d/map">Карта</a>`, gpsID)
+	activeMapLink := fmt.Sprintf(`<a href="/workout/%d/map" class="active">Карта</a>`, gpsID)
+
+	summaryPath := fmt.Sprintf("/workout/%d", gpsID)
+	code, body := get(summaryPath)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s: код %d", summaryPath, code)
+	}
+	if !strings.Contains(body, mapLink) {
+		t.Errorf("GET %s: в меню нет пункта «Карта»", summaryPath)
+	}
+	for _, bad := range []string{"leaflet", `id="map"`} {
+		if strings.Contains(body, bad) {
+			t.Errorf("GET %s: сводка не должна содержать %q", summaryPath, bad)
+		}
+	}
+
+	chartsPath := fmt.Sprintf("/workout/%d/charts", gpsID)
+	code, body = get(chartsPath)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s: код %d", chartsPath, code)
+	}
+	if !strings.Contains(body, mapLink) {
+		t.Errorf("GET %s: в меню нет пункта «Карта»", chartsPath)
+	}
+	if strings.Contains(body, "leaflet") {
+		t.Errorf("GET %s: Leaflet должен быть только на карте", chartsPath)
+	}
+
+	mapPath := fmt.Sprintf("/workout/%d/map", gpsID)
+	code, body = get(mapPath)
+	if code != http.StatusOK {
+		t.Fatalf("GET %s: код %d", mapPath, code)
+	}
+	for _, want := range []string{
+		`/static/vendor/leaflet.js`,
+		`/static/vendor/leaflet.css`,
+		`id="map"`,
+		activeMapLink,
+		"fetch(`/api/workout/${id}/samples`)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET %s: нет %q", mapPath, want)
 		}
 	}
 }

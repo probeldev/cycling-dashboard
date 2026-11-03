@@ -243,15 +243,11 @@
     </div>
   </div>
 </details>
-
-{{ if not .W.Trainer }}<div id="map"></div>{{ end }}
 </section>
 
 </div>
 </div>
 
-<script src="/static/vendor/leaflet.js"></script>
-<link rel="stylesheet" href="/static/vendor/leaflet.css">
 <script>
 (async () => {
 const id = {{ .W.ID }};
@@ -328,23 +324,6 @@ if (typeBtn && typePop) {
   });
 }
 
-// карта: только сводка; без GPS-точек блок скрывается
-const mapEl = document.getElementById("map");
-if (!mapEl || typeof L === "undefined") {
-  if (mapEl) mapEl.style.display = "none";
-  return;
-}
-const data = await (await fetch(`/api/workout/${id}/samples`)).json();
-const track = data.filter(s => s.HasPos);
-if (track.length > 1) {
-  const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const map = L.map("map").setView([track[0].Lat, track[0].Lon], 13);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
-  L.polyline(track.map(s => [s.Lat, s.Lon]), { color: cssVar("--brand") }).addTo(map);
-  map.fitBounds(L.latLngBounds(track.map(s => [s.Lat, s.Lon])).pad(0.05));
-} else {
-  mapEl.style.display = "none";
-}
 })();
 </script>
 {{ template "foot" . }}

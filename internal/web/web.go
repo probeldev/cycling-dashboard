@@ -112,6 +112,16 @@ func trimFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', 1, 64)
 }
 
+// mapAvailable — показывать ли карту тренировки: нужен трек хотя бы из двух
+// GPS-точек и не станок. У станковых тренировок координаты в сэмплах — дрейф,
+// а не маршрут, поэтому карта им недоступна независимо от наличия точек.
+func mapAvailable(db *sql.DB, wo *store.Workout) (bool, error) {
+	if wo.Trainer {
+		return false, nil
+	}
+	return store.HasTrack(db, wo.ID)
+}
+
 func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (http.Handler, error) {
 	static, err := fs.Sub(assets, "static")
 	if err != nil {
@@ -140,6 +150,11 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		wo, err := store.GetWorkout(db, id)
 		if err != nil {
 			notFoundOr500(w, req, err)
+			return
+		}
+		hasMap, err := mapAvailable(db, wo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		mmp, err := store.WorkoutMMP(db, id)
@@ -206,6 +221,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			"W": wo, "MMP": mmpC, "Bikes": bikes,
 			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx), "PowerZones": powerZones,
 			"Summary": advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "summary",
+			"HasMap": hasMap,
 		})
 	})
 
@@ -217,8 +233,31 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			notFoundOr500(w, req, err)
 			return
 		}
+		hasMap, err := mapAvailable(db, wo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		render(w, "workout_charts.html", map[string]any{
-			"W": wo, "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "charts",
+			"W": wo, "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "charts", "HasMap": hasMap,
+		})
+	})
+
+	// отдельная страница «Карта»: трек из /api/workout/{id}/samples
+	r.Get("/workout/{id}/map", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
+		wo, err := store.GetWorkout(db, id)
+		if err != nil {
+			notFoundOr500(w, req, err)
+			return
+		}
+		hasMap, err := mapAvailable(db, wo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		render(w, "workout_map.html", map[string]any{
+			"W": wo, "Tab": "map", "HasMap": hasMap,
 		})
 	})
 

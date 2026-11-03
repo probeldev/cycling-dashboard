@@ -72,6 +72,13 @@ func TestRenderPages(t *testing.T) {
 		t.Errorf("GET /workout/charts: код %d, тело %d байт", code, len(body))
 	}
 
+	// без GPS-сэмплов карта отдаёт сообщение, а Leaflet на страницу не тянется
+	code, body = get(fmt.Sprintf("/workout/%d/map", id))
+	if code != http.StatusOK || !strings.Contains(body, "У этой тренировки нет GPS-трека") ||
+		strings.Contains(body, "leaflet") || !strings.Contains(body, "</html>") {
+		t.Errorf("GET /workout/map: код %d, тело %d байт", code, len(body))
+	}
+
 	code, body = get("/profile")
 	if code != http.StatusOK || !strings.Contains(body, "Профиль") || !strings.Contains(body, "</html>") {
 		t.Errorf("GET /profile: код %d, тело %d байт", code, len(body))
