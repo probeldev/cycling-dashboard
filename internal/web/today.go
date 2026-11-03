@@ -3,6 +3,7 @@ package web
 import (
 	"database/sql"
 	"fmt"
+	"html/template"
 	"math"
 	"net/http"
 	"time"
@@ -20,8 +21,53 @@ func todayRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		render(w, "today.html", map[string]any{"S": st, "Wide": true})
+		render(w, "today.html", map[string]any{"S": st})
 	})
+}
+
+// todayTitle — шапка дашборда: «Сегодня, 1 ноября».
+func todayTitle(t time.Time) string {
+	months := [...]string{"января", "февраля", "марта", "апреля", "мая", "июня",
+		"июля", "августа", "сентября", "октября", "ноября", "декабря"}
+	return fmt.Sprintf("Сегодня, %d %s", t.Day(), months[t.Month()-1])
+}
+
+// insightClass — модификатор .insight по уровню карточки совета: у advice
+// «good», у компонента §3 — «--ok».
+func insightClass(level string) string {
+	switch level {
+	case "warn":
+		return "insight--warn"
+	case "good":
+		return "insight--ok"
+	case "danger":
+		return "insight--danger"
+	default:
+		return "insight--info"
+	}
+}
+
+// stateChipClass — модификатор чипа статуса в шапке: цвет = смысл состояния.
+func stateChipClass(label string) string {
+	switch label {
+	case "fresh":
+		return "chip--state-ok"
+	case "loaded", "lowdata":
+		return "chip--state-warn"
+	case "overloaded":
+		return "chip--state-danger"
+	default:
+		return "chip--state-brand"
+	}
+}
+
+// tsbSeriesColor — цвет серии TSB: зелёный при свежести, красный в минусе.
+// template.CSS, иначе html/template режет var(--…) в style-атрибуте.
+func tsbSeriesColor(v float64) template.CSS {
+	if v < 0 {
+		return "var(--danger)"
+	}
+	return "var(--ok)"
 }
 
 func kindLabel(kind string) string {

@@ -13,7 +13,7 @@ import (
 )
 
 // TestReadinessAPI — эндпоинт отдаёт показатели по рабочим тренировкам,
-// а /progress рисует карточку готовности теми же числами.
+// а /progress рисует карточку готовности теми же числами и coverage-пометкой.
 func TestReadinessAPI(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -66,12 +66,19 @@ func TestReadinessAPI(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Готовность к длинным дистанциям",
-		">100.0 км</div><div class=\"k\">макс. выезд за 90 дней · " + start.Format("02.01.2006"),
-		">100.0 км / 4.0 ч</div><div class=\"k\">7 дней",
-		">100.0 км / 4.0 ч</div><div class=\"k\">28 дней",
-		">400.0 ккал/ч</div>",
-		">500.0 м</div><div class=\"k\">набор на 100 км · 90 дней",
-		">1 раз</div><div class=\"k\">100+ км за всё время",
+		"100.0 км</div>",
+		"class=\"k\">макс. выезд за 90 дней · " + start.Format("02.01.2006"),
+		`class="coverage">1 день из 90`,
+		"100.0 км / 4.0 ч</div>",
+		"class=\"k\">7 дней",
+		`class="coverage">1 день из 7`,
+		"class=\"k\">28 дней",
+		`class="coverage">1 день из 28`,
+		"400.0 ккал/ч</div>",
+		"500.0 м</div>",
+		"class=\"k\">набор на 100 км · 90 дней",
+		"1 раз</div>",
+		"class=\"k\">100+ км за всё время",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на /progress нет %q", want)
@@ -80,7 +87,7 @@ func TestReadinessAPI(t *testing.T) {
 }
 
 // TestReadinessEmpty — без тренировок API отдаёт null (не нули) и пустые
-// окна, а карточка на /progress — прочерки вместо нулей.
+// окна, а карточка на /progress — пояснение вместо голых прочерков.
 func TestReadinessEmpty(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -114,11 +121,17 @@ func TestReadinessEmpty(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		">—</div><div class=\"k\">макс. выезд за 90 дней",
-		">—</div><div class=\"k\">7 дней",
-		">—</div><div class=\"k\">28 дней",
-		">—</div><div class=\"k\">ккал/ч · 90 дней",
-		">—</div><div class=\"k\">набор на 100 км · 90 дней",
+		`empty-value">за 90 дней выездов не было</div>`,
+		`class="k">макс. выезд за 90 дней`,
+		`empty-value">поездок за 7 дней не было</div>`,
+		`class="k">7 дней`,
+		`empty-value">поездок за 28 дней не было</div>`,
+		`class="k">28 дней`,
+		`empty-value">нет данных о калориях</div>`,
+		`class="k">ккал/ч · 90 дней`,
+		`empty-value">нет поездок с дистанцией</div>`,
+		`class="k">набор на 100 км · 90 дней`,
+		`class="coverage">0 дней из 90`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("пустая карточка: нет %q", want)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"cycling-dashboard/internal/advice"
+	"cycling-dashboard/internal/plan"
 	"cycling-dashboard/internal/store"
 	"cycling-dashboard/internal/thresholds"
 )
@@ -245,6 +246,13 @@ func TestStatusEmptyDB(t *testing.T) {
 	almostEqual(t, "ctl", got.State.CTL.Value, 0)
 	almostEqual(t, "atl", got.State.ATL.Value, 0)
 	almostEqual(t, "tsb", got.State.TSB.Value, 0)
+	for name, spark := range map[string]string{
+		"ctl": got.State.CTL.Spark, "atl": got.State.ATL.Spark, "tsb": got.State.TSB.Spark,
+	} {
+		if spark != "" {
+			t.Errorf("%s: спарклайн без истории = %q, хочу пусто", name, spark)
+		}
+	}
 	if len(got.AllAlerts) == 0 {
 		t.Error("alertsAll пуст, хочу stale и lowdata")
 	}
@@ -302,6 +310,96 @@ func TestStatusTestWorkoutNotHard(t *testing.T) {
 	}
 	if facts.loadDays42 != 2 {
 		t.Errorf("loadDays42 = %d, хочу 2", facts.loadDays42)
+	}
+}
+
+func TestCoverageDaysExcludeTestWorkouts(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+
+	// Тестовая тренировка с реальным TSS не должна раздувать покрытие:
+	// Readiness считает только рабочие тренировки (is_test = 0).
+	testID, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, -1), Duration: time.Hour, TSS: 200,
+	}, "hash-coverage-test", filepath.Join(t.TempDir(), "t.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetWorkoutTest(db, testID, true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cov7 != 0 || got.Cov28 != 0 || got.Cov90 != 0 {
+		t.Errorf("coverage по тестовой тренировке = %d/%d/%d, хочу 0/0/0", got.Cov7, got.Cov28, got.Cov90)
+	}
+
+	// Рабочая тренировка в тот же день делает день покрытым один раз.
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, -1).Add(2 * time.Hour), Duration: time.Hour, TSS: 50,
+	}, "hash-coverage-work", filepath.Join(t.TempDir(), "w.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err = buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cov7 != 1 || got.Cov28 != 1 || got.Cov90 != 1 {
+		t.Errorf("coverage с рабочей тренировкой = %d/%d/%d, хочу 1/1/1", got.Cov7, got.Cov28, got.Cov90)
+	}
+}
+
+func TestBannerSingleLineWithoutCardNumbers(t *testing.T) {
+	for _, label := range []string{"lowdata", "fresh", "norm", "loaded", "overloaded"} {
+		b := bannerText(label)
+		if b == "" || strings.Contains(b, "\n") {
+			t.Errorf("%s: баннер = %q, хочу одну строку", label, b)
+		}
+		if strings.ContainsAny(b, "0123456789") || strings.Contains(b, "TSS") {
+			t.Errorf("%s: баннер повторяет числа карточек: %q", label, b)
+		}
+	}
+
+	db, now := statusFixture(t)
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Banner == "" || strings.Contains(got.Banner, "220") {
+		t.Errorf("banner = %q, хочу вывод без TSS недели", got.Banner)
+	}
+}
+
+func TestPresentationFactorsDropPMC(t *testing.T) {
+	got := presentationFactors([]plan.Factor{
+		{Label: "TSB", Value: "−5.3"},
+		{Label: "CTL", Value: "18.8"},
+		{Label: "ATL", Value: "24.1"},
+		{Label: "Неделя", Value: "220 / 220 TSS"},
+	})
+	if len(got) != 1 || got[0].Label != "Неделя" {
+		t.Errorf("factors = %+v, хочу только не-PMC фактор", got)
+	}
+}
+
+func TestCTLActionDoesNotAddVolumeWhenLoaded(t *testing.T) {
+	state := buildState(store.Day{CTL: 5, ATL: 21}, historyFacts{dataDays: 100, loadDays42: 30}, nil)
+	if strings.Contains(state.CTL.Action, "Набирай объём") {
+		t.Errorf("CTL action при TSB %v зовёт набирать объём: %q", state.TSB.Value, state.CTL.Action)
+	}
+	if !strings.Contains(state.CTL.Action, "восстановление") {
+		t.Errorf("CTL action = %q, хочу приоритет восстановления", state.CTL.Action)
+	}
+}
+
+func TestSignedTextUsesUnicodeMinus(t *testing.T) {
+	if got := signedText(-30.2); got != "−30.2" {
+		t.Errorf("signedText(-30.2) = %q, хочу «−30.2»", got)
+	}
+	if got := signedText(0); got != "0.0" {
+		t.Errorf("signedText(0) = %q, хочу «0.0»", got)
 	}
 }
 

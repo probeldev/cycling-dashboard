@@ -3,7 +3,6 @@ package web
 import (
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	"cycling-dashboard/internal/store"
@@ -12,12 +11,19 @@ import (
 // wkgTrendDays — за сколько дней показывать изменение Вт/кг на /progress.
 var wkgTrendDays = []int{30, 90, 365}
 
+// wkgTrendWindow — изменение Вт/кг к точке N дней назад.
+type wkgTrendWindow struct {
+	Label  string // «30 дн»
+	Change string // «+0.13» или «—»
+}
+
 // wkgTrendView — текущее Вт/кг (станок) и изменения к точкам N дней назад.
 // Значение и изменения пустые, если истории не хватает: прочерк вместо нуля.
 type wkgTrendView struct {
 	Value    float64
 	HasValue bool
-	Text     string // «30 дн +0.13 · 90 дн +0.10 · 365 дн —»
+	Windows  []wkgTrendWindow
+	Note     string // пояснение к прочеркам
 }
 
 // buildWkgTrend считает изменения по дневному ряду профиля. Точки на дату
@@ -35,15 +41,25 @@ func buildWkgTrend(points []store.ProfilePoint, today time.Time) wkgTrendView {
 	if cur == nil {
 		return wkgTrendView{}
 	}
-	parts := make([]string, 0, len(wkgTrendDays))
+	windows := make([]wkgTrendWindow, 0, len(wkgTrendDays))
+	missing := 0
 	for _, days := range wkgTrendDays {
-		text := "—"
+		change := "—"
 		if prev, ok := byDate[today.AddDate(0, 0, -days)]; ok && prev != nil {
-			text = signedDelta(*cur - *prev)
+			change = signedDelta(*cur - *prev)
+		} else {
+			missing++
 		}
-		parts = append(parts, strconv.Itoa(days)+" дн "+text)
+		windows = append(windows, wkgTrendWindow{Label: strconv.Itoa(days) + " дн", Change: change})
 	}
-	return wkgTrendView{Value: *cur, HasValue: true, Text: strings.Join(parts, " · ")}
+	note := ""
+	switch {
+	case missing == len(windows):
+		note = "Изменения появятся, когда будут записи веса и FTP на дату 30, 90 и 365 дней назад."
+	case missing > 0:
+		note = "Прочерк — нет записи веса или FTP на эту дату."
+	}
+	return wkgTrendView{Value: *cur, HasValue: true, Windows: windows, Note: note}
 }
 
 // signedDelta — изменение с двумя знаками и явным плюсом; отрицательный ноль

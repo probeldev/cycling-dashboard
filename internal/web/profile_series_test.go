@@ -153,7 +153,8 @@ func TestProfilePageWkgCards(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Вт/кг (станок)", "Вт/кг (улица)", "profile-ftp", "profile-wkg", "profile-few", "Мало данных для графика", "!res.ok"} {
+	for _, want := range []string{"Вт/кг (станок)", "Вт/кг (улица)", "profile-ftp", "profile-wkg",
+		"profile-ftp-note", "profile-wkg-note", "не менялся с", "compact", "!res.ok"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на /profile нет %q", want)
 		}

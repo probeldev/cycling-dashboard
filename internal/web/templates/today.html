@@ -1,141 +1,214 @@
 {{ template "head" . }}
 {{ $s := .S }}
+<style>
+  /* page-scoped: дашборд «Сегодня» (TODO-UI §4.1) */
+  .today-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .today-head h1 { margin: 0; font-size: 24px; }
+  .chip--state-ok { background: var(--ok-soft); color: var(--ok-strong); }
+  .chip--state-warn { background: var(--warn-soft); color: var(--warn-strong); }
+  .chip--state-danger { background: var(--danger-soft); color: var(--danger-strong); }
+  .chip--state-brand { background: var(--brand-soft); color: var(--brand); }
+  .today-banner { margin: 0; color: var(--text-2); font-size: 15px; }
+
+  .rec h2.rec-title { margin: 2px 0 0; font-size: 24px; color: var(--brand); }
+  .rec-params { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-top: 6px; font-size: 17px; }
+  .rec-params .w b { font-size: 20px; }
+  .rec-why { margin: 8px 0 0; font-size: 15px; }
+
+  .pmc .metric-card .verdict { font-weight: 600; }
+  .pmc .metric-card .action { color: var(--text-2); font-size: 13px; }
+  .pmc .metric-card--ctl { --series: var(--brand); }
+  .pmc .metric-card--atl { --series: var(--atl); }
+  .pmc .spark polyline { stroke: var(--series, var(--brand)); }
+  .pmc-note { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 2px 16px; }
+
+  .last, .readiness, .alerts { border-top: 1px solid var(--line); padding-top: 12px; }
+  .last .facts { font-size: 15px; }
+  .last .facts b { font-size: 17px; }
+  .unit { font-size: 12px; color: var(--text-3); font-weight: 400; }
+  .last-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; font-size: 15px; color: var(--text-2); }
+  .last-head b { color: var(--text); font-size: 17px; }
+  .insights { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
+  .week-num { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; font-size: 20px; }
+  .week-num b { font-size: 28px; font-feature-settings: "tnum"; }
+  .polarity { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .chip--pol-low { background: var(--ok-soft); color: var(--ok-strong); }
+  .chip--pol-high { background: var(--danger-soft); color: var(--danger-strong); }
+  .pol-verdict { font-size: 13px; color: var(--text-2); }
+
+  .alert-row { display: flex; gap: 8px; align-items: flex-start; }
+  .alert-row .ic { margin-top: 2px; }
+  .insight--warn .ic { color: var(--warn); }
+  .insight--info .ic { color: var(--brand); }
+</style>
 <div class="today">
-  <section class="statusbar label-{{ $s.State.Label }}">
-    <div class="d">{{ $s.AsOfText }}</div>
-    <div class="label">{{ $s.State.LabelText }}</div>
-    <div class="summary">{{ $s.Summary }}</div>
-  </section>
+  <header class="today-head">
+    <h1>{{ $s.Title }}</h1>
+    <span class="chip {{ stateChipClass $s.State.Label }}">{{ if eq $s.State.Label "lowdata" }}Мало истории{{ else }}{{ $s.State.LabelText }}{{ end }}</span>
+  </header>
+  <p class="today-banner">{{ $s.Banner }}</p>
 
   <section class="panel rec">
-    <div class="rec-head">
-      <div>
-        <div class="kicker">Рекомендация</div>
-        <h2>{{ kindLabel $s.Recommendation.Kind }}</h2>
-      </div>
-      <div class="rec-facts">
-        <span>{{ durationText $s.Recommendation.DurationMin }}</span>
-        {{ with $s.Recommendation.Zone }}<span>{{ . }}</span>{{ end }}
-        {{ with $s.Recommendation.Watts }}<span class="w"><b>{{ wattsText . }}</b> Вт</span>{{ end }}
-        {{ if $s.Recommendation.Zone }}<span>· {{ rangeText $s.Recommendation.PctFTP }}% FTP</span>{{ end }}
-        {{ with cadenceText $s.Recommendation.Cadence }}<span>· {{ . }}</span>{{ end }}
-      </div>
+    <div class="section-label">Рекомендация</div>
+    <h2 class="rec-title">{{ kindLabel $s.Recommendation.Kind }}</h2>
+    {{ $dur := durationText $s.Recommendation.DurationMin }}
+    {{ if or (ne $dur "—") $s.Recommendation.Zone $s.Recommendation.Watts }}
+    <div class="rec-params">
+      <span>{{ $dur }}</span>
+      {{ with $s.Recommendation.Zone }}<span>· {{ . }}</span>{{ end }}
+      {{ with $s.Recommendation.Watts }}<span class="w">· <b>{{ wattsText . }}</b> Вт</span>{{ end }}
+      {{ if $s.Recommendation.Zone }}<span>· {{ rangeText $s.Recommendation.PctFTP }}% FTP</span>{{ end }}
+      {{ with cadenceText $s.Recommendation.Cadence }}<span>· {{ . }}</span>{{ end }}
     </div>
-    <p class="rec-why">{{ $s.Recommendation.Rationale }}</p>
+    {{ end }}
     <details class="rec-details">
       <summary>Почему так</summary>
+      <p class="rec-why">{{ $s.Recommendation.Rationale }}</p>
+      {{ if $s.Factors }}
       <ul class="factors">
-        {{ range $s.Recommendation.Factors }}
+        {{ range $s.Factors }}
         <li><span>{{ .Label }}</span><b>{{ .Value }}</b></li>
         {{ end }}
       </ul>
-      <p class="muted" style="font-size:13px; margin:8px 0 0">{{ $s.TSBNote }}. PMC на {{ $s.PMCAsOfText }}.</p>
+      {{ end }}
     </details>
   </section>
 
-  <div class="cards">
-    <section class="metric">
-      <div class="k">Форма (CTL)</div>
-      <div class="v">{{ trimFloat $s.State.CTL.Value }}</div>
-      <div class="verdict">{{ $s.State.CTL.Verdict }}</div>
-      <div class="action">{{ $s.State.CTL.Action }}</div>
-      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.CTL.Spark }}"/></svg>
-      {{ if $s.State.LowData }}<div class="note">(мало данных)</div>{{ end }}
-    </section>
-    <section class="metric">
-      <div class="k">Усталость (ATL)</div>
-      <div class="v">{{ trimFloat $s.State.ATL.Value }}</div>
-      <div class="verdict">{{ $s.State.ATL.Verdict }}</div>
-      <div class="action">{{ $s.State.ATL.Action }}</div>
-      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.ATL.Spark }}"/></svg>
-      {{ if $s.State.LowData }}<div class="note">(мало данных)</div>{{ end }}
-    </section>
-    <section class="metric">
-      <div class="k">Свежесть (TSB)</div>
-      <div class="v">{{ trimFloat $s.State.TSB.Value }}</div>
-      <div class="verdict">{{ $s.State.TSB.Verdict }}</div>
-      <div class="action">{{ $s.State.TSB.Action }}</div>
-      <svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ $s.State.TSB.Spark }}"/></svg>
-      {{ if $s.State.LowData }}<div class="note">(мало данных)</div>{{ end }}
-    </section>
-  </div>
-  <p class="muted" style="font-size:13px; margin:-4px 0 0">{{ $s.TSBNote }} · PMC на {{ $s.PMCAsOfText }}.</p>
+  <section>
+    <div class="section-label" style="margin-bottom:8px">Форма</div>
+    <div class="cards pmc">
+      <div class="metric-card metric-card--ctl">
+        <div class="k">Форма (CTL)</div>
+        <div class="v">{{ $s.State.CTL.Text }}</div>
+        <div class="verdict">{{ $s.State.CTL.Verdict }}</div>
+        <div class="action">{{ $s.State.CTL.Action }}</div>
+        {{ with $s.State.CTL.Spark }}<svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ . }}"/></svg>{{ end }}
+      </div>
+      <div class="metric-card metric-card--atl">
+        <div class="k">Усталость (ATL)</div>
+        <div class="v">{{ $s.State.ATL.Text }}</div>
+        <div class="verdict">{{ $s.State.ATL.Verdict }}</div>
+        <div class="action">{{ $s.State.ATL.Action }}</div>
+        {{ with $s.State.ATL.Spark }}<svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ . }}"/></svg>{{ end }}
+      </div>
+      <div class="metric-card metric-card--tsb" style="--series: {{ tsbSeriesColor $s.State.TSB.Value }}">
+        <div class="k">Свежесть (TSB)</div>
+        <div class="v">{{ $s.State.TSB.Text }}</div>
+        <div class="verdict">{{ $s.State.TSB.Verdict }}</div>
+        <div class="action">{{ $s.State.TSB.Action }}</div>
+        {{ with $s.State.TSB.Spark }}<svg class="spark" viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ . }}"/></svg>{{ end }}
+      </div>
+    </div>
+    <p class="pmc-note">
+      <span class="coverage">{{ $s.TSBNote }} · PMC на {{ $s.PMCAsOfText }}.</span>
+      {{ if $s.State.LowData }}<span class="coverage">PMC по {{ $s.State.DataDays }} {{ pluralDays $s.State.DataDays }} — ориентировочно.</span>{{ end }}
+    </p>
+  </section>
 
   <div class="grid2">
-    <section class="panel">
-      <h2>Последняя тренировка</h2>
+    <section class="last">
+      <div class="section-label">Последняя тренировка</div>
       {{ with $s.Last }}
-      <div class="week-top"><a href="/workout/{{ .ID }}">{{ .Date }}</a><span class="tag">{{ .Kind }}</span>{{ if .Name }}<b style="font-size:18px">{{ .Name }}</b>{{ end }}</div>
+      <div class="last-head">
+        <b>{{ .Date }}</b>
+        <span class="chip {{ if eq .Kind "Станок" }}chip--trainer{{ else }}chip--outdoor{{ end }}">{{ .Kind }}</span>
+        {{ if .Name }}<b>{{ .Name }}</b>{{ end }}
+      </div>
       <div class="facts" style="margin-top:8px">
-        <span>время <b>{{ hours .DurationH }} ч</b></span>
-        {{ if .KM }}<span>дистанция <b>{{ km .KM }} км</b></span>{{ end }}
-        {{ if .HasPower }}<span>средняя <b>{{ .AvgPower }} Вт</b></span>{{ end }}
-        {{ if .NormPower }}<span>NP <b>{{ .NormPower }} Вт</b></span>{{ end }}
-        {{ with .TSS }}<span>TSS <b>{{ trimFloat (deref .) }}</b></span>{{ end }}
+        <span>время <b>{{ hours .DurationH }}</b> <span class="unit">ч</span></span>
+        {{ if .KM }}<span>дистанция <b>{{ km .KM }}</b> <span class="unit">км</span></span>{{ end }}
+        {{ if .HasPower }}<span>средняя <b>{{ .AvgPower }}</b> <span class="unit">Вт</span></span>{{ end }}
+        {{ if .NormPower }}<span>NP <b>{{ .NormPower }}</b> <span class="unit">Вт</span></span>{{ end }}
+        {{ with .TSS }}<span>TSS <b>{{ intFloat (deref .) }}</b></span>{{ end }}
         {{ with .IF }}<span>IF <b>{{ printf "%.2f" (deref .) }}</b></span>{{ end }}
         {{ with .VI }}<span>VI <b>{{ printf "%.2f" (deref .) }}</b></span>{{ end }}
         {{ if .RPE }}<span>RPE <b>{{ .RPE }}</b></span>{{ end }}
         {{ with .Bike }}<span>велосипед <b>{{ . }}</b></span>{{ end }}
       </div>
-      {{ range .Advice }}
-      <div class="mini {{ .Level }}"><b>{{ .Title }}</b> — {{ .Text }}</div>
+      {{ if .Advice }}
+      <div class="insights">
+        {{ range .Advice }}
+        <div class="insight {{ insightClass .Level }}"><span class="t">{{ .Title }}</span> — {{ .Text }}</div>
+        {{ end }}
+      </div>
       {{ end }}
-      <p style="margin:10px 0 0"><a href="/workout/{{ .ID }}">Открыть тренировку →</a></p>
+      <p style="margin:10px 0 0"><a class="link-cta" href="/workout/{{ .ID }}">Открыть →</a></p>
       {{ else }}
       <p class="empty">Тренировок пока нет — импортируйте .fit или синхронизируйте велокомп на странице «Поездки».</p>
       {{ end }}
     </section>
 
-    <section class="panel">
-      <h2>Неделя</h2>
+    <section class="panel week">
+      <div class="section-label">Неделя</div>
       {{ if $s.Week.Target }}
-      <div class="week-top"><b>{{ trimFloat $s.Week.TSS }}</b><span>/ {{ trimFloat (deref $s.Week.Target) }} TSS</span></div>
+      <div class="week-num"><b>{{ intFloat $s.Week.TSS }}</b><span class="muted">/ {{ intFloat (deref $s.Week.Target) }} <span class="unit">TSS</span></span></div>
+      <p class="coverage" style="margin:2px 0 0">({{ $s.Week.CoverageDays }} {{ pluralDays $s.Week.CoverageDays }} из 7 с нагрузкой)</p>
       <div class="bar"><i class="{{ progressClass $s.Week.TSS $s.Week.Target }}" style="width:{{ meterWidth $s.Week.TSS $s.Week.Target }}%"></i></div>
-      <div class="week-line">на сегодня {{ trimFloat (deref $s.Week.TargetToDate) }} · на неделю {{ trimFloat (deref $s.Week.Target) }}</div>
-      <div class="week-line">осталось {{ trimFloat (deref $s.Week.Remaining) }} TSS{{ with $s.Week.RemainingMinZ2Total }} · ≈ {{ derefInt . }} мин Z2{{ end }}</div>
+      <div class="week-line">на сегодня {{ intFloat (deref $s.Week.TargetToDate) }} · на неделю {{ intFloat (deref $s.Week.Target) }}</div>
+      <div class="week-line">осталось {{ intFloat (deref $s.Week.Remaining) }} TSS{{ with $s.Week.RemainingMinZ2Total }} · ≈ {{ derefInt . }} мин Z2{{ end }}</div>
       <div class="week-line">источник цели: {{ targetSourceText $s.Week.TargetSource }}</div>
       {{ else }}
-      <div class="week-top"><b>{{ trimFloat $s.Week.TSS }}</b><span>TSS</span></div>
-      <p class="empty">Цель не задана — <a href="/profile">задать в профиле</a>.</p>
+      <div class="week-num"><b>{{ intFloat $s.Week.TSS }}</b><span class="muted"><span class="unit">TSS</span></span></div>
+      <p class="coverage" style="margin:2px 0 0">({{ $s.Week.CoverageDays }} {{ pluralDays $s.Week.CoverageDays }} из 7 с нагрузкой)</p>
+      <p class="empty">Цель не задана — <a class="link-cta" href="/profile">задать в профиле</a>.</p>
       {{ end }}
       <div class="facts" style="margin-top:10px">
-        <span><b>{{ hours $s.Week.Hours }} ч</b></span>
-        <span><b>{{ km $s.Week.KM }} км</b></span>
-        <span><b>{{ $s.Week.Rides }}</b> {{ pluralRides $s.Week.Rides }}</span>
+        <span><b>{{ hours $s.Week.Hours }}</b> <span class="unit">ч</span></span>
+        <span><b>{{ km $s.Week.KM }}</b> <span class="unit">км</span></span>
+        <span><b>{{ $s.Week.Rides }}</b> <span class="unit">{{ pluralRides $s.Week.Rides }}</span></span>
       </div>
       <div class="week-line">станок {{ hours $s.Week.TrainerHours }} ч · улица {{ hours $s.Week.OutdoorHours }} ч</div>
-      <div class="week-line">полярность: Z1–Z2 {{ trimFloat $s.Week.Zones.LowPct }}% · Z3 {{ trimFloat $s.Week.Zones.GrayPct }}% · Z4+ {{ trimFloat $s.Week.Zones.HighPct }}% — {{ $s.Week.PolarityVerdict }}</div>
+      <div class="polarity">
+        <span class="chip chip--pol-low">Z1–Z2 {{ intFloat $s.Week.Zones.LowPct }}%</span>
+        <span class="chip chip--muted">Z3 {{ intFloat $s.Week.Zones.GrayPct }}%</span>
+        <span class="chip chip--pol-high">Z4+ {{ intFloat $s.Week.Zones.HighPct }}%</span>
+        <span class="pol-verdict">{{ $s.Week.PolarityVerdict }}</span>
+      </div>
       <div class="week-line">к прошлой неделе: {{ signedPct $s.Week.DeltaPct }}{{ if not $s.Week.DeltaPct }} (нет прошлой нагрузки){{ end }}</div>
     </section>
   </div>
 
   <div class="grid2 equal">
-    <section class="panel">
-      <h2>Готовность</h2>
-      <div class="facts">
+    <section class="readiness">
+      <div class="section-label">Готовность</div>
+      <div class="facts" style="margin-top:6px">
         <span>макс. выезд 90 дней:
-          {{ with $s.Readiness.Longest90d }}<b>{{ km .KM }} км</b> ({{ date .Date }}){{ else }}<b>—</b>{{ end }}
+          {{ with $s.Readiness.Longest90d }}<b>{{ km .KM }}</b> <span class="unit">км</span> ({{ date .Date }}){{ else }}<span class="empty">появится после первой поездки за 90 дней</span>{{ end }}
+          <span class="coverage">({{ $s.Cov90 }} {{ pluralDays $s.Cov90 }} из 90)</span>
         </span>
-        <span>100+ км: <b>{{ $s.Readiness.CenturyCount }}</b></span>
+        <span>100+ <span class="unit">км</span>: <b>{{ $s.Readiness.CenturyCount }}</b></span>
       </div>
       <div class="facts" style="margin-top:8px">
-        <span>7 дней: <b>{{ km $s.Readiness.Rolling7.KM }} км</b> · {{ hours $s.Readiness.Rolling7.Hours }} ч · {{ trimFloat $s.Readiness.Rolling7.TSS }} TSS</span>
-        <span>28 дней: <b>{{ km $s.Readiness.Rolling28.KM }} км</b> · {{ hours $s.Readiness.Rolling28.Hours }} ч · {{ trimFloat $s.Readiness.Rolling28.TSS }} TSS</span>
+        <span>7 дней: <b>{{ km $s.Readiness.Rolling7.KM }}</b> <span class="unit">км</span> · <b>{{ hours $s.Readiness.Rolling7.Hours }}</b> <span class="unit">ч</span> · <b>{{ intFloat $s.Readiness.Rolling7.TSS }}</b> <span class="unit">TSS</span>
+          <span class="coverage">({{ $s.Cov7 }} {{ pluralDays $s.Cov7 }} из 7)</span></span>
+        <span>28 дней: <b>{{ km $s.Readiness.Rolling28.KM }}</b> <span class="unit">км</span> · <b>{{ hours $s.Readiness.Rolling28.Hours }}</b> <span class="unit">ч</span> · <b>{{ intFloat $s.Readiness.Rolling28.TSS }}</b> <span class="unit">TSS</span>
+          <span class="coverage">({{ $s.Cov28 }} {{ pluralDays $s.Cov28 }} из 28)</span></span>
       </div>
     </section>
 
-    {{ if $s.AllAlerts }}
-    <section class="panel alerts">
-      <h2>Внимание</h2>
-      {{ range $s.Alerts }}
-      <div class="alert {{ .Level }}"><span class="badge">{{ if eq .Level "warn" }}важно{{ else }}инфо{{ end }}</span><span>{{ .Text }}</span></div>
-      {{ end }}
-      {{ if gt (len $s.AllAlerts) 3 }}
+    {{ if $s.AlertsAllView }}
+    <section class="alerts">
+      <div class="section-label">Внимание</div>
+      <div class="insights">
+        {{ range $s.AlertsView }}
+        <div class="insight {{ if eq .Level "warn" }}insight--warn{{ else }}insight--info{{ end }} alert-row">
+          <svg class="ic" aria-hidden="true"><use href="/static/icons.svg#{{ if eq .Level "warn" }}alert{{ else }}info{{ end }}"/></svg>
+          <span>{{ .Text }}</span>
+        </div>
+        {{ end }}
+      </div>
+      {{ if gt (len $s.AlertsAllView) 3 }}
       <details>
-        <summary>Показать все ({{ len $s.AllAlerts }})</summary>
-        {{ range $i, $a := $s.AllAlerts }}{{ if ge $i 3 }}
-        <div class="alert {{ $a.Level }}"><span class="badge">{{ if eq $a.Level "warn" }}важно{{ else }}инфо{{ end }}</span><span>{{ $a.Text }}</span></div>
-        {{ end }}{{ end }}
+        <summary>Показать все ({{ len $s.AlertsAllView }})</summary>
+        <div class="insights">
+          {{ range $i, $a := $s.AlertsAllView }}{{ if ge $i 3 }}
+          <div class="insight {{ if eq $a.Level "warn" }}insight--warn{{ else }}insight--info{{ end }} alert-row">
+            <svg class="ic" aria-hidden="true"><use href="/static/icons.svg#{{ if eq $a.Level "warn" }}alert{{ else }}info{{ end }}"/></svg>
+            <span>{{ $a.Text }}</span>
+          </div>
+          {{ end }}{{ end }}
+        </div>
       </details>
       {{ end }}
     </section>

@@ -424,8 +424,8 @@ func TestWorkoutZonesHTMLMatchDist(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Мощностные зоны", "База: FTP 156 Вт", "станок, уличный FTP не задан",
-		"% педалирования",
+		"Зоны мощности", "FTP 156 Вт", "станок, уличный не задан",
+		"% — от времени педалирования",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)
@@ -449,10 +449,12 @@ func TestWorkoutZonesHTMLMatchDist(t *testing.T) {
 	// html/template экранирует "+" в тексте как &#43; — для сверки возвращаем.
 	rows := strings.ReplaceAll(body, "&#43;", "+")
 	for _, e := range d.Power[1:] {
-		want := fmt.Sprintf("<td>%s</td><td>%s</td><td>%s%%</td>",
-			e.Label, zoneTimeLabel(e.Secs), trimFloat(e.Pct))
+		if e.Secs == 0 {
+			continue // пустые зоны в стрип не попадают
+		}
+		want := fmt.Sprintf("title=\"%s — %s (%s%%)\"", e.Label, zoneTimeLabel(e.Secs), trimFloat(e.Pct))
 		if !strings.Contains(rows, want) {
-			t.Errorf("нет строки зоны %q (в /dist: %+v)", want, e)
+			t.Errorf("нет бара зоны %q (в /dist: %+v)", want, e)
 		}
 	}
 }

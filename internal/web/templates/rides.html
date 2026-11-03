@@ -1,15 +1,16 @@
 {{ template "head" . }}
 <h1>Поездки</h1>
 
-<div style="display:flex; gap:12px; align-items:center; margin-bottom:10px; flex-wrap:wrap">
-  <button id="syncBtn" hx-post="/sync" hx-swap="none">Синхронизировать с велокомпом</button>
+<div class="rides-sync">
+  <button id="syncBtn" class="btn btn--primary" hx-post="/sync" hx-swap="none">
+    <svg class="ic" aria-hidden="true"><use href="/static/icons.svg#refresh"/></svg>
+    Синхронизировать с велокомпом
+  </button>
   <span id="syncState" class="sub"></span>
 </div>
-<pre id="syncLog" style="display:none; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:13px; max-height:220px; overflow:auto; white-space:pre-wrap"></pre>
+<pre id="syncLog" class="sync-log" style="display:none"></pre>
 
-<input id="search" type="text" placeholder="Поиск по имени или дате (напр. 05.2025)"
-       style="font:inherit; padding:8px 12px; border:1px solid var(--border); border-radius:6px; width:100%; margin-bottom:8px"
-       oninput="filterRides(this.value)">
+<input id="search" class="rides-search" type="text" placeholder="Поиск по имени или дате (напр. 05.2025)" oninput="filterRides(this.value)">
 
 <script>
 let syncTimer = null;
@@ -37,33 +38,59 @@ function pollSync() {
 document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSync);
 </script>
 
-{{ range .Years }}
+{{ if .Rides.Years }}
+{{ range .Rides.Years }}
 <details open class="year">
-  <summary>{{ .Year }} ({{ km .Outdoor.DistanceKm }} км)</summary>
+  <summary>{{ .Year }} <span class="sub">{{ if .Outdoor.Hours }}{{ km .Outdoor.DistanceKm }} км улица{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }} · {{ end }}{{ if .Trainer.Hours }}{{ hours .Trainer.Hours }} ч станок{{ end }}</span></summary>
   <div class="months">
   {{ range .Months }}
     <details class="month">
-      <summary>{{ monthName .Month }}: {{ if .Outdoor.Hours }}улица — {{ km .Outdoor.DistanceKm }} км, {{ hours .Outdoor.Hours }} ч{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }}; {{ end }}{{ if .Trainer.Hours }}станок — {{ hours .Trainer.Hours }} ч{{ end }}{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .AvgIF }} · IF {{ printf "%.2f" .AvgIF }}{{ end }}{{ if .TotalCalories }} · {{ .TotalCalories }} ккал{{ with pizzas .TotalCalories }} ≈ {{ . }}{{ end }}{{ end }}</summary>
-      <div class="months">
+      <summary>
+        <span class="month-name">{{ monthName .Month }}</span>
+        {{ .VolumeSpark | safeHTML }}
+        <span class="month-stats">
+          {{ if .Outdoor.Hours }}улица {{ km .Outdoor.DistanceKm }} км{{ end }}
+          {{ if and .Outdoor.Hours .Trainer.Hours }}·{{ end }}
+          {{ if .Trainer.Hours }}станок {{ formatHours .Trainer.Hours }}{{ end }}
+          {{ if .TSS }}· {{ intFloat .TSS }} TSS{{ end }}
+        </span>
+      </summary>
+      <div class="ride-list">
       {{ range .Rides }}
-        <div class="ride" data-search="{{ date .StartTime }} {{ .Name }}">
-          <a href="/workout/{{ .ID }}">{{ date .StartTime }}</a>
-          {{ if .Name }}<span style="font-weight:600">{{ .Name }}</span>{{ end }}
-          {{ if .Trainer }}
-            <span>{{ sec2h .DurationSec }} ч</span><span class="tag">станок</span>
-          {{ else }}
-            <span>{{ km .DistanceKm }} км</span><span>{{ sec2h .DurationSec }} ч</span>
+        <a href="/workout/{{ .ID }}" class="ride" data-search="{{ .Search }}">
+          <span class="ride-date">{{ .Date }}</span>
+          <span class="ride-title">{{ .Title }}</span>
+          {{ if .PowerSpark }}
+          <svg class="ride-spark" viewBox="0 0 60 16" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ .PowerSpark }}"/></svg>
           {{ end }}
-          {{ if .AvgPower }}<span class="sub">ср. {{ .AvgPower }} Вт{{ if .TSS }} · {{ trimFloat .TSS }} TSS{{ end }}{{ if .IF }} · IF {{ printf "%.2f" .IF }}{{ end }}</span>{{ else if .TSS }}<span class="sub">{{ trimFloat .TSS }} TSS</span>{{ end }}
-          {{ if .AvgCadence }}<span class="sub">кад. {{ .AvgCadence }}</span>{{ end }}
-          {{ if .Calories }}<span class="sub">{{ .Calories }} ккал</span>{{ end }}
-        </div>
+          <span class="ride-metrics">
+            {{ if .Trainer }}
+              <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
+            {{ else }}
+              <span class="ride-metric"><b>{{ km .DistanceKm }}</b><span class="ride-unit">км</span></span>
+            {{ end }}
+            {{ if .AvgPower }}
+              <span class="ride-metric"><b>{{ .AvgPower }}</b><span class="ride-unit">Вт ср.</span></span>
+            {{ else if not .Trainer }}
+              <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
+            {{ end }}
+            {{ if .TSSText }}
+              <span class="ride-metric"><b>{{ .TSSText }}</b></span>
+            {{ end }}
+          </span>
+          {{ if .HasRecord }}<span class="chip chip--record">рекорд</span>{{ end }}
+          {{ if .Trainer }}<span class="chip chip--trainer">станок</span>{{ end }}
+          {{ if not .Trainer }}<span class="chip chip--outdoor">улица</span>{{ end }}
+        </a>
       {{ end }}
       </div>
     </details>
   {{ end }}
   </div>
 </details>
+{{ end }}
+{{ else }}
+<p class="empty rides-empty">Поездки появятся после импорта или синхронизации. <a class="link-cta" href="#syncBtn">Синхронизировать с велокомпом</a></p>
 {{ end }}
 
 <script>
@@ -72,7 +99,6 @@ function filterRides(q) {
   document.querySelectorAll(".ride").forEach(r => {
     r.style.display = !q || r.dataset.search.toLowerCase().includes(q) ? "" : "none";
   });
-  // скрываем пустые месяцы и годы
   document.querySelectorAll("details.month").forEach(m => {
     const visible = [...m.querySelectorAll(".ride")].some(r => r.style.display !== "none");
     m.style.display = visible ? "" : "none";
@@ -84,5 +110,47 @@ function filterRides(q) {
   });
 }
 </script>
+
+<style>
+.rides-sync { display: flex; gap: 12px; align-items: center; margin: 14px 0 10px; flex-wrap: wrap; }
+.rides-search { font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); width: 100%; margin-bottom: 8px; background: var(--bg); color: var(--text); }
+.sync-log { display: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 13px; max-height: 220px; overflow: auto; white-space: pre-wrap; margin: 0 0 12px; }
+
+.month > summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; }
+.month-name { min-width: 90px; }
+.month-stats { margin-left: auto; color: var(--text-2); font-size: 13px; font-weight: 500; }
+.rides-empty { margin: 20px 0; }
+
+.ride-list { display: flex; flex-direction: column; }
+.ride {
+  display: grid;
+  grid-template-columns: 86px 1fr 70px auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  color: inherit;
+  text-decoration: none;
+  font-size: 15px;
+}
+.ride:hover { background: var(--surface); text-decoration: none; }
+.ride-date { color: var(--text-2); font-feature-settings: "tnum"; }
+.ride-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ride-spark { width: 60px; height: 16px; flex: none; }
+.ride-spark polyline { fill: none; stroke: var(--brand); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.ride-metrics { display: flex; gap: 14px; align-items: baseline; justify-content: flex-end; }
+.ride-metric { display: flex; gap: 3px; align-items: baseline; font-feature-settings: "tnum"; }
+.ride-metric b { font-weight: 600; }
+.ride-unit { color: var(--text-3); font-size: 12px; font-weight: 400; }
+
+@media (max-width: 700px) {
+  .ride { grid-template-columns: 1fr auto; gap: 6px 12px; }
+  .ride-date { order: 1; }
+  .ride-title { order: 3; grid-column: 1 / -1; }
+  .ride-spark { order: 2; justify-self: end; }
+  .ride-metrics { order: 4; grid-column: 1 / -1; justify-content: flex-start; }
+  .ride .chip { order: 5; }
+}
+</style>
 
 {{ template "foot" . }}

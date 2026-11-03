@@ -1,114 +1,249 @@
 {{ template "head" . }}
-<h1><a href="/rides">←</a> Прогресс <span class="sub" style="font-size:14px; font-weight:400; color:var(--dim)">на {{ .TodayDate }}</span></h1>
+<style>
+  /* раскладка страницы: якорная навигация сбоку + контент (TODO-UI §4.4) */
+  .progress-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 28px; align-items: start; }
+  .progress-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 16px; }
+  .progress-nav a { padding: 6px 12px; border-radius: 999px; color: var(--text-2); font-size: 14px; }
+  .progress-nav a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
+  .progress-nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .progress-content { min-width: 0; }
+  .progress-content section { scroll-margin-top: 10px; }
+  /* sticky-заголовки секций */
+  .sec-h { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 14px 0 2px; padding: 10px 0 8px; font-size: 19px; }
+  .progress-content h3 { font-size: 15px; margin: 20px 0 8px; }
+  .cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0; }
+  .chart-canvas { width: 100%; background: var(--surface); border: none; border-radius: var(--radius); }
+  .metric-card .empty-value { font-size: 15px; font-weight: 500; color: var(--text-2); }
+  /* изменения Вт/кг — три окна, а не coverage-пометка */
+  .wkg-deltas { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; font-size: 12px; color: var(--text-2); }
+  .wkg-deltas .wk { color: var(--text-3); }
+  .wkg-note { margin-top: 2px; font-size: 12px; color: var(--text-3); }
+  /* бары зон по неделям: шкала Z1–Z7 + тонкая риска ориентира 80% */
+  .zbar { position: relative; }
+  .zbar i.z1 { background: var(--zone-z1); } .zbar i.z2 { background: var(--zone-z2); }
+  .zbar i.z3 { background: var(--zone-z3); } .zbar i.z4 { background: var(--zone-z4); }
+  .zbar i.z5 { background: var(--zone-z5); } .zbar i.z6 { background: var(--zone-z6); }
+  .zbar i.z7 { background: var(--zone-z7); }
+  .zbar .ref80 { position: absolute; top: 0; bottom: 0; left: 80%; width: 1px; background: rgba(0,0,0,.4); }
+  #polarity { margin: 2px 0 10px; font-size: 14px; }
+  @media (max-width: 900px) {
+    .progress-layout { grid-template-columns: 1fr; }
+    .progress-nav { position: static; flex-direction: row; flex-wrap: wrap; padding: 0 0 6px; }
+  }
+</style>
+<h1>Прогресс <span class="sub" style="font-size:14px; font-weight:400; color:var(--text-2)">на {{ .TodayDate }}</span></h1>
 
-<div class="stats">
-  <div class="stat"><div class="v">{{ trimFloat .PMC.CTL }}</div><div class="k">CTL · форма</div></div>
-  <div class="stat"><div class="v">{{ trimFloat .PMC.ATL }}</div><div class="k">ATL · усталость</div></div>
-  <div class="stat"><div class="v">{{ .TSBText }}</div><div class="k">TSB · {{ .TSBLabel }}</div></div>
-  <div class="stat"><div class="v">{{ printf "%.0f" .WeekTSS }}</div><div class="k">TSS за неделю</div></div>
-  <div class="stat"><div class="v">{{ printf "%.0f" .Last4TSS }}</div><div class="k">TSS за 4 недели</div></div>
-  {{ if .Wkg.HasValue }}<div class="stat"><div class="v">{{ trimFloat .Wkg.Value }}</div><div class="k">Вт/кг (станок) · {{ .Wkg.Text }}</div></div>{{ end }}
-</div>
-<p class="muted" style="font-size:13px; margin:-4px 0 0">PMC на {{ .PMCDate }} — до нагрузки сегодняшнего дня.</p>
+<div class="progress-layout">
+<nav class="progress-nav" aria-label="Разделы страницы">
+  <a href="#summary" class="active">Сводка</a>
+  <a href="#load">Нагрузка</a>
+  <a href="#power">Мощность</a>
+  <a href="#distance">Дистанции</a>
+</nav>
+<div class="progress-content">
 
-{{ if .FTPHint }}
-<div class="stats">
-  <div class="stat" style="border-color:#d4a72c; background:#fff8c5">
-    <div class="v">{{ trimFloat .FTPHint.Estimate }} Вт</div>
-    <div class="k">возможно, пора обновить FTP · по заезду <a href="/workout/{{ .FTPHint.WorkoutID }}">{{ date .FTPHint.Date }}</a> (id {{ .FTPHint.WorkoutID }}) · +{{ trimFloat .FTPHint.DeltaPct }}% к {{ trimFloat .FTPHint.Current }} Вт</div>
-    {{ template "ftpUpdate" .FTPHint }}
+<section id="summary">
+  <h2 class="sec-h">Сводка</h2>
+  <div class="section-label">Форма</div>
+  <div class="cards-row">
+    <div class="metric-card">
+      <div class="v">{{ trimFloat .PMC.CTL }}</div><div class="k">CTL · форма</div>
+      {{ with .CTLTrend }}<div class="trend {{ .Class }}">{{ .Text }}</div>{{ end }}
+    </div>
+    <div class="metric-card">
+      <div class="v">{{ trimFloat .PMC.ATL }}</div><div class="k">ATL · усталость</div>
+      {{ with .ATLTrend }}<div class="trend {{ .Class }}">{{ .Text }}</div>{{ end }}
+    </div>
+    <div class="metric-card">
+      <div class="v">{{ .TSBText }}</div><div class="k">TSB · {{ .TSBLabel }}</div>
+      {{ with .TSBTrend }}<div class="trend {{ .Class }}">{{ .Text }}</div>{{ end }}
+    </div>
   </div>
-</div>
-{{ end }}
+  <p class="coverage" style="margin:2px 0 0">PMC на {{ .PMCDate }} — до нагрузки сегодняшнего дня.{{ if .PMCLowData }} Мало данных: {{ .PMCLoadDays }} {{ pluralDays .PMCLoadDays }} с нагрузкой из 42 — ориентировочно.{{ end }}</p>
 
-<h2>Готовность к длинным дистанциям</h2>
-<div class="stats">
-  <div class="stat"><div class="v">{{ if .Readiness.Longest90d }}{{ km .Readiness.Longest90d.KM }} км{{ else }}—{{ end }}</div><div class="k">макс. выезд за 90 дней{{ with .Readiness.Longest90d }} · {{ date .Date }}{{ end }}</div></div>
-  <div class="stat"><div class="v">{{ if .Readiness.Rolling7.Rides }}{{ km .Readiness.Rolling7.KM }} км / {{ trimFloat .Readiness.Rolling7.Hours }} ч{{ else }}—{{ end }}</div><div class="k">7 дней</div></div>
-  <div class="stat"><div class="v">{{ if .Readiness.Rolling28.Rides }}{{ km .Readiness.Rolling28.KM }} км / {{ trimFloat .Readiness.Rolling28.Hours }} ч{{ else }}—{{ end }}</div><div class="k">28 дней</div></div>
-  <div class="stat"><div class="v">{{ if .Readiness.KcalPerHour }}{{ trimFloat (deref .Readiness.KcalPerHour) }} ккал/ч{{ else }}—{{ end }}</div><div class="k">ккал/ч · 90 дней</div></div>
-  <div class="stat"><div class="v">{{ if .Readiness.AscentPer100km }}{{ trimFloat (deref .Readiness.AscentPer100km) }} м{{ else }}—{{ end }}</div><div class="k">набор на 100 км · 90 дней</div></div>
-  <div class="stat"><div class="v">{{ .Readiness.CenturyCount }} раз</div><div class="k">100+ км за всё время</div></div>
-</div>
+  <div class="section-label" style="margin-top:16px">Неделя</div>
+  <div class="cards-row">
+    <div class="metric-card">
+      <div class="v">{{ printf "%.0f" .WeekTSS }}</div><div class="k">TSS за неделю</div>
+      <div class="coverage">{{ .WeekCoverage }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="v">{{ printf "%.0f" .Last4TSS }}</div><div class="k">TSS за 4 недели</div>
+      <div class="coverage">{{ .Last4Coverage }}</div>
+    </div>
+    {{ if .Wkg.HasValue }}
+    <div class="metric-card">
+      <div class="v">{{ trimFloat .Wkg.Value }}</div><div class="k">Вт/кг (станок)</div>
+      <div class="wkg-deltas">
+        {{ range .Wkg.Windows }}<span><span class="wk">{{ .Label }}</span> {{ .Change }}</span>{{ end }}
+      </div>
+      {{ if .Wkg.Note }}<div class="wkg-note">{{ .Wkg.Note }}</div>{{ end }}
+    </div>
+    {{ end }}
+  </div>
 
-{{ if .CP.HasFit }}
-<div class="stats">
-  <div class="stat"><div class="v">{{ printf "%.0f" .CP.CP }} Вт</div><div class="k">CP · огибающая MMP (за всё время, без замеров)</div></div>
-  <div class="stat"><div class="v">{{ printf "%.1f" .CP.WPrime }} кДж</div><div class="k">W' · запас над CP</div></div>
-  {{ with .CP.FTP }}<div class="stat"><div class="v">{{ printf "%.0f" . }} Вт</div><div class="k">FTP оценка (0.95·20 мин)</div></div>{{ end }}
-  <div class="stat"><div class="v">{{ printf "%.3f" .CP.R2 }}</div><div class="k">R² фита</div></div>
-  <div class="stat"><div class="v">{{ .CP.Points }}</div><div class="k">точек MMP 120–1200 с</div></div>
-</div>
-<p class="sub" style="color:var(--dim)">CP и W' — оценка по огибающей MMP (best-of по тренировкам, регрессия W = CP + W'/t), а не физиологический тест; W' по огибающей может быть завышен. Замеры (тестовые тренировки) в огибающую не входят. {{ if .CP.Low }}Низкая достоверность (R² &lt; 0.95).{{ else }}Достоверность ок (R² ≥ 0.95).{{ end }}</p>
-{{ else }}
-<p class="sub" style="color:var(--dim)">{{ if eq .CP.Reason "few" }}CP/W' не посчитать: нужно ≥3 окна MMP 120–1200 с (сейчас {{ .CP.Points }}).{{ else }}Кривая MMP не описывается моделью CP/W' — CP или W' неположительные либо фит слишком шумный.{{ end }}{{ with .CP.FTP }} FTP-оценка по 20 мин: {{ printf "%.0f" . }} Вт.{{ end }}</p>
-{{ end }}
-
-<h2>Нагрузка</h2>
-<div class="tabs" id="periodBtns">
-  <button class="tab" data-days="30">30 дней</button>
-  <button class="tab" data-days="90">90 дней</button>
-  <button class="tab active" data-days="180">180 дней</button>
-  <button class="tab" data-days="365">365 дней</button>
-</div>
-<canvas id="pmc" style="width:100%; height:280px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
-<p id="empty" hidden class="sub" style="color:var(--dim)">Нет данных за выбранный период.</p>
-
-<h2>Календарь года</h2>
-<div class="heatmap" id="heatmap"></div>
-<div class="hm-legend">
-  <span>меньше</span>
-  <i class="hm lvl0"></i><i class="hm lvl1"></i><i class="hm lvl2"></i><i class="hm lvl3"></i><i class="hm lvl4"></i>
-  <span>больше</span>
-</div>
-
-{{ if .Bikes }}
-<h2>Пробег по велосипедам</h2>
-<table>
-  <tr><th>Велосипед</th><th>Поездки</th><th>Км</th><th>Часы</th></tr>
-  {{ range .Bikes }}
-  <tr><td>{{ .Name }}</td><td>{{ .Rides }}</td><td>{{ km .KM }}</td><td>{{ trimFloat .Hours }}</td></tr>
+  {{ if .FTPHint }}
+  <div class="insight insight--warn" style="margin-top:10px">
+    <div><span class="t">Похоже, FTP вырос: ~{{ trimFloat .FTPHint.Estimate }} Вт</span></div>
+    <div style="color:var(--text-2)">по заезду от {{ date .FTPHint.Date }} — +{{ trimFloat .FTPHint.DeltaPct }}% к текущим {{ trimFloat .FTPHint.Current }} Вт · <a class="cta" href="/workout/{{ .FTPHint.WorkoutID }}">Открыть заезд</a></div>
+    <div style="margin-top:8px">{{ template "ftpUpdate" .FTPHint }}</div>
+  </div>
   {{ end }}
-</table>
-{{ end }}
+</section>
 
-<h2>MMP · лучшее усилие</h2>
-<div class="tabs" id="mmpBtns">
-  <button class="tab" data-n="30">30 дней</button>
-  <button class="tab active" data-n="90">90 дней</button>
-  <button class="tab" data-n="365">365 дней</button>
-</div>
-<canvas id="mmp" style="width:100%; height:260px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
-<p id="mmp-empty" hidden class="sub" style="color:var(--dim)">Нет данных за выбранный период.</p>
+<section id="load">
+  <h2 class="sec-h">Нагрузка</h2>
+  <h3>PMC · форма, усталость, свежесть</h3>
+  <div class="tabs" id="periodBtns">
+    <button type="button" class="tab" data-days="30">30 дней</button>
+    <button type="button" class="tab" data-days="90">90 дней</button>
+    <button type="button" class="tab active" data-days="180">180 дней</button>
+    <button type="button" class="tab" data-days="365">365 дней</button>
+  </div>
+  <canvas id="pmc" class="chart-canvas" style="height:280px; margin-top:10px"></canvas>
+  <p id="pmc-coverage" class="coverage" hidden></p>
+  <p id="empty" hidden class="sub" style="color:var(--text-2)">Кривая PMC появится после 2–3 тренировок с нагрузкой в выбранном периоде.</p>
 
-<h2>Зоны по неделям</h2>
-<div class="tabs" id="weeksBtns">
-  <button class="tab active" data-n="12">12 недель</button>
-  <button class="tab" data-n="26">26 недель</button>
-  <button class="tab" data-n="52">52 недели</button>
-</div>
-<div id="weeks" class="weeks"></div>
-<div class="hm-legend">
-  <i class="zlow"></i><span>низко (Z1–Z2)</span>
-  <i class="zgray"></i><span>серо (Z3)</span>
-  <i class="zhigh"></i><span>высоко (Z4–Z7)</span>
-  <span>· ориентир поляризованной модели 80/20</span>
-</div>
-<p id="polarity" class="sub" style="color:var(--dim)"></p>
+  <h3>Календарь года</h3>
+  <div class="heatmap" id="heatmap"></div>
+  <div class="hm-legend">
+    <span>меньше</span>
+    <i class="hm lvl0"></i><i class="hm lvl1"></i><i class="hm lvl2"></i><i class="hm lvl3"></i><i class="hm lvl4"></i>
+    <span>больше · насыщенность — TSS дня</span>
+  </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <h3>Зоны по неделям</h3>
+  <div id="polarity" class="sub" style="color:var(--text-2)"></div>
+  <div class="tabs" id="weeksBtns">
+    <button type="button" class="tab active" data-n="12">12 недель</button>
+    <button type="button" class="tab" data-n="26">26 недель</button>
+    <button type="button" class="tab" data-n="52">52 недели</button>
+  </div>
+  <div id="weeks" class="weeks"></div>
+  <div class="hm-legend">
+    <i style="background:var(--zone-z1)"></i><span>Z1</span>
+    <i style="background:var(--zone-z2)"></i><span>Z2</span>
+    <i style="background:var(--zone-z3)"></i><span>Z3</span>
+    <i style="background:var(--zone-z4)"></i><span>Z4</span>
+    <i style="background:var(--zone-z5)"></i><span>Z5</span>
+    <i style="background:var(--zone-z6)"></i><span>Z6</span>
+    <i style="background:var(--zone-z7)"></i><span>Z7</span>
+    <span>· риска на баре — ориентир 80% времени в Z1–Z2</span>
+  </div>
+</section>
+
+<section id="power">
+  <h2 class="sec-h">Мощность</h2>
+  {{ if .CP.HasFit }}
+  <div class="cards-row">
+    <div class="metric-card"><div class="v">{{ printf "%.0f" .CP.CP }} Вт</div><div class="k">CP · огибающая MMP</div></div>
+    <div class="metric-card"><div class="v">{{ printf "%.1f" .CP.WPrime }} кДж</div><div class="k">W' · запас над CP</div></div>
+    {{ with .CP.FTP }}<div class="metric-card"><div class="v">{{ printf "%.0f" . }} Вт</div><div class="k">FTP оценка (0.95·20 мин)</div></div>{{ end }}
+  </div>
+  <p class="coverage">Оценка по огибающей MMP за всё время, замеры не входят · {{ .CP.Points }} точек 120–1200 с · R² {{ printf "%.3f" .CP.R2 }}{{ if .CP.Low }} — низкая достоверность (&lt; 0.95), ориентир грубый{{ end }}</p>
+  {{ else }}
+  <p class="sub" style="color:var(--text-2)">{{ if eq .CP.Reason "few" }}CP/W' не посчитать: нужно ≥3 окна MMP 120–1200 с (сейчас {{ .CP.Points }}).{{ else }}Кривая MMP не описывается моделью CP/W' — CP или W' неположительные либо фит слишком шумный.{{ end }}{{ with .CP.FTP }} FTP-оценка по 20 мин: {{ printf "%.0f" . }} Вт.{{ end }}</p>
+  {{ end }}
+
+  <h3>MMP · лучшее усилие</h3>
+  <div class="tabs" id="mmpBtns">
+    <button type="button" class="tab" data-n="30">30 дней</button>
+    <button type="button" class="tab active" data-n="90">90 дней</button>
+    <button type="button" class="tab" data-n="365">365 дней</button>
+  </div>
+  <canvas id="mmp" class="chart-canvas" style="height:260px; margin-top:10px" data-ftp="{{ if .CurrentFTP }}{{ printf "%.0f" .CurrentFTP }}{{ end }}"></canvas>
+  <p id="mmp-coverage" class="coverage" hidden></p>
+  <p id="mmp-empty" hidden class="sub" style="color:var(--text-2)">Кривая MMP появится после 2–3 тренировок с записью мощности в выбранном периоде.</p>
+</section>
+
+<section id="distance">
+  <h2 class="sec-h">Дистанции</h2>
+  <h3>Готовность к длинным дистанциям</h3>
+  <div class="cards-row">
+    <div class="metric-card">
+      <div class="v{{ if not .Readiness.Longest90d }} empty-value{{ end }}">{{ if .Readiness.Longest90d }}{{ km .Readiness.Longest90d.KM }} км{{ else }}за 90 дней выездов не было{{ end }}</div>
+      <div class="k">макс. выезд за 90 дней{{ with .Readiness.Longest90d }} · {{ date .Date }}{{ end }}</div>
+      <div class="coverage">{{ .Cov90 }} {{ pluralDays .Cov90 }} из 90</div>
+    </div>
+    <div class="metric-card">
+      <div class="v{{ if not .Readiness.Rolling7.Rides }} empty-value{{ end }}">{{ if .Readiness.Rolling7.Rides }}{{ km .Readiness.Rolling7.KM }} км / {{ trimFloat .Readiness.Rolling7.Hours }} ч{{ else }}поездок за 7 дней не было{{ end }}</div>
+      <div class="k">7 дней</div>
+      <div class="coverage">{{ .Cov7 }} {{ pluralDays .Cov7 }} из 7</div>
+    </div>
+    <div class="metric-card">
+      <div class="v{{ if not .Readiness.Rolling28.Rides }} empty-value{{ end }}">{{ if .Readiness.Rolling28.Rides }}{{ km .Readiness.Rolling28.KM }} км / {{ trimFloat .Readiness.Rolling28.Hours }} ч{{ else }}поездок за 28 дней не было{{ end }}</div>
+      <div class="k">28 дней</div>
+      <div class="coverage">{{ .Cov28 }} {{ pluralDays .Cov28 }} из 28</div>
+    </div>
+    <div class="metric-card">
+      <div class="v{{ if not .Readiness.KcalPerHour }} empty-value{{ end }}">{{ if .Readiness.KcalPerHour }}{{ trimFloat (deref .Readiness.KcalPerHour) }} ккал/ч{{ else }}нет данных о калориях{{ end }}</div>
+      <div class="k">ккал/ч · 90 дней</div>
+      <div class="coverage">{{ .Cov90 }} {{ pluralDays .Cov90 }} из 90</div>
+    </div>
+    <div class="metric-card">
+      <div class="v{{ if not .Readiness.AscentPer100km }} empty-value{{ end }}">{{ if .Readiness.AscentPer100km }}{{ trimFloat (deref .Readiness.AscentPer100km) }} м{{ else }}нет поездок с дистанцией{{ end }}</div>
+      <div class="k">набор на 100 км · 90 дней</div>
+      <div class="coverage">{{ .Cov90 }} {{ pluralDays .Cov90 }} из 90</div>
+    </div>
+    <div class="metric-card"><div class="v">{{ .Readiness.CenturyCount }} раз</div><div class="k">100+ км за всё время</div></div>
+  </div>
+  {{ if .CenturyInsight }}
+  <div class="insight insight--info" style="margin-top:10px"><span class="t">Первая сотня</span> — {{ .CenturyInsight }}</div>
+  {{ end }}
+
+  {{ if .Bikes }}
+  <h3>Пробег по велосипедам</h3>
+  <table>
+    <tr><th>Велосипед</th><th>Поездки</th><th>Км</th><th>Часы</th></tr>
+    {{ range .Bikes }}
+    <tr><td>{{ .Name }}</td><td>{{ .Rides }}</td><td>{{ km .KM }}</td><td>{{ trimFloat .Hours }}</td></tr>
+    {{ end }}
+  </table>
+  {{ end }}
+</section>
+
+</div>
+</div>
+
+<script src="/static/vendor/chart.umd.min.js"></script>
 <script>
 (() => {
 const fmt = d => {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${dd}`;
 };
+// единый формат дат: DD.MM.YYYY в осях и подсказках
+const ddmmyyyy = iso => iso.slice(8, 10) + "." + iso.slice(5, 7) + "." + iso.slice(0, 4);
 const todayKey = fmt(new Date());
+const pluralDaysJS = n => {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return "дней";
+  if (b === 1) return "день";
+  if (b >= 2 && b <= 4) return "дня";
+  return "дней";
+};
+
+// цвета — из дизайн-токенов :root, чтобы смена бренда меняла и графики
+const css = getComputedStyle(document.documentElement);
+const tok = n => css.getPropertyValue(n).trim();
+const BRAND = tok("--brand");
+const DANGER = tok("--danger");
+const OK = tok("--ok");
+const TEXT3 = tok("--text-3");
+const SURFACE = tok("--surface");
+const hex2rgb = h => { h = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16)); };
+const mix = (a, b, t) => { const A = hex2rgb(a), B = hex2rgb(b); return "rgb(" + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(",") + ")"; };
+const alpha = (h, a) => { const c = hex2rgb(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; };
+
+// шкала интенсивности TSS-бара: светло-серый → бренд (пороги как у календаря)
+const level = tss => tss <= 0 ? 0 : tss <= 30 ? 1 : tss <= 60 ? 2 : tss <= 100 ? 3 : 4;
+const tssColors = [SURFACE, mix(SURFACE, BRAND, 0.35), mix(SURFACE, BRAND, 0.6), mix(SURFACE, BRAND, 0.8), BRAND];
+const gridColor = "rgba(0,0,0,.05)";
+
 const ctx = document.getElementById("pmc");
 const empty = document.getElementById("empty");
+const pmcCoverage = document.getElementById("pmc-coverage");
 let chart = null;
-
-const level = tss => tss <= 0 ? 0 : tss <= 30 ? 1 : tss <= 60 ? 2 : tss <= 100 ? 3 : 4;
 
 async function loadChart(days) {
   const to = new Date(), from = new Date();
@@ -117,34 +252,43 @@ async function loadChart(days) {
   const has = data.some(d => d.rides > 0 || d.ctl > 0 || d.atl > 0);
   ctx.style.display = has ? "" : "none";
   empty.hidden = has;
+  pmcCoverage.hidden = !has;
   if (!has) {
     if (chart) { chart.destroy(); chart = null; }
     return;
   }
-  const labels = data.map(d => d.date.slice(5, 10));
+  const activeDays = data.filter(d => d.tss > 0).length;
+  pmcCoverage.textContent = `Дни с нагрузкой: ${activeDays} ${pluralDaysJS(activeDays)} из ${data.length}.`;
+  const labels = data.map(d => ddmmyyyy(d.date));
   const sets = [
-    { type: "bar", label: "TSS", data: data.map(d => d.tss), backgroundColor: "#0969da" },
-    { type: "line", label: "CTL", data: data.map(d => d.ctl), borderColor: "#8250df", pointRadius: 0, borderWidth: 2 },
-    { type: "line", label: "ATL", data: data.map(d => d.atl), borderColor: "#cf222e", pointRadius: 0, borderWidth: 2 },
-    { type: "line", label: "TSB", data: data.map(d => d.tsb), borderColor: "#1a7f37", pointRadius: 0, borderWidth: 1, yAxisID: "y1" },
+    { type: "bar", label: "TSS", data: data.map(d => d.tss),
+      backgroundColor: data.map(d => tssColors[level(d.tss)]), borderRadius: 2 },
+    { type: "line", label: "CTL · форма", data: data.map(d => d.ctl), borderColor: BRAND, pointRadius: 0, borderWidth: 2 },
+    { type: "line", label: "ATL · усталость", data: data.map(d => d.atl), borderColor: DANGER, pointRadius: 0, borderWidth: 2 },
+    { type: "line", label: "TSB · свежесть", data: data.map(d => d.tsb), yAxisID: "y1", pointRadius: 0, borderWidth: 1.5,
+      borderColor: OK,
+      segment: { borderColor: c => c.p1.parsed.y >= 0 ? OK : DANGER },
+      fill: { target: { value: 0 }, above: alpha(OK, 0.18), below: alpha(DANGER, 0.18) } },
   ];
+  const options = {
+    animation: false,
+    plugins: {
+      legend: { position: "bottom" },
+      tooltip: { callbacks: { title: items => ddmmyyyy(data[items[0].dataIndex].date) } },
+    },
+    scales: {
+      x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
+      y: { position: "left", title: { display: true, text: "TSS / CTL / ATL" }, grid: { color: gridColor } },
+      y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "TSB" } },
+    },
+  };
   if (!chart) {
-    chart = new Chart(ctx, {
-      type: "bar",
-      data: { labels, datasets: sets },
-      options: {
-        animation: false,
-        plugins: { legend: { position: "bottom" } },
-        scales: {
-          x: { ticks: { maxTicksLimit: 12 } },
-          y: { position: "left", title: { display: true, text: "TSS / CTL / ATL" } },
-          y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "TSB" } },
-        },
-      },
-    });
+    chart = new Chart(ctx, { type: "bar", data: { labels, datasets: sets }, options });
   } else {
     chart.data.labels = labels;
     chart.data.datasets = sets;
+    // options пересобираем: tooltip-колбэки замкнуты на данные периода
+    chart.options = options;
     chart.update();
   }
 }
@@ -169,44 +313,66 @@ async function loadHeatmap() {
     const e = document.createElement("i");
     if (key > todayKey) {
       e.className = "hm future";
-      e.title = `${key} · ещё не наступило`;
+      e.title = `${ddmmyyyy(key)} · ещё не наступило`;
     } else {
       e.className = "hm lvl" + level(tss) + (key === todayKey ? " today" : "");
       const test = day && day.tests ? " · тест" : "";
       e.title = day && day.rides
-        ? `${key} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}${test}`
-        : `${key} · отдых`;
+        ? `${ddmmyyyy(key)} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}${test}`
+        : `${ddmmyyyy(key)} · отдых`;
     }
     root.appendChild(e);
   }
 }
 
 const mmpCtx = document.getElementById("mmp");
+const FTP = parseFloat(mmpCtx.dataset.ftp) || null;
 const mmpEmpty = document.getElementById("mmp-empty");
+const mmpCoverage = document.getElementById("mmp-coverage");
 let mmpChart = null;
 async function loadMMP(days) {
-  const recs = await (await fetch(`/api/records?period=${days}d`)).json();
+  const to = new Date(), from = new Date();
+  from.setDate(from.getDate() - days + 1);
+  const [recs, timeline] = await Promise.all([
+    fetch(`/api/records?period=${days}d`).then(r => r.json()),
+    fetch(`/api/timeline?from=${fmt(from)}&to=${fmt(to)}`).then(r => r.json()),
+  ]);
   const has = recs.length > 0;
   mmpCtx.style.display = has ? "" : "none";
   mmpEmpty.hidden = has;
+  mmpCoverage.hidden = !has;
   if (!has) {
     if (mmpChart) { mmpChart.destroy(); mmpChart = null; }
     return;
   }
-  // предыдущий период рисуем первым (ниже), текущий — поверх него
+  const activeDays = timeline.filter(d => d.rides > 0).length;
+  mmpCoverage.textContent = `Дни с поездками: ${activeDays} из ${days}.`;
+  // рекордная точка — лучшее значение окна за период выше, чем в предыдущем
+  const isRecord = r => r.previous && r.watts > r.previous.watts;
   const sets = [];
   if (recs.some(r => r.previous)) {
     sets.push({
       label: "предыдущий период",
       data: recs.filter(r => r.previous).map(r => ({ x: r.secs, y: r.previous.watts })),
-      borderColor: "#8c959f", backgroundColor: "#8c959f", showLine: true, pointRadius: 3, borderDash: [4, 4],
+      borderColor: TEXT3, backgroundColor: TEXT3, showLine: true, pointRadius: 2.5, borderWidth: 1.5, borderDash: [4, 4],
     });
   }
-  sets.push({
+  const cur = {
     label: `последние ${days} дн.`,
     data: recs.map(r => ({ x: r.secs, y: r.watts })),
-    borderColor: "#d73a49", backgroundColor: "#d73a49", showLine: true, pointRadius: 3,
-  });
+    borderColor: BRAND, backgroundColor: BRAND, showLine: true, borderWidth: 2,
+    // рекордные точки крупнее — акцент бренд-цветом
+    pointRadius: c => isRecord(recs[c.dataIndex]) ? 5.5 : 3,
+    pointHoverRadius: 6,
+  };
+  sets.push(cur);
+  if (FTP) {
+    sets.push({
+      label: `FTP ${Math.round(FTP)} Вт`,
+      data: [{ x: recs[0].secs, y: FTP }, { x: recs[recs.length - 1].secs, y: FTP }],
+      borderColor: TEXT3, backgroundColor: TEXT3, showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [6, 4],
+    });
+  }
   const cfg = {
     type: "line",
     data: { datasets: sets },
@@ -214,11 +380,21 @@ async function loadMMP(days) {
       animation: false,
       plugins: {
         legend: { position: "bottom" },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${Math.round(c.raw.y)} Вт (${c.raw.x} с)` } },
+        tooltip: {
+          callbacks: {
+            label: c => {
+              if (c.dataset === cur) {
+                const r = recs[c.dataIndex];
+                return `${Math.round(r.watts)} Вт (${r.secs} с) · ${ddmmyyyy(r.date.slice(0, 10))}${isRecord(r) ? " · рекорд периода" : ""}`;
+              }
+              return `${c.dataset.label}: ${Math.round(c.raw.y)} Вт (${c.raw.x} с)`;
+            },
+          },
+        },
       },
       scales: {
-        x: { type: "logarithmic", title: { display: true, text: "окно, с" }, ticks: { callback: v => v + " с" } },
-        y: { title: { display: true, text: "Вт" } },
+        x: { type: "logarithmic", title: { display: true, text: "окно, с" }, ticks: { callback: v => v + " с" }, grid: { color: gridColor } },
+        y: { title: { display: true, text: "Вт" }, grid: { color: gridColor } },
       },
     },
   };
@@ -226,27 +402,31 @@ async function loadMMP(days) {
     mmpChart = new Chart(mmpCtx, cfg);
   } else {
     mmpChart.data.datasets = sets;
+    // options пересобираем: tooltip-колбэки замкнуты на записи периода
+    mmpChart.options = cfg.options;
     mmpChart.update();
   }
 }
 
-const fmtWeek = s => s.slice(8, 10) + "." + s.slice(5, 7);
 async function loadWeeks(n) {
   const weeks = await (await fetch(`/api/weeks?n=${n}`)).json();
   const root = document.getElementById("weeks");
   root.innerHTML = "";
-  let low = 0, gray = 0, high = 0;
+  let low = 0, gray = 0, high = 0, shown = 0;
   weeks.forEach(w => {
     const total = w.zones.reduce((a, b) => a + b, 0);
     low += w.zones[0] + w.zones[1];
     gray += w.zones[2];
     high += w.zones[3] + w.zones[4] + w.zones[5] + w.zones[6];
-    const bar = total > 0
-      ? `<span class="zbar"><i class="zlow" style="width:${w.lowPct}%"></i><i class="zgray" style="width:${w.grayPct}%"></i><i class="zhigh" style="width:${w.highPct}%"></i></span>`
-      : `<span class="zbar"></span>`;
+    if (!total && !w.rides) return; // пустые недели скрываем
+    shown++;
+    const segs = total
+      ? w.zones.map((z, i) => z ? `<i class="z${i + 1}" style="width:${(z * 100 / total).toFixed(1)}%"></i>` : "").join("")
+      : "";
+    const bar = `<span class="zbar">${segs}${total ? '<b class="ref80"></b>' : ""}</span>`;
     const row = document.createElement("div");
     row.className = "week-row";
-    row.innerHTML = `<span class="wk">${fmtWeek(w.start)}</span>
+    row.innerHTML = `<span class="wk">${ddmmyyyy(w.start)}</span>
       <span class="wk-num">${w.rides} тр.</span>
       <span class="wk-num">${w.hours.toFixed(1)} ч</span>
       <span class="wk-num">${w.tss.toFixed(0)} TSS</span>${w.srpeSum ? `<span class="wk-num">sRPE ${Math.round(w.srpeSum)}</span>` : ""}${bar}
@@ -255,17 +435,38 @@ async function loadWeeks(n) {
   });
   const pol = document.getElementById("polarity");
   const total = low + gray + high;
-  if (!total) {
+  if (!shown || !total) {
     pol.className = "sub";
-    pol.textContent = "Нет данных по зонам за период.";
+    pol.style.color = "var(--text-2)";
+    pol.textContent = "Зоны появятся после 2–3 тренировок с записью мощности.";
     return;
   }
   const l = Math.round(low * 100 / total), g = Math.round(gray * 100 / total), h = 100 - l - g;
   // поляризованная модель: ~80% низкой интенсивности и мало высокой
   const ok = l >= 75 && h <= 20;
-  pol.className = "sub " + (ok ? "pol-good" : "pol-dim");
-  pol.textContent = `Доля низкой интенсивности ${l}% (Z1–Z2), серой ${g}%, высокой ${h}% — ориентир 80/20`;
+  const shares = `низкая <b style="color:var(--ok)">${l}%</b> · серая <b style="color:var(--text-3)">${g}%</b> · высокая <b style="color:var(--danger)">${h}%</b>`;
+  const coverage = `<span class="coverage">Данные: ${shown} из ${weeks.length} недель.</span>`;
+  if (ok) {
+    pol.className = "sub";
+    pol.style.color = "var(--text-2)";
+    pol.innerHTML = `Поляризация за период: ${shares} — в рамках ориентира 80/20. ${coverage}`;
+  } else {
+    pol.className = "insight insight--warn";
+    pol.style.color = "";
+    pol.innerHTML = `<span class="t">Поляризация отклоняется от 80/20</span> — ${shares}: низкой интенсивности (Z1–Z2) ${l}% при ориентире 75–80%. ${coverage}`;
+  }
 }
+
+// scroll-spy для якорной навигации
+const navLinks = [...document.querySelectorAll(".progress-nav a")];
+const sections = navLinks.map(a => document.querySelector(a.hash));
+const spy = () => {
+  let cur = 0;
+  sections.forEach((s, i) => { if (s && s.getBoundingClientRect().top <= 90) cur = i; });
+  navLinks.forEach((a, i) => a.classList.toggle("active", i === cur));
+};
+addEventListener("scroll", spy, { passive: true });
+spy();
 
 document.querySelectorAll("#periodBtns .tab").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll("#periodBtns .tab").forEach(x => x.classList.toggle("active", x === b));

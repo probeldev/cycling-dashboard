@@ -1,33 +1,77 @@
 {{ template "head" . }}
-<h1><a href="/rides">←</a> Профиль</h1>
+<style>
+  /* паспорт: одна строка фактов, разделители «·» */
+  .passport { display: flex; flex-wrap: wrap; align-items: baseline; font-size: 19px; margin: 6px 0 4px; }
+  .pp-item { display: inline-flex; align-items: baseline; gap: 6px; }
+  .pp-item + .pp-item::before { content: "·"; color: var(--text-3); margin: 0 14px; }
+  .pp-item .k { color: var(--text-2); font-size: 14px; }
+  .pp-item b { font-weight: 600; font-feature-settings: "tnum"; }
+  .pp-item .u { color: var(--text-2); font-size: 14px; }
 
-<div class="stats">
-  {{ if .HasWeight }}<div class="stat"><div class="v">{{ km .Weight }} кг</div><div class="k">вес</div></div>{{ end }}
-  {{ if .HasFTP }}<div class="stat"><div class="v">{{ watts .FTP }} Вт</div><div class="k">FTP (станок)</div></div>{{ end }}
-  {{ if .HasFTPOutdoor }}<div class="stat"><div class="v">{{ watts .FTPOutdoor }} Вт</div><div class="k">FTP (улица)</div></div>{{ end }}
-  {{ if and .HasFTP .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divff .FTP .Weight) }}</div><div class="k">Вт/кг (станок)</div></div>{{ end }}
-  {{ if and .HasFTPOutdoor .HasWeight }}<div class="stat"><div class="v">{{ trimFloat (divff .FTPOutdoor .Weight) }}</div><div class="k">Вт/кг (улица)</div></div>{{ end }}
-</div>
-{{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="color:var(--dim); font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ watts .FTP }} Вт.</p>{{ end }}
+  /* вкладки зон: фиксированная пара цветов станок/улица (§2) */
+  #zoneTabs .tab.active[data-zone-tab="trainer"] { background: var(--trainer); color: #fff; }
+  #zoneTabs .tab.active[data-zone-tab="outdoor"] { background: var(--outdoor); color: #fff; }
+
+  /* цветная плашка зоны: фон = --zone-zN */
+  .zone-chip { display: inline-block; min-width: 30px; text-align: center; font-size: 12px; font-weight: 600;
+    border-radius: 6px; padding: 1px 6px; background: var(--zone-color, var(--text-3)); color: #fff; }
+  .zone-chip.z1, .zone-chip.z3, .zone-chip.z4 { color: rgba(0, 0, 0, .72); }
+
+  /* мини-бар времени за 90 дней */
+  .zbar-mini { display: inline-block; width: 72px; height: 8px; margin-right: 8px; vertical-align: -1px;
+    background: var(--track); border-radius: 4px; overflow: hidden; }
+  .zbar-mini i { display: block; height: 100%; background: var(--zone-color, var(--text-3)); }
+
+  .row-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+  .row-form input, .row-form select { font: inherit; font-size: 14px; padding: 6px 10px;
+    border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); }
+  .howto p { margin: 0; padding: 0 16px 12px; color: var(--text-2); font-size: 14px; }
+
+  .profile-chart { width: 100%; height: 240px; background: var(--surface); border: none; border-radius: var(--radius); }
+  .profile-chart.compact { height: 120px; }
+  .chart-note { color: var(--text-2); font-size: 14px; }
+
+  /* история: удаление видно по hover строки, с подтверждением */
+  .history td { border-top: 1px solid var(--line); padding: 6px 14px 6px 0; }
+  .history .del-btn { opacity: 0; padding: 4px 8px; background: transparent; color: var(--text-3); }
+  .history .del-btn:hover { color: var(--danger); background: var(--danger-soft); }
+  .history tr:hover .del-btn, .history tr:focus-within .del-btn { opacity: 1; }
+</style>
+
+<h1>Профиль</h1>
+
+{{ if or .HasWeight .HasFTP .HasFTPOutdoor }}
+<p class="passport">
+  {{ if .HasWeight }}<span class="pp-item"><span class="k">вес</span><b>{{ km .Weight }}</b><span class="u">кг</span></span>{{ end }}
+  {{ if .HasFTP }}<span class="pp-item"><span class="k">FTP (станок)</span><b>{{ watts .FTP }}</b><span class="u">Вт</span></span>{{ end }}
+  {{ if .HasFTPOutdoor }}<span class="pp-item"><span class="k">FTP (улица)</span><b>{{ watts .FTPOutdoor }}</b><span class="u">Вт</span></span>{{ end }}
+  {{ if and .HasFTP .HasWeight }}<span class="pp-item"><span class="k">Вт/кг (станок)</span><b>{{ trimFloat (divff .FTP .Weight) }}</b></span>{{ end }}
+  {{ if and .HasFTPOutdoor .HasWeight }}<span class="pp-item"><span class="k">Вт/кг (улица)</span><b>{{ trimFloat (divff .FTPOutdoor .Weight) }}</b></span>{{ end }}
+</p>
+{{ else }}
+<p class="empty">Паспорт появится после первой записи веса или FTP — форма ниже.</p>
+{{ end }}
+{{ if and .HasFTP (not .HasFTPOutdoor) }}<p class="sub" style="font-size:14px">Уличный FTP не задан — для уличных тренировок используется станковый {{ watts .FTP }} Вт.</p>{{ end }}
 
 <h2>Цель недели</h2>
-<p class="sub" style="color:var(--dim); font-size:14px">
-  {{ if .HasWeeklyTarget }}Текущая цель: <b>{{ trimFloat .WeeklyTarget }} TSS</b> — {{ .WeeklyTargetSource }}.{{ else }}Цель не задана — автоматическая не посчиталась: нет полных недель с нагрузкой.{{ end }}
+<p class="sub" style="font-size:14px; margin:6px 0">
+  {{ if .HasWeeklyTarget }}Текущая цель — <b>{{ trimFloat .WeeklyTarget }} TSS</b>, источник: {{ .WeeklyTargetSource }}.{{ else }}Цель не задана — нет полных недель с нагрузкой для авто-расчёта; в поле подставлено стартовое значение, его можно изменить.{{ end }}
 </p>
-<form hx-post="/profile/weekly-target" hx-swap="none" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin:10px 0">
-  <label style="font-size:14px">Цель недели, TSS<br>
-    <input type="number" name="value" min="100" max="1500" step="1" required
-           value="{{ if .HasWeeklyTarget }}{{ trimFloat .WeeklyTarget }}{{ end }}"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:120px">
-  </label>
-  <button type="submit">Сохранить</button>
-  <button type="button" hx-post="/profile/weekly-target/reset" hx-swap="none">Сбросить на авто</button>
+<form hx-post="/profile/weekly-target" hx-swap="none" class="row-form">
+  <input type="number" name="value" min="100" max="1500" step="1" required aria-label="Цель недели, TSS"
+         {{ if .HasWeeklyTarget }}value="{{ trimFloat .WeeklyTarget }}"{{ else }}value="{{ .SuggestedTarget }}"{{ end }}
+         style="width:130px">
+  <button type="submit" class="btn--primary">Сохранить</button>
+  <button type="button" class="btn--ghost" hx-post="/profile/weekly-target/reset" hx-swap="none">Сбросить на авто</button>
 </form>
-<p class="sub" style="color:var(--dim); font-size:13px">Без ручной цели — медиана последних 4 полных недель с нагрузкой; если истории меньше, последняя полная неделя; если полных недель с нагрузкой нет — цель не задана.</p>
+<details class="howto">
+  <summary>Как считается</summary>
+  <p>Без ручной цели — медиана последних 4 полных недель с нагрузкой; если истории меньше — последняя полная неделя; если полных недель с нагрузкой нет — цель не задана. Ручная цель ограничена диапазоном 100–1500 TSS.</p>
+</details>
 
-{{ if or .HasFTP .HasFTPOutdoor }}
 <h2>Мощностные зоны</h2>
-<p class="sub" style="color:var(--dim); font-size:14px">Границы — от текущего FTP, правая граница зоны не входит. Время — за последние 90 дней из зон тренировок.</p>
+{{ if or .HasFTP .HasFTPOutdoor }}
+<p class="sub" style="font-size:14px">Границы — от текущего FTP, правая граница зоны не входит. Время — за последние 90 дней из зон тренировок.</p>
 <div class="tabs" id="zoneTabs" style="margin-bottom:10px">
   <button type="button" class="tab{{ if .HasFTP }} active{{ end }}" data-zone-tab="trainer">Станок</button>
   <button type="button" class="tab{{ if not .HasFTP }} active{{ end }}" data-zone-tab="outdoor">Улица</button>
@@ -35,28 +79,42 @@
 <div data-zone-panel="trainer"{{ if not .HasFTP }} hidden{{ end }}>
   {{ if .HasFTP }}
   <h3>Станок · FTP {{ watts .FTP }} Вт</h3>
+  <p class="coverage">Время по зонам: {{ .TrainerZoneDays }} {{ pluralDays .TrainerZoneDays }} из 90.</p>
   <table>
     <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
     {{ range .TrainerZones }}
-    <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+    <tr>
+      <td><span class="zone-chip z{{ .Zone }}">Z{{ .Zone }}</span> {{ .Name }}</td>
+      <td>{{ .Range }}</td>
+      <td>{{ .Pct }}</td>
+      <td>{{ .Purpose }}</td>
+      <td>{{ if .HasTime }}{{ if gt .TimePct 0.0 }}<span class="zbar-mini z{{ .Zone }}"><i style="width:{{ trimFloat .TimePct }}%"></i></span>{{ end }}{{ .Time }}{{ else }}нет данных{{ end }}</td>
+    </tr>
     {{ end }}
   </table>
   {{ else }}
-  <p class="empty">станковый FTP не задан — зоны станка не посчитаны.</p>
+  <p class="empty">Таблица зон станка появится после первой записи FTP (станок) — форма ниже.</p>
   {{ end }}
 </div>
 <div data-zone-panel="outdoor"{{ if .HasFTP }} hidden{{ end }}>
   {{ if .HasFTPOutdoor }}
   <h3>Улица · FTP {{ watts .FTPOutdoor }} Вт</h3>
+  <p class="coverage">Время по зонам: {{ .OutdoorZoneDays }} {{ pluralDays .OutdoorZoneDays }} из 90.</p>
   <table>
     <tr><th>Зона</th><th>Ватты</th><th>% FTP</th><th>Назначение</th><th>90 дней</th></tr>
     {{ range .OutdoorZones }}
-    <tr><td>Z{{ .Zone }} · {{ .Name }}</td><td>{{ .Range }}</td><td>{{ .Pct }}</td><td>{{ .Purpose }}</td><td>{{ .Time }}</td></tr>
+    <tr>
+      <td><span class="zone-chip z{{ .Zone }}">Z{{ .Zone }}</span> {{ .Name }}</td>
+      <td>{{ .Range }}</td>
+      <td>{{ .Pct }}</td>
+      <td>{{ .Purpose }}</td>
+      <td>{{ if .HasTime }}{{ if gt .TimePct 0.0 }}<span class="zbar-mini z{{ .Zone }}"><i style="width:{{ trimFloat .TimePct }}%"></i></span>{{ end }}{{ .Time }}{{ else }}нет данных{{ end }}</td>
+    </tr>
     {{ end }}
   </table>
   {{ else }}
-  <p class="empty">уличный FTP не задан — зоны улицы не посчитаны.</p>
-  <p><a href="#add-ftp-outdoor" style="display:inline-block; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); text-decoration:none">Перейти к форме</a></p>
+  <p class="empty">уличный FTP не задан — зоны улицы появятся после первой записи.</p>
+  <p><a href="#add-ftp-outdoor" class="btn btn--ghost">Перейти к форме</a></p>
   {{ end }}
 </div>
 <script>
@@ -70,91 +128,102 @@
   }));
 })();
 </script>
+{{ else }}
+<p class="empty">Таблица зон появится после первой записи FTP (станок или улица) — форма ниже.</p>
 {{ end }}
 
 <h2>Вес и FTP</h2>
-<canvas id="profile-ftp" style="width:100%; height:240px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
-<p id="profile-empty" style="display:none; color:var(--dim)">Данных профиля пока нет — добавьте вес или FTP.</p>
-<p id="profile-few" style="display:none; color:var(--dim)">Мало данных для графика — добавьте ещё записи профиля.</p>
+<canvas id="profile-ftp" class="profile-chart"></canvas>
+<p id="profile-ftp-note" class="chart-note" hidden></p>
 <h2>Вт/кг</h2>
-<canvas id="profile-wkg" style="width:100%; height:240px; background:var(--panel); border:1px solid var(--border); border-radius:8px"></canvas>
+<canvas id="profile-wkg" class="profile-chart"></canvas>
+<p id="profile-wkg-note" class="chart-note" hidden></p>
 
 <h2>Добавить запись</h2>
-<div style="display:flex; gap:24px; flex-wrap:wrap; margin:10px 0">
-  <div>
-    <b>Вес, кг</b><br>
-    <input id="wval" type="number" step="0.1" min="1" placeholder="75.5"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
-    <input id="wdate" type="date" value="{{ .Today }}"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
-    <button hx-post="/profile/entry" hx-swap="none"
-            hx-vals="js:{kind:'weight', value: document.getElementById('wval').value, date: document.getElementById('wdate').value}">Сохранить</button>
-  </div>
-  <div>
-    <b>FTP (станок), Вт</b><br>
-    <input id="fval" type="number" step="1" min="1" placeholder="250"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
-    <input id="fdate" type="date" value="{{ .Today }}"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
-    <button hx-post="/profile/entry" hx-swap="none"
-            hx-vals="js:{kind:'ftp', value: document.getElementById('fval').value, date: document.getElementById('fdate').value}">Сохранить</button>
-  </div>
-  <div id="add-ftp-outdoor">
-    <b>FTP (улица), Вт</b><br>
-    <input id="foval" type="number" step="1" min="1" placeholder="280"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:100px">
-    <input id="fodate" type="date" value="{{ .Today }}"
-           style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
-    <button hx-post="/profile/entry" hx-swap="none"
-            hx-vals="js:{kind:'ftp_outdoor', value: document.getElementById('foval').value, date: document.getElementById('fodate').value}">Сохранить</button>
-  </div>
-</div>
-<p class="sub" style="color:var(--dim); font-size:14px">Дата — с какого дня действует значение. Зоны тренировок считаются по истории на дату тренировки.</p>
+<form id="add-ftp-outdoor" class="row-form" hx-post="/profile/entry" hx-swap="none"
+      hx-vals="js:{kind: document.getElementById('pkind').value, value: document.getElementById('pval').value, date: document.getElementById('pdate').value}">
+  <select id="pkind" aria-label="Тип записи">
+    <option value="weight">Вес, кг</option>
+    <option value="ftp">FTP (станок), Вт</option>
+    <option value="ftp_outdoor">FTP (улица), Вт</option>
+  </select>
+  <input id="pval" type="number" step="0.1" min="1" required aria-label="Значение" style="width:110px">
+  <input id="pdate" type="date" value="{{ .Today }}" aria-label="Действует с даты">
+  <button type="submit" class="btn--primary">Сохранить</button>
+</form>
+<p class="sub" style="font-size:14px">Дата — с какого дня действует значение. Зоны тренировок считаются по истории на дату тренировки.</p>
+<script>
+// шаг и пример значения зависят от типа записи
+(() => {
+  const kind = document.getElementById("pkind");
+  const val = document.getElementById("pval");
+  const opts = {
+    weight: { step: "0.1", ph: "75.5" },
+    ftp: { step: "1", ph: "250" },
+    ftp_outdoor: { step: "1", ph: "280" },
+  };
+  const apply = () => { const o = opts[kind.value]; val.step = o.step; val.placeholder = o.ph; };
+  kind.addEventListener("change", apply);
+  apply();
+})();
+</script>
 
-{{ if .History }}
 <h2>История</h2>
-<table>
-  <tr><th>Дата</th><th></th><th>Значение</th><th></th></tr>
+{{ if .History }}
+<table class="history">
+  <tr><th>Дата</th><th>Тип</th><th>Значение</th><th></th></tr>
   {{ range .History }}
   <tr>
     <td>{{ date .RecordedAt }}</td>
-    <td>{{ if eq .Kind "weight" }}вес{{ else if eq .Kind "ftp_outdoor" }}FTP (улица){{ else }}FTP (станок){{ end }}{{ if .Synthetic }} <span class="sub" style="color:var(--dim)">системная граница (не удалять)</span>{{ end }}</td>
+    <td>{{ if eq .Kind "weight" }}вес{{ else if eq .Kind "ftp_outdoor" }}FTP (улица){{ else }}FTP (станок){{ end }}{{ if .Synthetic }} <span class="chip chip--muted">системная граница (не удалять)</span>{{ end }}</td>
     <td>{{ if eq .Kind "weight" }}{{ km .Value }} кг{{ else }}{{ watts .Value }} Вт{{ end }}</td>
-    <td>{{ if not .Synthetic }}<button hx-post="/profile/entry/{{ .ID }}/delete" hx-swap="none">✕</button>{{ end }}</td>
+    <td>{{ if not .Synthetic }}<button class="del-btn" hx-post="/profile/entry/{{ .ID }}/delete" hx-swap="none" hx-confirm="Удалить запись от {{ date .RecordedAt }}?" title="Удалить запись" aria-label="Удалить запись"><svg class="ic" aria-hidden="true"><use href="/static/icons.svg#close"/></svg></button>{{ end }}</td>
   </tr>
   {{ end }}
 </table>
+{{ else }}
+<p class="empty">История появится после первой записи веса или FTP.</p>
 {{ end }}
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="/static/vendor/chart.umd.min.js"></script>
 <script>
 (async () => {
-  const empty = document.getElementById("profile-empty");
-  const few = document.getElementById("profile-few");
+  const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const resolve = v => { const m = /^var\(\s*(--[\w-]+)\s*\)$/.exec(v); return m ? cssVar(m[1]) : v; };
+  const cBrand = cssVar("--brand");
+  const cTrainer = resolve(cssVar("--trainer")) || cBrand;
+  const cOutdoor = resolve(cssVar("--outdoor"));
+  const cWeight = cssVar("--text-2");
+
   const ftpCanvas = document.getElementById("profile-ftp");
   const wkgCanvas = document.getElementById("profile-wkg");
+  const ftpNote = document.getElementById("profile-ftp-note");
+  const wkgNote = document.getElementById("profile-wkg-note");
+  const showNote = (note, canvas, text) => {
+    canvas.hidden = true;
+    note.textContent = text;
+    note.hidden = false;
+  };
+
   let data;
   try {
     const res = await fetch("/api/profile/series?days=365");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     data = await res.json();
   } catch (err) {
-    ftpCanvas.hidden = true;
-    wkgCanvas.hidden = true;
-    empty.textContent = "Не удалось загрузить ряд профиля.";
-    empty.style.display = "";
+    showNote(ftpNote, ftpCanvas, "Не удалось загрузить ряд профиля.");
+    showNote(wkgNote, wkgCanvas, "Не удалось загрузить ряд профиля.");
     return;
   }
   if (!data.length) {
-    ftpCanvas.hidden = true;
-    wkgCanvas.hidden = true;
-    empty.style.display = "";
+    showNote(ftpNote, ftpCanvas, "График веса и FTP появится после первой записи — добавьте её в форме ниже.");
+    showNote(wkgNote, wkgCanvas, "График Вт/кг появится после записей веса и FTP.");
     return;
   }
-  few.style.display = data.length < 2 ? "" : "none";
+  // подписи осей — единый формат DD.MM.YYYY
   const labels = data.map(d => {
     const [y, m, dd] = d.date.slice(0, 10).split("-");
-    return `${dd}.${m}.${y.slice(2)}`;
+    return `${dd}.${m}.${y}`;
   });
   const any = key => data.some(d => d[key] !== null);
   // одна точка — рисуем маркер, иначе линия без маркеров не видна
@@ -163,11 +232,34 @@
     label, data: data.map(d => d[key]), borderColor: color, backgroundColor: color,
     pointRadius, pointHoverRadius: 4, borderWidth: 2, spanGaps: true, yAxisID: axis,
   });
+  // график с < 5 точками — компактный; все серии без изменений — строка вместо графика
+  const draw = (canvas, note, sets, scales, emptyText, unchangedText) => {
+    const present = sets.filter(s => s.data.some(v => v !== null));
+    if (!present.length) {
+      showNote(note, canvas, emptyText);
+      return;
+    }
+    const unchanged = present.every(s => new Set(s.data.filter(v => v !== null)).size <= 1);
+    if (unchanged) {
+      showNote(note, canvas, `${unchangedText} ${labels[0]}.`);
+      return;
+    }
+    if (data.length < 5) canvas.classList.add("compact");
+    new Chart(canvas, {
+      type: "line",
+      data: { labels, datasets: present },
+      options: {
+        animation: false,
+        plugins: { legend: { position: "bottom" } },
+        scales,
+      },
+    });
+  };
 
   const ftpSets = [];
-  if (any("weight")) ftpSets.push(line("вес, кг", "weight", "#8250df", "y"));
-  if (any("ftpTrainer")) ftpSets.push(line("FTP станок, Вт", "ftpTrainer", "#d73a49", "y1"));
-  if (any("ftpOutdoor")) ftpSets.push(line("FTP улица, Вт", "ftpOutdoor", "#1a7f37", "y1"));
+  if (any("weight")) ftpSets.push(line("вес, кг", "weight", cWeight, "y"));
+  if (any("ftpTrainer")) ftpSets.push(line("FTP станок, Вт", "ftpTrainer", cTrainer, "y1"));
+  if (any("ftpOutdoor")) ftpSets.push(line("FTP улица, Вт", "ftpOutdoor", cOutdoor, "y1"));
   const hasWeight = any("weight");
   const hasFTP = any("ftpTrainer") || any("ftpOutdoor");
   const ftpScales = { x: { ticks: { maxTicksLimit: 10 } } };
@@ -180,31 +272,17 @@
   if (!hasWeight) {
     ftpScales.y = { display: false };
   }
-  new Chart(ftpCanvas, {
-    type: "line",
-    data: { labels, datasets: ftpSets },
-    options: {
-      animation: false,
-      plugins: { legend: { position: "bottom" } },
-      scales: ftpScales,
-    },
-  });
+  draw(ftpCanvas, ftpNote, ftpSets, ftpScales,
+    "График веса и FTP появится после первой записи — добавьте её в форме ниже.",
+    "Вес и FTP не менялись с");
 
   const wkgSets = [];
-  if (any("wPerKgTrainer")) wkgSets.push(line("Вт/кг станок", "wPerKgTrainer", "#d73a49", "y"));
-  if (any("wPerKgOutdoor")) wkgSets.push(line("Вт/кг улица", "wPerKgOutdoor", "#1a7f37", "y"));
-  new Chart(wkgCanvas, {
-    type: "line",
-    data: { labels, datasets: wkgSets },
-    options: {
-      animation: false,
-      plugins: { legend: { position: "bottom" } },
-      scales: {
-        x: { ticks: { maxTicksLimit: 10 } },
-        y: { title: { display: true, text: "Вт/кг" } },
-      },
-    },
-  });
+  if (any("wPerKgTrainer")) wkgSets.push(line("Вт/кг станок", "wPerKgTrainer", cTrainer, "y"));
+  if (any("wPerKgOutdoor")) wkgSets.push(line("Вт/кг улица", "wPerKgOutdoor", cOutdoor, "y"));
+  draw(wkgCanvas, wkgNote, wkgSets, {
+    x: { ticks: { maxTicksLimit: 10 } },
+    y: { title: { display: true, text: "Вт/кг" } },
+  }, "График Вт/кг появится после записей веса и FTP.", "Вт/кг не менялся с");
 })();
 </script>
 {{ template "foot" . }}

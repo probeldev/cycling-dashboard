@@ -96,6 +96,7 @@ func TestProfileZonesPage(t *testing.T) {
 	for _, want := range []string{
 		"Мощностные зоны",
 		"Станок · FTP 156 Вт", "Улица · FTP 180 Вт",
+		`class="coverage">Время по зонам: 1 день из 90`,
 		"0–87.4", "87.4–118.6", "0–100.8", "100.8–136.8",
 		"1 ч 0 мин", "3 мин",
 	} {
@@ -164,8 +165,11 @@ func TestProfileZonesEmptyHistory(t *testing.T) {
 	if !strings.Contains(body, "0–87.4") || !strings.Contains(body, "87.4–118.6") {
 		t.Errorf("нет зон от FTP 156")
 	}
-	if !strings.Contains(body, "<td>—</td>") {
-		t.Errorf("пустая история времени не даёт прочерк")
+	if !strings.Contains(body, "<td>нет данных</td>") {
+		t.Errorf("пустая история времени не объясняет отсутствие данных")
+	}
+	if !strings.Contains(body, `class="coverage">Время по зонам: 0 дней из 90`) {
+		t.Errorf("нет coverage-пометки окна зон")
 	}
 }
 

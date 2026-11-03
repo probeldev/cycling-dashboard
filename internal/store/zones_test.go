@@ -135,6 +135,43 @@ func TestZoneTimeByFTPKind(t *testing.T) {
 	}
 }
 
+// TestZoneDays — покрытие окна зон: локальные дни с данными по базе FTP,
+// несколько тренировок в один день считаются один раз.
+func TestZoneDays(t *testing.T) {
+	db := openTestDB(t)
+	from := time.Date(2026, 10, 15, 0, 0, 0, 0, time.Local)
+	to := from.AddDate(0, 0, 3)
+	add := func(hash, kind string, start time.Time) {
+		t.Helper()
+		id := insertTimelineWorkout(t, db, hash, start, 50, 60, 20, kind == "trainer")
+		if _, err := db.Exec(`UPDATE workouts SET ftp_kind = ? WHERE id = ?`, kind, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := SetWorkoutZones(db, id, [7]int{100, 0, 0, 0, 0, 0, 0}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("hash-zd-1", "trainer", from.Add(time.Hour))
+	add("hash-zd-2", "trainer", from.Add(2*time.Hour)) // тот же день
+	add("hash-zd-3", "trainer", from.AddDate(0, 0, 1).Add(time.Hour))
+	add("hash-zd-out", "outdoor", from.Add(time.Hour))
+
+	days, err := ZoneDays(db, from, to, "trainer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if days != 2 {
+		t.Errorf("trainer: дней %d, хочу 2", days)
+	}
+	days, err = ZoneDays(db, from, to, "outdoor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if days != 1 {
+		t.Errorf("outdoor: дней %d, хочу 1", days)
+	}
+}
+
 // TestSetWorkoutZonesTransactional — сбой на INSERT откатывает и DELETE:
 // старые зоны и версия остаются нетронутыми.
 func TestSetWorkoutZonesTransactional(t *testing.T) {

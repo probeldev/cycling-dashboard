@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,21 @@ type statusResponse struct {
 
 	AllAlerts []statusAlert    `json:"-"` // для страницы «Сегодня»: все, без обрезки
 	Last      *lastWorkoutView `json:"-"` // типизированное представление для шаблона
+
+	Title  string `json:"-"` // «Сегодня, 1 ноября» — шапка дашборда
+	Banner string `json:"-"` // одна строка вывода без повторов чисел из карточек
+	Cov7   int    `json:"-"` // дней с нагрузкой за 7 дней — пометка «(N дней из 7)»
+	Cov28  int    `json:"-"` // дней с нагрузкой за 28 дней — «(N дней из 28)»
+	Cov90  int    `json:"-"` // дней с нагрузкой за 90 дней — «(N дней из 90)»
+
+	// «Почему так»: только причины, которых нет в карточках PMC. Числовые
+	// TSB/CTL/ATL уже показаны выше и в раскрывашке не повторяются.
+	Factors []plan.Factor `json:"-"`
+
+	// «Внимание» на дашборде без низких данных: о нехватке истории уже
+	// говорят баннер и сноска PMC, повторять те же цифры не нужно.
+	AlertsView    []statusAlert `json:"-"`
+	AlertsAllView []statusAlert `json:"-"`
 }
 
 // statusState — общая оценка дня и разбор трёх метрик PMC по отдельности.
@@ -48,6 +64,7 @@ type statusState struct {
 	Action     string       `json:"action"`
 	Confidence string       `json:"confidence"`
 	LowData    bool         `json:"lowData"`
+	DataDays   int          `json:"-"` // дней истории с первой нагрузки — сноска «PMC по N дням»
 	CTL        statusMetric `json:"ctl"`
 	ATL        statusMetric `json:"atl"`
 	TSB        statusMetric `json:"tsb"`
@@ -55,6 +72,7 @@ type statusState struct {
 
 type statusMetric struct {
 	Value   float64 `json:"value"`
+	Text    string  `json:"-"` // число для экрана: один знак, типографский минус
 	Verdict string  `json:"verdict"`
 	Action  string  `json:"action"`
 	Trend   float64 `json:"trend"`
@@ -99,6 +117,7 @@ type statusWeek struct {
 	DeltaPct            *float64           `json:"deltaPct"`
 	Zones               statusZones        `json:"zones"`
 	PolarityVerdict     string             `json:"polarityVerdict"`
+	CoverageDays        int                `json:"-"` // дней с нагрузкой в текущей неделе
 
 	rawTSS float64 // неокруглённый TSS для правил, не для JSON
 }
@@ -126,6 +145,9 @@ type historyFacts struct {
 	daysSinceHard int // -1 — тяжёлой тренировки не было
 	daysSinceTest int // -1 — тестовой тренировки не было
 	trainerShare  float64
+	cov7          int // дней с TSS > 0 у рабочих тренировок за 7 дней
+	cov28         int // то же за 28 дней
+	cov90         int // то же за 90 дней
 }
 
 func handleStatus(db *sql.DB) http.HandlerFunc {
@@ -160,6 +182,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	if err != nil {
 		return nil, err
 	}
+	week.CoverageDays = coverageInWindow(days, store.WeekStart(now), today)
 	target := 0.0
 	if week.Target != nil {
 		target = *week.Target
@@ -244,6 +267,12 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 	if len(days) >= 2 {
 		yesterday = days[len(days)-2].TSS
 	}
+	summary := statusSummary(state, week, yesterday)
+	alertsView := withoutLowData(alertsAll)
+	alertsViewTop := alertsView
+	if len(alertsViewTop) > 3 {
+		alertsViewTop = alertsViewTop[:3]
+	}
 	out := &statusResponse{
 		AsOf:           today.Format("2006-01-02"),
 		AsOfText:       today.Format("02.01.2006"),
@@ -252,7 +281,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		TSBAsOf:        pmcDay.Date.Format("2006-01-02"),
 		TSBNote:        "TSB — до нагрузки сегодняшнего дня",
 		State:          state,
-		Summary:        statusSummary(state, week, yesterday),
+		Summary:        summary,
 		Recommendation: rec,
 		Week:           week,
 		LastWorkout:    lastWorkout,
@@ -262,8 +291,88 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		Rules:          checks,
 		AllAlerts:      alertsAll,
 		Last:           lastView,
+		Title:          todayTitle(today),
+		Banner:         bannerText(state.Label),
+		Cov7:           facts.cov7,
+		Cov28:          facts.cov28,
+		Cov90:          facts.cov90,
+		Factors:        presentationFactors(rec.Factors),
+		AlertsView:     alertsViewTop,
+		AlertsAllView:  alertsView,
 	}
 	return out, nil
+}
+
+// withoutLowData убирает из «Внимания» предупреждение о нехватке истории:
+// на дашборде её уже объясняют баннер и сноска PMC.
+func withoutLowData(in []statusAlert) []statusAlert {
+	out := make([]statusAlert, 0, len(in))
+	for _, a := range in {
+		if a.Code == "lowdata" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// bannerText — одна строка-вывод под шапкой. Вердикт уже показан чипом, а
+// цифры недели и PMC — в карточках, поэтому баннер говорит только о смысле
+// состояния и не повторяет числа (TODO-UI §4.1).
+func bannerText(label string) string {
+	switch label {
+	case "lowdata":
+		return "Истории пока мало — рекомендации станут точнее по мере накопления тренировок"
+	case "fresh":
+		return "Свежесть выше обычной — подходящий день для качественной работы"
+	case "loaded":
+		return "Нагрузка накопилась — сегодня лучше без интервалов"
+	case "overloaded":
+		return "Накопленная усталость высокая — сегодня только отдых или лёгкая работа"
+	default:
+		return "Форма в рабочем диапазоне — можно тренироваться по плану"
+	}
+}
+
+// coverageInWindow — различных дней с TSS > 0 в окне [from, to] по таймлайну.
+func coverageInWindow(days []store.Day, from, to time.Time) int {
+	from = store.StartOfDay(from)
+	to = store.StartOfDay(to)
+	n := 0
+	for _, d := range days {
+		if d.TSS > 0 && !d.Date.Before(from) && !d.Date.After(to) {
+			n++
+		}
+	}
+	return n
+}
+
+// coverageCount — то же для набора локальных дней из истории тренировок.
+func coverageCount(days map[time.Time]bool, from, to time.Time) int {
+	from = store.StartOfDay(from)
+	to = store.StartOfDay(to)
+	n := 0
+	for d := range days {
+		if !d.Before(from) && !d.After(to) {
+			n++
+		}
+	}
+	return n
+}
+
+// presentationFactors убирает числовые PMC-факторы: TSB/CTL/ATL уже показаны
+// в карточках, и в раскрывашке «Почему так» они были бы повтором.
+func presentationFactors(in []plan.Factor) []plan.Factor {
+	out := make([]plan.Factor, 0, len(in))
+	for _, f := range in {
+		switch f.Label {
+		case "TSB", "CTL", "ATL":
+			continue
+		default:
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func statusWeekFor(db *sql.DB, now time.Time) (statusWeek, float64, error) {
@@ -382,6 +491,7 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	}
 	nonTest := map[time.Time]*hardDay{}
 	testDays := map[time.Time]bool{}
+	coverageDays := map[time.Time]bool{}
 	var first, last time.Time
 	var firstLoad time.Time
 	loadDays := map[time.Time]bool{}
@@ -424,6 +534,10 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 				trainer++
 			}
 		}
+		if tss > 0 && !isTest {
+			// Coverage считаем по тому же набору, что Readiness: без тестов.
+			coverageDays[day] = true
+		}
 		if isTest {
 			testDays[day] = true
 			continue
@@ -446,6 +560,9 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 		daysSinceHard: -1,
 		daysSinceTest: -1,
 	}
+	out.cov7 = coverageCount(coverageDays, today.AddDate(0, 0, -6), today)
+	out.cov28 = coverageCount(coverageDays, today.AddDate(0, 0, -27), today)
+	out.cov90 = coverageCount(coverageDays, today.AddDate(0, 0, -89), today)
 	if first.IsZero() {
 		return out, nil
 	}
@@ -499,12 +616,24 @@ func buildState(pmcDay store.Day, facts historyFacts, days []store.Day) statusSt
 	verdict, action := stateTextAt(label, tsb, facts)
 	ctlTrend := round1(ctl - round1(valueDaysAgo(days, 28, func(d store.Day) float64 { return d.CTL })))
 	ctlVerdict, ctlAction := ctlText(ctl, ctlTrend)
+	if tsb < thresholds.TSBLightBelow {
+		// Пока TSB ниже −15, совет «набирай объём» противоречит карточке
+		// свежести и рекомендации на день: сначала восстановление.
+		ctlAction = "Объём не наращивай — сначала восстановление"
+	}
 	if lowData {
 		// На короткой истории тренд от нуля — ещё не рост формы.
 		ctlVerdict = "Мало данных"
 	}
 	atlVerdict, atlAction := atlText(atl, ctl)
 	tsbVerdict, tsbAction := tsbText(tsb)
+	// Без истории спарклайн — плоская линия из нулей, а не данные.
+	spark := func(pick func(store.Day) float64) string {
+		if facts.dataDays == 0 {
+			return ""
+		}
+		return sparkPoints(days, pick)
+	}
 	return statusState{
 		Label:      label,
 		LabelText:  stateLabelText(label),
@@ -512,20 +641,21 @@ func buildState(pmcDay store.Day, facts historyFacts, days []store.Day) statusSt
 		Action:     action,
 		Confidence: confidence,
 		LowData:    lowData,
+		DataDays:   facts.dataDays,
 		CTL: statusMetric{
-			Value: ctl, Verdict: ctlVerdict, Action: ctlAction,
+			Value: ctl, Text: signedText(ctl), Verdict: ctlVerdict, Action: ctlAction,
 			Trend: ctlTrend,
-			Spark: sparkPoints(days, func(d store.Day) float64 { return d.CTL }),
+			Spark: spark(func(d store.Day) float64 { return d.CTL }),
 		},
 		ATL: statusMetric{
-			Value: atl, Verdict: atlVerdict, Action: atlAction,
+			Value: atl, Text: signedText(atl), Verdict: atlVerdict, Action: atlAction,
 			Trend: round1(atl - round1(valueDaysAgo(days, 7, func(d store.Day) float64 { return d.ATL }))),
-			Spark: sparkPoints(days, func(d store.Day) float64 { return d.ATL }),
+			Spark: spark(func(d store.Day) float64 { return d.ATL }),
 		},
 		TSB: statusMetric{
-			Value: tsb, Verdict: tsbVerdict, Action: tsbAction,
+			Value: tsb, Text: signedText(tsb), Verdict: tsbVerdict, Action: tsbAction,
 			Trend: round1(tsb - round1(valueDaysAgo(days, 14, func(d store.Day) float64 { return d.TSB }))),
-			Spark: sparkPoints(days, func(d store.Day) float64 { return d.TSB }),
+			Spark: spark(func(d store.Day) float64 { return d.TSB }),
 		},
 	}
 }
@@ -564,19 +694,19 @@ func stateTextAt(label string, tsb float64, facts historyFacts) (verdict, action
 }
 
 // lowDataAction говорит, чего именно не хватает: истории с первой нагрузки
-// или дней с реальным TSS за 42 дня. «Собери 3 недели» при нехватке только
-// нагрузки вводило бы в заблуждение.
+// или дней с реальным TSS за 42 дня. Тон мягкий (TODO-UI §4.1): нехватка
+// истории — не требование, а горизонт, когда рекомендации станут точнее.
 func lowDataAction(facts historyFacts) string {
 	needData := thresholds.MinDataDays - facts.dataDays
 	needLoad := thresholds.MinLoadDays42 - facts.loadDays42
 	switch {
 	case needData > 0 && needLoad > 0:
-		return fmt.Sprintf("Собери ещё %s истории и %s с нагрузкой за 42 дня",
+		return fmt.Sprintf("Рекомендации станут точнее через ~%s истории и %s с нагрузкой за 42 дня",
 			daysText(needData), daysText(needLoad))
 	case needData > 0:
-		return fmt.Sprintf("Собери ещё %s истории", daysText(needData))
+		return fmt.Sprintf("Рекомендации станут точнее через ~%s истории", daysText(needData))
 	case needLoad > 0:
-		return fmt.Sprintf("Нужно ещё %s с нагрузкой за 42 дня", daysText(needLoad))
+		return fmt.Sprintf("Рекомендации станут точнее: ещё %s с нагрузкой за 42 дня", daysText(needLoad))
 	default:
 		return "Данных пока мало для уверенного вердикта"
 	}
@@ -617,7 +747,8 @@ func makeLastWorkoutView(w *store.Workout, cards []advice.Card) *lastWorkoutView
 		v.Kind = "Станок"
 	}
 	if w.HasTSS {
-		tss := round1(w.TSS)
+		// на дашборде дробные TSS округляем до целых (TODO-UI §4.1)
+		tss := math.Round(w.TSS)
 		v.TSS = &tss
 	}
 	if w.HasIF {
@@ -904,4 +1035,13 @@ func daysBetween(from, to time.Time) int {
 
 func round2(v float64) float64 {
 	return math.Round(v*100) / 100
+}
+
+// signedText — число с одним знаком после запятой и типографским минусом:
+// так минус на «Сегодня» совпадает с прогрессом, не меняя хранение данных.
+func signedText(v float64) string {
+	if v == 0 {
+		v = 0 // снимает отрицательный нуль
+	}
+	return strings.ReplaceAll(strconv.FormatFloat(v, 'f', 1, 64), "-", "−")
 }

@@ -342,6 +342,44 @@ func TestProfileWeeklyTargetForm(t *testing.T) {
 	}
 }
 
+// TestProfileWeeklyTargetPrefill — когда авто-цель не считается, поле
+// получает стартовое значение: среднее недельное TSS за 4 недели, а без
+// истории — разумный дефолт. Авто-цель при этом остаётся не заданной.
+func TestProfileWeeklyTargetPrefill(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/profile", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /profile: код %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if body := get(); !strings.Contains(body, `value="300"`) {
+		t.Errorf("без истории в поле цели нет стартового значения 300")
+	}
+
+	// Только текущая неделя: полных недель с нагрузкой нет, авто-цель — none.
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour, TSS: 250,
+	}, "hash-target-prefill", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(); !strings.Contains(body, `value="250"`) {
+		t.Errorf("в поле цели нет среднего недельного TSS 250")
+	}
+}
+
 // TestProfileWeeklyTargetDBErrorIs500 — вне диапазона — 400, а сбой БД при
 // валидном значении — 500, а не «некорректная цель».
 func TestProfileWeeklyTargetDBErrorIs500(t *testing.T) {

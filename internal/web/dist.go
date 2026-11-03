@@ -207,12 +207,14 @@ func zoneDistribution(samples []store.Sample, ftp int) ([]distEntry, powerBase, 
 	return entries, base, true
 }
 
-// workoutZoneRow — строка мини-таблицы зон на деталке. Строится из тех же
-// entries, что отдаёт /dist, поэтому второй формулы зон нет.
+// workoutZoneRow — строка мини-таблицы/стрипа зон на деталке. Строится из
+// тех же entries, что отдаёт /dist, поэтому второй формулы зон нет.
 type workoutZoneRow struct {
-	Label string
-	Time  string
-	Pct   string // % от времени педалирования
+	N      int // номер зоны 1..7 — для цвета из шкалы
+	Label  string
+	Time   string
+	Pct    string  // % от времени педалирования
+	PctNum float64 // тот же процент числом — для ширины бара
 }
 
 // workoutZoneRows отбрасывает бакет наката: таблица — только Z1–Z7.
@@ -221,11 +223,13 @@ func workoutZoneRows(entries []distEntry) []workoutZoneRow {
 		return nil
 	}
 	rows := make([]workoutZoneRow, 0, len(entries)-1)
-	for _, e := range entries[1:] {
+	for i, e := range entries[1:] {
 		rows = append(rows, workoutZoneRow{
-			Label: e.Label,
-			Time:  zoneTimeLabel(e.Secs),
-			Pct:   trimFloat(e.Pct),
+			N:      i + 1,
+			Label:  e.Label,
+			Time:   zoneTimeLabel(e.Secs),
+			Pct:    trimFloat(e.Pct),
+			PctNum: e.Pct,
 		})
 	}
 	return rows

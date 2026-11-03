@@ -1,179 +1,281 @@
 {{ template "head" . }}
-<h1>
-  <a href="/rides">←</a>
-  {{ datetime .W.StartTime }}
-  {{ if .W.Trainer }}<span class="tag">станок</span>{{ end }}
-  {{ if .W.IsTest }}<span class="tag">тест</span>{{ end }}
-  {{ if .FTPHint }}<span class="tag warn" title="20 мин × 0.95 дают {{ trimFloat .FTPHint.Estimate }} Вт — выше текущего FTP на {{ trimFloat .FTPHint.DeltaPct }}%">FTP +{{ trimFloat .FTPHint.DeltaPct }}%</span>{{ end }}
-  {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
-</h1>
+<style>
+  /* ===== деталка тренировки (TODO-UI §4.3), page-scoped ===== */
+  .w-head { margin: 0 0 10px; }
+  .w-back { color: var(--text-2); font-size: 14px; }
+  .w-head h1 { margin: 4px 0 2px; font-size: 26px; font-feature-settings: "tnum"; }
+  .w-name { color: var(--text-2); font-size: 15px; margin: 0 0 6px; }
+  .w-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .w-summary { font-size: 16px; line-height: 1.55; margin: 12px 0 2px; max-width: 62ch; }
 
-<div style="margin:10px 0">
-  <input id="wname" type="text" value="{{ .W.Name }}" placeholder="Название тренировки"
-         style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; width:280px">
-  <button hx-post="/workout/{{ .W.ID }}/name" hx-vals="js:{name: document.getElementById('wname').value}" hx-swap="none">Сохранить</button>
-</div>
+  .heroes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0 4px; }
+  .heroes .u { font-size: 14px; color: var(--text-2); font-weight: 400; }
+  .heroes .verdict { font-size: 12px; color: var(--text-2); }
 
-<div class="stat-groups">
-  <h3>Общее</h3>
-  <div class="stats">
-    <div class="stat"><div class="v">{{ dur .W.Duration }}</div><div class="k">время</div></div>
-    {{ if .W.ElapsedSec }}<div class="stat"><div class="v">{{ dur (secs .W.ElapsedSec) }}</div><div class="k">общее время</div></div>{{ end }}
-    {{ if .W.PauseSec }}<div class="stat"><div class="v">{{ dur (secs .W.PauseSec) }}</div><div class="k">паузы</div></div>{{ end }}
-    {{ if not .W.Trainer }}<div class="stat"><div class="v">{{ km .W.DistanceKm }} км</div><div class="k">дистанция</div></div>{{ end }}
-    {{ if and (not .W.Trainer) .W.AscentM }}<div class="stat"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор</div></div>{{ end }}
-    {{ if .W.Calories }}<div class="stat"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
-    {{ if .W.RPE }}<div class="stat"><div class="v">{{ printf "%.0f" .W.SRPE }}</div><div class="k">sRPE, RPE {{ .W.RPE }}</div></div>{{ end }}
-    {{ if .W.HasTemp }}<div class="stat"><div class="v">{{ trimFloat .W.AvgTemp }} °C</div><div class="k">температура</div></div>{{ end }}
-  </div>
-  {{ if .W.HasPower }}
-  <h3>Мощность</h3>
-  <div class="stats">
-    <div class="stat"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя</div></div>
-    <div class="stat"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс</div></div>
-    {{ if .W.NormPower }}<div class="stat"><div class="v">{{ .W.NormPower }} Вт</div><div class="k">NP</div></div>{{ end }}
-    {{ if .W.FTP }}<div class="stat"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату{{ if .W.FTPFallback }} (станок, уличный не задан){{ else if eq .W.FTPKind "outdoor" }} (улица){{ else if eq .W.FTPKind "trainer" }} (станок){{ end }}</div></div>{{ end }}
-    {{ if .W.AvgPowerActive }}<div class="stat"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">в работе</div></div>{{ end }}
-    {{ if .W.HasIF }}<div class="stat"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF</div></div>{{ end }}
-    {{ if .W.HasTSS }}<div class="stat"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS</div></div>{{ end }}
-    {{ if .W.HasVI }}<div class="stat"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI</div></div>{{ end }}
-    {{ if and .W.WeightKg .W.AvgPower }}<div class="stat"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг{{ if .W.WeightKg }} (вес {{ km .W.WeightKg }}){{ end }}</div></div>{{ end }}
-  </div>
-  {{ if and .W.RPE .W.HasTSS }}<p class="sub" style="color:var(--dim); font-size:13px; margin:6px 0 0">TSS {{ trimFloat .W.TSS }} (от мощности) vs sRPE {{ printf "%.0f" .W.SRPE }} (RPE {{ .W.RPE }} × {{ printf "%.0f" .W.Duration.Minutes }} мин) — разные шкалы, напрямую не сравнивать.</p>{{ end }}
-  {{ if .MMP }}
-  <h3>Лучшие усилия</h3>
-  <div class="stats">
-    {{ range .MMP }}
-    <div class="stat"><div class="v">{{ trimFloat .Watts }} Вт</div><div class="k">{{ .Label }}{{ if .PR }} · <span class="tag pr">{{ .PR }}</span>{{ end }}</div></div>
-    {{ end }}
-  </div>
-  {{ end }}
-  {{ end }}
-  {{ if not .W.Trainer }}
-  <h3>Скорость</h3>
-  <div class="stats">
-    <div class="stat"><div class="v">{{ trimFloat .W.AvgSpeedKmh }}</div><div class="k">средняя, км/ч</div></div>
-    {{ if .W.MaxSpeedKmh }}<div class="stat"><div class="v">{{ trimFloat .W.MaxSpeedKmh }}</div><div class="k">макс, км/ч</div></div>{{ end }}
-  </div>
-  {{ end }}
-  {{ if or .W.AvgCadence .W.AvgCadenceActive }}
-  <h3>Каденс</h3>
-  <div class="stats">
-    <div class="stat">
-      <div class="v">{{ if .W.AvgCadenceActive }}{{ .W.AvgCadenceActive }}{{ else }}—{{ end }}</div>
-      <div class="k">в работе</div>
-      {{ if .W.AvgCadence }}<div class="k">{{ .W.AvgCadence }} с накатом</div>{{ end }}
-    </div>
-    {{ if .W.MaxCadence }}<div class="stat"><div class="v">{{ .W.MaxCadence }}</div><div class="k">макс</div></div>{{ end }}
-  </div>
-  {{ end }}
-  {{ if .W.AvgHR }}
-  <h3>Пульс</h3>
-  <div class="stats">
-    <div class="stat"><div class="v">{{ .W.AvgHR }}</div><div class="k">средний</div></div>
-    {{ if .W.MaxHR }}<div class="stat"><div class="v">{{ .W.MaxHR }}</div><div class="k">макс</div></div>{{ end }}
-  </div>
-  {{ end }}
-</div>
+  .details { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 20px; margin: 4px 0 0; }
+  .d-item .v { font-size: 17px; font-weight: 600; font-feature-settings: "tnum"; }
+  .d-item .k { font-size: 12px; color: var(--text-2); }
+  .d-item .note { font-size: 12px; color: var(--text-3); }
 
-{{ if .PowerZones }}
-<h2>Мощностные зоны</h2>
-<p class="sub" style="color:var(--dim); font-size:14px">
-  База: FTP {{ .W.FTP }} Вт —
-  {{- if .W.FTPFallback }} станок, уличный FTP не задан
-  {{- else if eq .W.FTPKind "outdoor" }} улица
-  {{- else }} станок{{ end }}.
-  Время — из распределения мощности, % — от времени педалирования.
-</p>
-<table>
-  <tr><th>Зона</th><th>Время</th><th>% педалирования</th></tr>
-  {{ range .PowerZones }}
-  <tr><td>{{ .Label }}</td><td>{{ .Time }}</td><td>{{ .Pct }}%</td></tr>
-  {{ end }}
-</table>
+  section.blk { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; }
+  section.blk:first-of-type { border-top: none; }
+
+  .rpe-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin: 10px 0 0; }
+  .rpe-row label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+  .rpe-row select, .rpe-row textarea,
+  .w-settings input, .w-settings select {
+    font: inherit; font-size: 14px; padding: 6px 10px;
+    border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text);
+  }
+  .rpe-row .grow { flex: 1 1 280px; min-width: 200px; }
+  .rpe-row textarea { width: 100%; resize: vertical; }
+  .rpe-hint { font-size: 12px; color: var(--text-3); }
+
+  .insight-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .insight .x { color: var(--text-2); }
+  .insights-more { margin-top: 6px; background: transparent; }
+  .insights-more > summary { padding: 6px 0; font-size: 14px; font-weight: 500; color: var(--text-2); }
+  .insights-more .insight-list { margin-top: 2px; }
+
+  .efforts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 8px; }
+  .effort { background: var(--surface); border: none; border-radius: var(--radius); padding: 12px 16px; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+  .effort .v { font-size: 22px; font-weight: 600; font-feature-settings: "tnum"; }
+  .effort .u { font-size: 13px; color: var(--text-2); font-weight: 400; }
+  .effort .k { font-size: 12px; color: var(--text-2); }
+  .effort .trend { font-size: 12px; font-weight: 600; }
+  .effort .trend.up { color: var(--ok); }
+  .effort .trend.down { color: var(--danger); }
+
+  .zone-strip { margin-top: 8px; }
+  .zone-legend { display: flex; gap: 4px 14px; flex-wrap: wrap; margin-top: 6px; }
+  .zdot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--zone-color, var(--text-3)); margin-right: 4px; }
+
+  .w-settings { margin-top: 20px; }
+  .w-settings > summary { color: var(--text-2); }
+  .ws-body { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
+  .ws-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 14px; }
+  .ws-row .lbl { color: var(--text-2); min-width: 150px; }
+
+  .ftp-hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .ftp-hint .v { font-size: 20px; font-weight: 600; }
+</style>
+
+<header class="w-head">
+  <a class="w-back" href="/rides">← Поездки</a>
+  <h1>{{ datetime .W.StartTime }}</h1>
+  {{ if .W.Name }}<div class="w-name">{{ .W.Name }}</div>{{ end }}
+  <div class="w-chips">
+    {{ if .W.Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
+    {{ if .W.IsTest }}<span class="chip chip--muted">тест · не в рекордах</span>{{ end }}
+    {{ if .W.HasTemp }}<span class="chip chip--muted">{{ trimFloat .W.AvgTemp }} °C</span>{{ end }}
+    {{ if .W.Bike }}<span class="chip chip--muted">{{ .W.Bike }}</span>{{ end }}
+    {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
+  </div>
+</header>
+
+{{ if .Summary }}
+<p class="w-summary">{{ range .Summary }}{{ . }} {{ end }}</p>
 {{ end }}
 
-{{ if .FTPHint }}
-<div class="stat" style="border-color:#d4a72c; background:#fff8c5; margin-bottom:16px">
-  <div class="v">{{ trimFloat .FTPHint.Estimate }} Вт</div>
-  <div class="k">возможно, пора обновить FTP по этой тренировке · сейчас {{ trimFloat .FTPHint.Current }} Вт · +{{ trimFloat .FTPHint.DeltaPct }}%</div>
-  {{ template "ftpUpdate" .FTPHint }}
+<div class="rpe-row">
+  <div>
+    <label for="rpe">RPE — субъективная тяжесть{{ if .W.RPE }} · sRPE {{ printf "%.0f" .W.SRPE }}{{ end }}</label>
+    <select id="rpe">
+      <option value="">не указан</option>
+      {{ range .RPEOptions }}<option value="{{ .N }}"{{ if eq .N $.W.RPE }} selected{{ end }}>{{ .N }} — {{ .Label }}</option>{{ end }}
+    </select>
+  </div>
+  <div class="grow">
+    <label for="notes">Заметка</label>
+    <textarea id="notes" rows="1" maxlength="2000" placeholder="ощущения, погода, контекст">{{ .W.Notes }}</textarea>
+  </div>
+  <button class="btn--ghost" hx-post="/workout/{{ .W.ID }}/context"
+    hx-vals="js:{rpe: document.getElementById('rpe').value, notes: document.getElementById('notes').value}"
+    hx-swap="none">Сохранить</button>
 </div>
+
+{{ if .FTPHint }}
+<div class="insight insight--warn" style="margin-top:12px">
+  <div class="ftp-hint">
+    <div class="v">{{ trimFloat .FTPHint.Estimate }} Вт</div>
+    <div style="flex:1 1 260px"><span class="t">Похоже, пора обновить FTP по этой тренировке.</span>
+      <span class="x">20 мин × 0.95 = {{ trimFloat .FTPHint.Estimate }} Вт — выше текущего {{ trimFloat .FTPHint.Current }} Вт на {{ trimFloat .FTPHint.DeltaPct }}%.</span></div>
+    {{ template "ftpUpdate" .FTPHint }}
+  </div>
+</div>
+{{ end }}
+
+<div class="heroes">
+  {{ if .W.HasTSS }}
+  <div class="metric-card"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS — нагрузка</div><div class="verdict">{{ tssVerdict .W.TSS }}</div></div>
+  {{ end }}
+  {{ if .W.HasIF }}
+  <div class="metric-card"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF — доля от FTP</div><div class="verdict">{{ ifVerdict .W.IF }}</div></div>
+  {{ end }}
+  {{ if .W.NormPower }}
+  <div class="metric-card"><div class="v">{{ .W.NormPower }}<span class="u"> Вт</span></div><div class="k">NP — приведённая мощность</div><div class="verdict">средняя с весом пиков</div></div>
+  {{ else if .W.AvgPower }}
+  <div class="metric-card"><div class="v">{{ .W.AvgPower }}<span class="u"> Вт</span></div><div class="k">Средняя мощность</div></div>
+  {{ end }}
+  {{ if not .W.Trainer }}{{ if .W.DistanceKm }}
+  <div class="metric-card"><div class="v">{{ km .W.DistanceKm }}<span class="u"> км</span></div><div class="k">Дистанция</div></div>
+  {{ end }}{{ end }}
+  {{ if or .W.Trainer (not .W.DistanceKm) (not .W.HasPower) }}
+  <div class="metric-card"><div class="v">{{ dur .W.Duration }}</div><div class="k">Время</div></div>
+  {{ end }}
+</div>
+
+<div class="details">
+  {{ if and (not .W.Trainer) .W.HasPower .W.DistanceKm }}
+  <div class="d-item"><div class="v">{{ dur .W.Duration }}</div><div class="k">время в движении</div></div>
+  {{ end }}
+  {{ if .W.ElapsedSec }}<div class="d-item"><div class="v">{{ dur (secs .W.ElapsedSec) }}</div><div class="k">общее время</div></div>{{ end }}
+  {{ if .W.PauseSec }}<div class="d-item"><div class="v">{{ dur (secs .W.PauseSec) }}</div><div class="k">паузы</div><div class="note">{{ pauseVerdict .W.Trainer }}</div></div>{{ end }}
+  {{ if and (not .W.Trainer) .W.AscentM }}<div class="d-item"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор высоты</div></div>{{ end }}
+  {{ if .W.Calories }}<div class="d-item"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
+
+  {{ if .W.HasPower }}
+  {{ if .W.NormPower }}<div class="d-item"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя мощность</div></div>{{ end }}
+  <div class="d-item"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс мощность</div></div>
+  {{ if .W.AvgPowerActive }}<div class="d-item"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">средняя в работе</div><div class="note">без наката и остановок</div></div>{{ end }}
+  {{ if .W.FTP }}<div class="d-item"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату{{ if .W.FTPFallback }} (станок, уличный не задан){{ else if eq .W.FTPKind "outdoor" }} (улица){{ else if eq .W.FTPKind "trainer" }} (станок){{ end }}</div><div class="note">порог мощности, от которого считаны зоны</div></div>{{ end }}
+  {{ if .W.HasVI }}<div class="d-item"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI — ровность</div><div class="note">{{ viVerdict .W.VI }}</div></div>{{ end }}
+  {{ if and .W.WeightKg .W.AvgPower }}<div class="d-item"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг</div><div class="note">удельная мощность, вес {{ km .W.WeightKg }} кг</div></div>{{ end }}
+  {{ end }}
+
+  {{ if not .W.Trainer }}
+  <div class="d-item"><div class="v">{{ trimFloat .W.AvgSpeedKmh }}</div><div class="k">скорость средняя, км/ч</div></div>
+  {{ if .W.MaxSpeedKmh }}<div class="d-item"><div class="v">{{ trimFloat .W.MaxSpeedKmh }}</div><div class="k">скорость макс, км/ч</div></div>{{ end }}
+  {{ end }}
+
+  {{ if or .W.AvgCadence .W.AvgCadenceActive }}
+  <div class="d-item">
+    <div class="v">{{ if .W.AvgCadenceActive }}{{ .W.AvgCadenceActive }}{{ else }}—{{ end }}</div>
+    <div class="k">каденс в работе</div>
+    {{ if .W.AvgCadence }}<div class="note">{{ .W.AvgCadence }} с накатом</div>{{ end }}
+  </div>
+  {{ if .W.MaxCadence }}<div class="d-item"><div class="v">{{ .W.MaxCadence }}</div><div class="k">каденс макс</div></div>{{ end }}
+  {{ end }}
+
+  {{ if .W.AvgHR }}
+  <div class="d-item"><div class="v">{{ .W.AvgHR }}</div><div class="k">пульс средний</div></div>
+  {{ if .W.MaxHR }}<div class="d-item"><div class="v">{{ .W.MaxHR }}</div><div class="k">пульс макс</div></div>{{ end }}
+  {{ end }}
+</div>
+
+{{ if and .W.RPE .W.HasTSS }}
+<p class="rpe-hint" style="margin:8px 0 0">TSS {{ trimFloat .W.TSS }} (от мощности) и sRPE {{ printf "%.0f" .W.SRPE }} (RPE {{ .W.RPE }} × {{ printf "%.0f" .W.Duration.Minutes }} мин) — разные шкалы, напрямую не сравнивать.</p>
+{{ end }}
+
+{{ if .PowerZones }}
+<section class="blk">
+  <div class="section-label">Зоны мощности</div>
+  <div class="zone-strip">
+    <div class="zone-bars" role="img" aria-label="распределение времени по зонам мощности">
+      {{ range .PowerZones }}{{ if gt .PctNum 0.0 }}<span class="zone-bar z{{ .N }}" style="width:{{ .Pct }}%" title="{{ .Label }} — {{ .Time }} ({{ .Pct }}%)"></span>{{ end }}{{ end }}
+    </div>
+    <div class="zone-legend">
+      {{ range .PowerZones }}{{ if gt .PctNum 0.0 }}<span class="zone-bar-lbl"><i class="zdot z{{ .N }}"></i>Z{{ .N }} · {{ .Time }}</span>{{ end }}{{ end }}
+    </div>
+  </div>
+  <p class="coverage" style="margin:6px 0 0">
+    FTP {{ .W.FTP }} Вт —{{ if .W.FTPFallback }} станок, уличный не задан{{ else if eq .W.FTPKind "outdoor" }} улица{{ else }} станок{{ end }}; % — от времени педалирования.
+  </p>
+</section>
+{{ end }}
+
+<section class="blk">
+  <div class="section-label">График</div>
+  <div id="chartCtl" class="chart-controls">
+    <span id="metricBtns" class="tabs"></span>
+    <span id="axisBtns" class="axis-toggles"></span>
+  </div>
+  <canvas id="chart"></canvas>
+</section>
+
+<section class="blk">
+  <div class="section-label">Распределения</div>
+  <div class="dist-grid" id="distGrid">
+    <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
+    {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
+    <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
+    <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
+  </div>
+</section>
+
+{{ if .MMP }}
+<section class="blk">
+  <div class="section-label">Лучшие усилия</div>
+  <div class="efforts">
+    {{ range .MMP }}
+    <div class="effort">
+      <div class="v">{{ trimFloat .Watts }}<span class="u"> Вт</span></div>
+      <div class="k">{{ .Label }}</div>
+      {{ if .Trend }}<div class="trend {{ if gt .Trend 0 }}up{{ else }}down{{ end }}">{{ if gt .Trend 0 }}▲{{ else }}▼{{ end }} {{ absint .Trend }} Вт к прошлому месяцу</div>{{ end }}
+      {{ if .PR }}<span class="chip chip--record">{{ .PR }}</span>{{ end }}
+    </div>
+    {{ end }}
+  </div>
+</section>
 {{ end }}
 
 {{ if .Advice }}
-<h2>Что говорят данные</h2>
-<div class="advice-list">
-  {{ range .Advice }}
-  <div class="advice {{ .Level }}">
-    <span class="icon">{{ if eq .Level "warn" }}!{{ else if eq .Level "info" }}i{{ else }}✓{{ end }}</span>
-    <div><div class="t">{{ .Title }}</div><div class="x">{{ .Text }}</div></div>
+<section class="blk">
+  <div class="section-label">Инсайты</div>
+  <div class="insight-list">
+    {{ range $i, $c := .Advice }}{{ if lt $i 3 }}
+    <div class="insight insight--{{ insightLevel $c.Level }}"><span class="t">{{ $c.Title }}</span><span class="x"> — {{ $c.Text }}</span></div>
+    {{ end }}{{ end }}
   </div>
+  {{ if gt (len .Advice) 3 }}
+  <details class="insights-more">
+    <summary>ещё {{ sub (len .Advice) 3 }}</summary>
+    <div class="insight-list">
+      {{ range $i, $c := .Advice }}{{ if ge $i 3 }}
+      <div class="insight insight--{{ insightLevel $c.Level }}"><span class="t">{{ $c.Title }}</span><span class="x"> — {{ $c.Text }}</span></div>
+      {{ end }}{{ end }}
+    </div>
+  </details>
   {{ end }}
-</div>
+</section>
 {{ end }}
 
-<div style="margin-bottom:16px">
-  Тип тренировки:
-  <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"0"}' hx-swap="none">улица</button>
-  <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"1"}' hx-swap="none">станок</button>
-  {{ if .W.Override }}<span class="tag">вручную</span>{{ end }}
-</div>
-
-<div style="margin-bottom:16px">
-  Замер (тестовая тренировка):
-  <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"0"}' hx-swap="none">тренировка</button>
-  <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"1"}' hx-swap="none">тест</button>
-  {{ if .W.IsTest }}<span class="tag">не в рекордах</span>{{ end }}
-</div>
-
-<div style="margin-bottom:16px">
-  Велосипед:
-  <select id="bike" style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
-    <option value="">не указан</option>
-    {{ range .Bikes }}<option value="{{ .ID }}"{{ if eq .ID $.W.BikeID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
-  </select>
-  <button hx-post="/workout/{{ .W.ID }}/bike" hx-vals="js:{bike_id: document.getElementById('bike').value}" hx-swap="none">Сохранить</button>
-</div>
-
-<div style="margin-bottom:16px">
-  <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-start">
-    <div>
-      <b>RPE</b><br>
-      <select id="rpe" style="font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px">
+<details class="w-settings">
+  <summary>Название и параметры</summary>
+  <div class="ws-body">
+    <div class="ws-row">
+      <span class="lbl">Название</span>
+      <input id="wname" type="text" value="{{ .W.Name }}" placeholder="Название тренировки" style="width:280px">
+      <button hx-post="/workout/{{ .W.ID }}/name" hx-vals="js:{name: document.getElementById('wname').value}" hx-swap="none">Сохранить</button>
+    </div>
+    <div class="ws-row">
+      <span class="lbl">Тип тренировки</span>
+      <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"0"}' hx-swap="none">улица</button>
+      <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"1"}' hx-swap="none">станок</button>
+      {{ if .W.Override }}<span class="chip chip--muted">выбран вручную</span>{{ end }}
+    </div>
+    <div class="ws-row">
+      <span class="lbl">Замер (тест)</span>
+      <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"0"}' hx-swap="none">тренировка</button>
+      <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"1"}' hx-swap="none">тест</button>
+      {{ if .W.IsTest }}<span class="chip chip--muted">не участвует в рекордах</span>{{ end }}
+    </div>
+    <div class="ws-row">
+      <span class="lbl">Велосипед</span>
+      <select id="bike">
         <option value="">не указан</option>
-        {{ range .RPEOptions }}<option value="{{ .N }}"{{ if eq .N $.W.RPE }} selected{{ end }}>{{ .N }} — {{ .Label }}</option>{{ end }}
+        {{ range .Bikes }}<option value="{{ .ID }}"{{ if eq .ID $.W.BikeID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
       </select>
+      <button hx-post="/workout/{{ .W.ID }}/bike" hx-vals="js:{bike_id: document.getElementById('bike').value}" hx-swap="none">Сохранить</button>
     </div>
-    <div style="flex:1 1 320px; min-width:220px">
-      <b>Заметка</b><br>
-      <textarea id="notes" rows="2" maxlength="2000" placeholder="ощущения, погода, контекст"
-        style="width:100%; font:inherit; padding:6px 10px; border:1px solid var(--border); border-radius:6px; resize:vertical">{{ .W.Notes }}</textarea>
-    </div>
-    <button hx-post="/workout/{{ .W.ID }}/context"
-      hx-vals="js:{rpe: document.getElementById('rpe').value, notes: document.getElementById('notes').value}"
-      hx-swap="none" style="align-self:flex-end">Сохранить</button>
   </div>
-</div>
-
-<div id="chartCtl" class="chart-controls">
-  <span id="metricBtns" class="tabs"></span>
-  <span id="axisBtns" class="axis-toggles"></span>
-</div>
-<canvas id="chart"></canvas>
-
-<div class="dist-grid" id="distGrid">
-  <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
-  {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
-  <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
-  <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
-</div>
+</details>
 
 {{ if not .W.Trainer }}<div id="map"></div>{{ end }}
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/vendor/leaflet.js"></script>
+<link rel="stylesheet" href="/static/vendor/leaflet.css">
 <script>
 (async () => {
 const id = {{ .W.ID }};
@@ -181,17 +283,81 @@ const isTrainer = {{ .W.Trainer }};
 const resp = await fetch(`/api/workout/${id}/samples`);
 const data = await resp.json();
 
+const css = getComputedStyle(document.documentElement);
+const cssVar = n => css.getPropertyValue(n).trim();
+// цвет+прозрачность: заливка area и полосы зон — 10–15% (TODO-UI §4.3)
+function alpha(hex, a) {
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return hex;
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+const zoneColors = [1, 2, 3, 4, 5, 6, 7].map(i => cssVar(`--zone-z${i}`));
+
 const metrics = [
-  { key: "Power",     label: "Мощность, Вт",    color: "#d73a49", has: s => s.Power > 0 },
-  { key: "HR",        label: "Пульс, уд/мин",   color: "#cf222e", has: s => s.HR > 0 },
-  { key: "Cadence",   label: "Каденс, об/мин",  color: "#0969da", has: s => s.Cadence > 0 },
-  { key: "SpeedMs",   label: "Скорость, км/ч",  color: "#1a7f37", has: s => s.SpeedMs > 0, conv: v => v * 3.6, skip: isTrainer },
-  { key: "AltitudeM", label: "Высота, м",       color: "#8250df", has: s => s.HasAlt, skip: isTrainer, fill: true },
+  { key: "Power",     label: "Мощность, Вт",    color: cssVar("--brand"),   has: s => s.Power > 0, fill: true },
+  { key: "HR",        label: "Пульс, уд/мин",   color: cssVar("--danger"),  has: s => s.HR > 0 },
+  { key: "Cadence",   label: "Каденс, об/мин",  color: cssVar("--text-2"),  has: s => s.Cadence > 0 },
+  { key: "SpeedMs",   label: "Скорость, км/ч",  color: cssVar("--outdoor"), has: s => s.SpeedMs > 0, conv: v => v * 3.6, skip: isTrainer },
+  { key: "AltitudeM", label: "Высота, м",       color: cssVar("--text-3"),  has: s => s.HasAlt, skip: isTrainer, fill: true },
 ].filter(m => !m.skip && data.some(m.has));
 
 const hasDist = data.some(s => s.HasDist && s.DistanceM > 0);
 let curMetric = metrics[0], curAxis = "time";
 let chart = null;
+
+// фоновые полосы зон по FTP и референсы NP/FTP — только для мощности
+const zoneEdges = {{ json .ZoneEdges }};
+const refNP = {{ .W.NormPower }}, refFTP = {{ .W.FTP }};
+
+const zoneBands = {
+  id: "zoneBands",
+  beforeDatasetsDraw(c) {
+    if (curMetric.key !== "Power" || !zoneEdges) return;
+    const { ctx, chartArea, scales: { y } } = c;
+    if (!chartArea) return;
+    ctx.save();
+    for (let i = 0; i < zoneEdges.length; i++) {
+      const lo = zoneEdges[i];
+      const hi = i + 1 < zoneEdges.length ? zoneEdges[i + 1] : y.max;
+      const yTop = Math.max(y.getPixelForValue(Math.min(hi, y.max)), chartArea.top);
+      const yBot = Math.min(y.getPixelForValue(Math.max(lo, y.min)), chartArea.bottom);
+      if (yBot <= yTop) continue;
+      ctx.fillStyle = alpha(zoneColors[i], 0.10);
+      ctx.fillRect(chartArea.left, yTop, chartArea.width, yBot - yTop);
+    }
+    ctx.restore();
+  },
+};
+
+const refLines = {
+  id: "refLines",
+  afterDatasetsDraw(c) {
+    if (curMetric.key !== "Power") return;
+    const { ctx, chartArea, scales: { y } } = c;
+    const lines = [];
+    if (refNP > 0) lines.push({ v: refNP, label: `NP ${refNP}`, color: cssVar("--brand") });
+    if (refFTP > 0) lines.push({ v: refFTP, label: `FTP ${refFTP}`, color: cssVar("--text-2") });
+    if (!lines.length) return;
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.font = "11px Inter, sans-serif";
+    ctx.textBaseline = "bottom";
+    lines.forEach(l => {
+      if (l.v < y.min || l.v > y.max) return;
+      const py = y.getPixelForValue(l.v);
+      ctx.strokeStyle = l.color;
+      ctx.beginPath();
+      ctx.moveTo(chartArea.left, py);
+      ctx.lineTo(chartArea.right, py);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = l.color;
+      ctx.fillText(l.label, chartArea.right - ctx.measureText(l.label).width - 4, py - 2);
+      ctx.setLineDash([5, 4]);
+    });
+    ctx.restore();
+  },
+};
 
 // скользящее среднее ~10 сек: режем пилу нулей при свободном ходе
 const spacing = data.length > 1 ? (data[data.length-1].Offset - data[0].Offset) / (data.length - 1) : 1;
@@ -199,6 +365,8 @@ const win = Math.max(1, Math.min(25, Math.round(10 / Math.max(spacing, 0.1))));
 function smooth(y) {
   const half = Math.floor(win / 2), out = new Array(y.length);
   for (let i = 0; i < y.length; i++) {
+    // дропаут — разрыв: скользящее среднее не заполняет пропуск соседями
+    if (y[i] == null) { out[i] = null; continue; }
     let sum = 0, n = 0;
     for (let j = Math.max(0, i - half); j <= Math.min(y.length - 1, i + half); j++) {
       if (y[j] != null) { sum += y[j]; n++; }
@@ -236,9 +404,9 @@ function redraw() {
   }));
   chart.data.labels = x;
   chart.data.datasets = [{
-    label: curMetric.label, data: y, borderWidth: 1, pointRadius: 0,
+    label: curMetric.label, data: y, borderWidth: 1.5, pointRadius: 0,
     borderColor: curMetric.color, fill: !!curMetric.fill,
-    backgroundColor: curMetric.color + "33", spanGaps: true,
+    backgroundColor: alpha(curMetric.color, 0.12), spanGaps: false, // дропауты — разрыв линии, а не перемычка
   }];
   chart.options.scales.x.ticks.callback = curAxis === "km"
     ? v => x[v] + " км"
@@ -260,6 +428,7 @@ if (metrics.length) {
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => curMetric.label.split(",")[0] + ": " + Math.round(c.raw) } } },
       scales: { x: { ticks: {} }, y: { position: "left" } },
     },
+    plugins: [zoneBands, refLines],
   });
   redraw();
 } else {
@@ -271,24 +440,51 @@ const dist = await (await fetch(`/api/workout/${id}/dist`)).json();
 const ftp = {{ .W.FTP }};
 const titles = { cadence: "Каденс, об/мин", speed: "Скорость, км/ч",
   power: ftp ? `Зоны мощности (FTP ${ftp} Вт)` : "Мощность, Вт", hr: "Пульс, уд/мин" };
+
+// подпись времени на конце бара: короткие отрезки — в секундах
+const barLabels = {
+  id: "barLabels",
+  afterDatasetsDraw(c) {
+    const { ctx, chartArea } = c;
+    const meta = c.getDatasetMeta(0);
+    ctx.save();
+    ctx.fillStyle = cssVar("--text-2");
+    ctx.font = "11px Inter, sans-serif";
+    ctx.textBaseline = "middle";
+    meta.data.forEach((bar, i) => {
+      const v = c.data.datasets[0].data[i];
+      if (!v) return;
+      const txt = v < 1 ? `${Math.round(v * 60)} с` : `${v} мин`;
+      ctx.fillText(txt, Math.min(bar.x + 4, chartArea.right - 34), bar.y);
+    });
+    ctx.restore();
+  },
+};
+
 document.querySelectorAll("#distGrid .dist").forEach(el => {
   const kind = el.dataset.kind;
   const entries = dist[kind];
   if (!entries) { el.style.display = "none"; return; }
   el.querySelector("h3").textContent = titles[kind] + (kind === "power" && ftp ? " — время в зоне" : " — время в диапазоне");
+  // бары мощности — цветом зоны бакета (первый бакет — накат, нейтральный)
+  const colors = entries.map((_, i) => {
+    if (kind === "power" && ftp) return i === 0 ? cssVar("--text-3") : zoneColors[i - 1];
+    return cssVar("--text-2");
+  });
   new Chart(el.querySelector("canvas"), {
     type: "bar",
     data: {
       labels: entries.map(e => e.label),
-      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)),
-        backgroundColor: kind === "power" && ftp ? "#d73a49" : "#0969da" }],
+      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)), backgroundColor: colors }],
     },
     options: {
       indexAxis: "y",
       animation: false,
+      layout: { padding: { right: 40 } },
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + " мин" } } },
       scales: { x: { title: { display: true, text: "минут" } } },
     },
+    plugins: [barLabels],
   });
   // накат — отдельный бакет: подписываем обе базы времени
   if (kind === "power" && dist.powerBase) {
@@ -304,10 +500,10 @@ if (!Object.keys(dist).length) document.getElementById("distGrid").style.display
 
 const mapEl = document.getElementById("map");
 const track = data.filter(s => s.HasPos);
-if (mapEl && track.length > 1) {
+if (mapEl && track.length > 1 && typeof L !== "undefined") {
   const map = L.map("map").setView([track[0].Lat, track[0].Lon], 13);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
-  L.polyline(track.map(s => [s.Lat, s.Lon]), { color: "#58a6ff" }).addTo(map);
+  L.polyline(track.map(s => [s.Lat, s.Lon]), { color: cssVar("--brand") }).addTo(map);
   map.fitBounds(L.latLngBounds(track.map(s => [s.Lat, s.Lon])).pad(0.05));
 } else if (mapEl) {
   mapEl.style.display = "none";

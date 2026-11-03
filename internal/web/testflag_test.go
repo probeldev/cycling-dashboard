@@ -175,7 +175,7 @@ func TestTestToggle(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("страница: код %d", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), "<span class=\"tag\">тест</span>") {
+	if strings.Contains(rec.Body.String(), `<span class="chip chip--muted">тест · не в рекордах</span>`) {
 		t.Errorf("после снятия на странице остался тег «тест»")
 	}
 	if code := toggle(test, "1"); code != http.StatusOK {
@@ -183,7 +183,7 @@ func TestTestToggle(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", test), nil))
-	if !strings.Contains(rec.Body.String(), "<span class=\"tag\">тест</span>") {
+	if !strings.Contains(rec.Body.String(), `<span class="chip chip--muted">тест · не в рекордах</span>`) {
 		t.Errorf("на странице нет тега «тест»")
 	}
 	// пустое и мусорное значение — ошибка клиента, а не молчаливое снятие флага
@@ -194,7 +194,7 @@ func TestTestToggle(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", test), nil))
-	if !strings.Contains(rec.Body.String(), "<span class=\"tag\">тест</span>") {
+	if !strings.Contains(rec.Body.String(), `<span class="chip chip--muted">тест · не в рекордах</span>`) {
 		t.Errorf("мусор в value снял флаг «тест»")
 	}
 	if code := toggle(99999, "2"); code != http.StatusBadRequest {

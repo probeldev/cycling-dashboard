@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"cycling-dashboard/internal/advice"
 	"cycling-dashboard/internal/importer"
 	"cycling-dashboard/internal/store"
 )
@@ -30,7 +32,10 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"secs":      func(s int) time.Duration { return time.Duration(s) * time.Second },
 	"date":      func(t time.Time) string { return t.Format("02.01.2006") },
 	"trimFloat": trimFloat,
-	"watts":     watts,
+	// intFloat — целое без дробной части: дробные TSS на дашборде округляем
+	// (TODO-UI §4.1), trimFloat показывал бы «118.0»
+	"intFloat": func(v float64) string { return strconv.FormatFloat(math.Round(v), 'f', -1, 64) },
+	"watts":    watts,
 	"deref": func(v *float64) float64 {
 		if v == nil {
 			return 0
@@ -44,6 +49,9 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 		return *v
 	},
 	"kindLabel":        kindLabel,
+	"insightClass":     insightClass,
+	"stateChipClass":   stateChipClass,
+	"tsbSeriesColor":   tsbSeriesColor,
 	"durationText":     durationText,
 	"rangeText":        rangeText,
 	"wattsText":        wattsText,
@@ -54,8 +62,23 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"targetSourceText": targetSourceText,
 	"pluralRides":      pluralRides,
 	"pluralDays":       pluralDays,
-	"divf":             func(a int, b float64) float64 { return float64(a) / b },
-	"divff":            func(a, b float64) float64 { return a / b },
+	"ifVerdict":        ifVerdict,
+	"viVerdict":        viVerdict,
+	"tssVerdict":       tssVerdict,
+	"pauseVerdict":     pauseVerdict,
+	"insightLevel":     insightLevel,
+	"sub":              func(a, b int) int { return a - b },
+	"absint":           func(v int) int { return int(math.Abs(float64(v))) },
+	"json": func(v any) template.JS {
+		// только сгенерированные сервером числа/подписи — безопасно в <script>
+		b, err := json.Marshal(v)
+		if err != nil {
+			return "null"
+		}
+		return template.JS(b)
+	},
+	"divf":  func(a int, b float64) float64 { return float64(a) / b },
+	"divff": func(a, b float64) float64 { return a / b },
 	"pizzas": func(kcal int) string {
 		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
 		if p < 0.3 {
@@ -81,6 +104,9 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 			"Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"}
 		return names[m-1]
 	},
+	"durationShort": formatDurationShort,
+	"formatHours":   formatHours,
+	"safeHTML":      func(s string) template.HTML { return template.HTML(s) },
 }).ParseFS(assets, "templates/*.html"))
 
 func trimFloat(v float64) string {
@@ -100,12 +126,12 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	progressRoutes(r, db)
 
 	r.Get("/rides", func(w http.ResponseWriter, req *http.Request) {
-		years, err := store.ListTree(db)
+		view, err := buildRidesView(db)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		render(w, "rides.html", map[string]any{"Years": years})
+		render(w, "rides.html", map[string]any{"Rides": view})
 	})
 
 	r.Get("/workout/{id}", func(w http.ResponseWriter, req *http.Request) {
@@ -142,11 +168,26 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 				break
 			}
 		}
-		cards, err := workoutAdvice(db, wo)
+		advCtx, err := workoutAdviceContext(db, wo)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		mmpC := mmpCards(mmp, prs)
+		// тренд — значение этой тренировки против лучшего того же окна за
+		// 30 дней до её даты: запрос тот же, что /api/records?period=30d,
+		// но относительно даты тренировки, а не now (§4.3). Верхняя граница
+		// — старт тренировки: сама она и всё позднее в прошлый период не
+		// попадают.
+		prev30, err := store.BestRecords(db,
+			store.StartOfDay(wo.StartTime).AddDate(0, 0, -30), wo.StartTime, false)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		attachRecordTrends(mmpC, prev30)
+		// связный вывод (§6): тот же контекст, что у инсайтов, + рекорды
+		advCtx.Records = recordFacts(mmpC)
 		// зоны — из того же расчёта, что /api/workout/{id}/dist; второй
 		// формулы на странице нет
 		var powerZones []workoutZoneRow
@@ -161,8 +202,9 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			}
 		}
 		render(w, "workout.html", map[string]any{
-			"W": wo, "MMP": mmpCards(mmp, prs), "Bikes": bikes, "RPEOptions": rpeOptions,
-			"FTPHint": ftpHint, "Advice": cards, "PowerZones": powerZones,
+			"W": wo, "MMP": mmpC, "Bikes": bikes, "RPEOptions": rpeOptions,
+			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx), "PowerZones": powerZones,
+			"Summary": advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP),
 		})
 	})
 

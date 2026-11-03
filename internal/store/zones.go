@@ -88,6 +88,32 @@ func ZoneTime(db DBTX, from, to time.Time, ftpKind string) ([7]int, error) {
 	return zones, rows.Err()
 }
 
+// ZoneDays — число локальных дней с рассчитанными зонами по базе FTP
+// в [from, to). Несколько тренировок в один день считаются один раз.
+func ZoneDays(db DBTX, from, to time.Time, ftpKind string) (int, error) {
+	rows, err := db.Query(`SELECT DISTINCT w.start_time FROM workout_zones z
+	    JOIN workouts w ON w.id = z.workout_id
+	    WHERE w.ftp_kind = ? AND w.start_time >= ? AND w.start_time < ?`,
+		ftpKind, from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	days := map[time.Time]bool{}
+	for rows.Next() {
+		var start string
+		if err := rows.Scan(&start); err != nil {
+			return 0, err
+		}
+		t, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			return 0, err
+		}
+		days[StartOfDay(t.Local())] = true
+	}
+	return len(days), rows.Err()
+}
+
 // WorkoutsNeedingZones — тренировки, у которых зоны ещё не посчитаны этой версией.
 func WorkoutsNeedingZones(q DBTX, version int) ([]FileRef, error) {
 	rows, err := q.Query(`SELECT id, file_path FROM workouts WHERE zones_version < ? ORDER BY id`, version)

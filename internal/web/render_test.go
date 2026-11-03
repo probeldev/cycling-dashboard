@@ -57,8 +57,9 @@ func TestRenderPages(t *testing.T) {
 	if !strings.Contains(body, "</html>") || strings.Contains(body, "template:") {
 		t.Errorf("GET /: тело обрезано или содержит ошибку шаблона")
 	}
-	if !strings.Contains(body, "118.2 TSS") {
-		t.Errorf("GET /: в строке тренировки нет TSS")
+	// на дашборде дробные TSS округляются до целых (TODO-UI §4.1)
+	if !strings.Contains(body, "TSS <b>118</b>") {
+		t.Errorf("GET /: в строке тренировки нет округлённого TSS")
 	}
 
 	code, body = get(fmt.Sprintf("/workout/%d", id))
@@ -116,7 +117,8 @@ func TestRenderTodayAndRidesRoutes(t *testing.T) {
 		t.Fatalf("GET /: код %d, тело %d байт", code, len(body))
 	}
 	for _, want := range []string{"Сегодня", "Рекомендация", "Форма (CTL)", "Усталость (ATL)",
-		"Свежесть (TSB)", "Последняя тренировка", "Неделя", "Готовность", "Поездки"} {
+		"Свежесть (TSB)", "Последняя тренировка", "Неделя", "Готовность", "Поездки",
+		`class="section-label"`, "metric-card", "coverage", "Почему так"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /: нет блока %q", want)
 		}
@@ -149,10 +151,13 @@ func TestRenderEmptyToday(t *testing.T) {
 		t.Fatalf("GET /: код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Мало данных", "Цель не задана", "Тренировок пока нет"} {
+	for _, want := range []string{"Мало данных", "Цель не задана", "Тренировок пока нет", "появится после первой поездки за 90 дней"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("пустая главная: нет %q", want)
 		}
+	}
+	if strings.Contains(body, `<svg class="spark"`) {
+		t.Error("пустая главная: спарклайн без истории")
 	}
 	for _, bad := range []string{"NaN", "<no value>", "0 из 0"} {
 		if strings.Contains(body, bad) {

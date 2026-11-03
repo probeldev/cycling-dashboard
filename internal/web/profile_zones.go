@@ -17,7 +17,9 @@ type powerZone struct {
 	Range   string // ватты, границы из ridedata.ZoneBounds
 	Pct     string // % FTP
 	Purpose string
-	Time    string // время за 90 дней или прочерк
+	Time    string  // время за 90 дней или прочерк
+	HasTime bool    // были ли секунды в зоне за окно
+	TimePct float64 // доля зоны от всего времени в зонах (0–100), для мини-бара
 }
 
 var powerZoneNames = [7]string{
@@ -37,6 +39,10 @@ var powerZonePurposes = [7]string{
 func buildPowerZones(ftp float64, secs [7]int) []powerZone {
 	bounds := ridedata.ZoneBounds()
 	rows := make([]powerZone, len(bounds))
+	total := 0
+	for _, s := range secs {
+		total += s
+	}
 	for i := range bounds {
 		from := bounds[i] * ftp
 		wattsRange := watts(from) + "+"
@@ -45,6 +51,11 @@ func buildPowerZones(ftp float64, secs [7]int) []powerZone {
 			wattsRange = watts(from) + "–" + watts(bounds[i+1]*ftp)
 			pct = fmt.Sprintf("%d–%d%%", int(math.Round(bounds[i]*100)), int(math.Round(bounds[i+1]*100))-1)
 		}
+		timePct := 0.0
+		if total > 0 {
+			timePct = math.Round(float64(secs[i]) / float64(total) * 1000)
+			timePct /= 10
+		}
 		rows[i] = powerZone{
 			Zone:    i + 1,
 			Name:    powerZoneNames[i],
@@ -52,6 +63,8 @@ func buildPowerZones(ftp float64, secs [7]int) []powerZone {
 			Pct:     pct,
 			Purpose: powerZonePurposes[i],
 			Time:    zoneTimeLabel(secs[i]),
+			HasTime: secs[i] > 0,
+			TimePct: timePct,
 		}
 	}
 	return rows

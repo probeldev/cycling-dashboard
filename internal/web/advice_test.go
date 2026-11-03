@@ -47,12 +47,12 @@ func TestWorkoutAdviceBlock(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Что говорят данные", "Низкий каденс", "Пульса нет", "Нет RPE"} {
+	for _, want := range []string{"Инсайты", "Низкий каденс", "Пульса нет", "Нет RPE"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)
 		}
 	}
-	if n := strings.Count(body, `class="advice `); n > 5 {
+	if n := strings.Count(body, `class="insight insight--`); n > 5 {
 		t.Errorf("карточек %d, хочу не больше 5", n)
 	}
 	if strings.Contains(body, "Рваная езда") || strings.Contains(body, "Пропуски данных") {

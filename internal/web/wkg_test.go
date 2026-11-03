@@ -28,29 +28,51 @@ func TestBuildWkgTrend(t *testing.T) {
 	if !got.HasValue || got.Value != 2.6 {
 		t.Fatalf("текущее: %+v, хочу 2.6", got)
 	}
-	want := "30 дн +0.30 · 90 дн +0.20 · 365 дн +0.10"
-	if got.Text != want {
-		t.Errorf("текст = %q, хочу %q", got.Text, want)
+	want := []wkgTrendWindow{
+		{Label: "30 дн", Change: "+0.30"},
+		{Label: "90 дн", Change: "+0.20"},
+		{Label: "365 дн", Change: "+0.10"},
+	}
+	if len(got.Windows) != len(want) {
+		t.Fatalf("окон %d, хочу %d: %+v", len(got.Windows), len(want), got.Windows)
+	}
+	for i := range want {
+		if got.Windows[i] != want[i] {
+			t.Errorf("окно %d = %+v, хочу %+v", i, got.Windows[i], want[i])
+		}
 	}
 
-	// история короче: точки отсчёта нет — прочерк
+	// история короче: точки отсчёта нет — прочерк и пояснение
 	short := buildWkgTrend([]store.ProfilePoint{{Date: today, WPerKgTrainer: f64(2.6)}}, today)
-	if !short.HasValue || short.Text != "30 дн — · 90 дн — · 365 дн —" {
-		t.Errorf("короткая история: %+v", short)
+	if !short.HasValue {
+		t.Fatalf("короткая история скрыта: %+v", short)
+	}
+	for _, w := range short.Windows {
+		if w.Change != "—" {
+			t.Errorf("короткая история, %s = %q, хочу прочерк", w.Label, w.Change)
+		}
+	}
+	if !strings.Contains(short.Note, "Изменения появятся") {
+		t.Errorf("нет пояснения к прочеркам: %q", short.Note)
 	}
 
 	// текущего значения нет — карточку не показываем
-	if empty := buildWkgTrend(nil, today); empty.HasValue || empty.Text != "" {
+	if empty := buildWkgTrend(nil, today); empty.HasValue || len(empty.Windows) != 0 {
 		t.Errorf("пустая история: %+v", empty)
 	}
 
 	// точка отсчёта есть, но Вт/кг там null (не было веса/FTP) — тоже прочерк
 	nullPrev := buildWkgTrend([]store.ProfilePoint{
+		{Date: today.AddDate(0, 0, -365), WPerKgTrainer: f64(2.4)},
+		{Date: today.AddDate(0, 0, -90), WPerKgTrainer: f64(2.5)},
 		{Date: today.AddDate(0, 0, -30)},
 		{Date: today, WPerKgTrainer: f64(2.6)},
 	}, today)
-	if !strings.HasPrefix(nullPrev.Text, "30 дн —") {
-		t.Errorf("null в точке отсчёта: %q", nullPrev.Text)
+	if nullPrev.Windows[0].Change != "—" {
+		t.Errorf("null в точке отсчёта: %+v", nullPrev.Windows[0])
+	}
+	if !strings.Contains(nullPrev.Note, "Прочерк") {
+		t.Errorf("нет пояснения к частичному прочерку: %q", nullPrev.Note)
 	}
 
 	// отрицательный ноль не показываем
@@ -58,8 +80,8 @@ func TestBuildWkgTrend(t *testing.T) {
 		{Date: today.AddDate(0, 0, -30), WPerKgTrainer: f64(2.6)},
 		{Date: today, WPerKgTrainer: f64(2.6)},
 	}, today)
-	if !strings.HasPrefix(zero.Text, "30 дн 0.00") {
-		t.Errorf("нулевое изменение: %q", zero.Text)
+	if zero.Windows[0].Change != "0.00" {
+		t.Errorf("нулевое изменение: %+v", zero.Windows[0])
 	}
 }
 
@@ -96,9 +118,13 @@ func TestProgressWkgCard(t *testing.T) {
 	if !strings.Contains(body, "Вт/кг (станок)") {
 		t.Fatalf("нет карточки Вт/кг")
 	}
-	want := "30 дн +0.13 · 90 дн +0.10 · 365 дн —"
-	if !strings.Contains(body, want) {
-		t.Errorf("нет изменений %q", want)
+	for _, want := range []string{">30 дн</span> +0.13", ">90 дн</span> +0.10", ">365 дн</span> —"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("нет изменения %q", want)
+		}
+	}
+	if strings.Contains(body, "30 дн — · 90 дн — · 365 дн —") {
+		t.Error("изменения Вт/кг остались в виде coverage-шаблона")
 	}
 	if !strings.Contains(body, ">2.8</div>") {
 		t.Errorf("нет текущего значения 2.8 (210/76)")

@@ -29,6 +29,34 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// Стартовое значение для формы, когда авто-цель не считается: среднее
+		// недельное TSS за последние 4 недели. Расчёт авто-цели не меняем.
+		suggestedTarget := 300
+		if target.Source == store.TargetSourceNone {
+			weeks, err := store.Weeks(db, 4, now)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			var sum float64
+			active := 0
+			for _, week := range weeks {
+				if week.TSS > 0 {
+					sum += week.TSS
+					active++
+				}
+			}
+			if active > 0 {
+				v := math.Round(sum / float64(active))
+				if v < store.WeeklyTargetMin {
+					v = store.WeeklyTargetMin
+				}
+				if v > store.WeeklyTargetMax {
+					v = store.WeeklyTargetMax
+				}
+				suggestedTarget = int(v)
+			}
+		}
 		weight, hasWeight := store.ProfileAt(db, "weight", now)
 		ftp, hasFTP := store.ProfileAt(db, "ftp", now)
 		ftpOutdoor, hasFTPOutdoor := store.ProfileAt(db, "ftp_outdoor", now)
@@ -36,6 +64,7 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 		zoneFrom := today.AddDate(0, 0, -(zoneHistoryDays - 1))
 		zoneTo := today.AddDate(0, 0, 1)
 		var trainerZones, outdoorZones []powerZone
+		var trainerZoneDays, outdoorZoneDays int
 		if hasFTP {
 			secs, err := store.ZoneTime(db, zoneFrom, zoneTo, "trainer")
 			if err != nil {
@@ -43,6 +72,11 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 				return
 			}
 			trainerZones = buildPowerZones(ftp, secs)
+			trainerZoneDays, err = store.ZoneDays(db, zoneFrom, zoneTo, "trainer")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		if hasFTPOutdoor {
 			secs, err := store.ZoneTime(db, zoneFrom, zoneTo, "outdoor")
@@ -51,6 +85,11 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 				return
 			}
 			outdoorZones = buildPowerZones(ftpOutdoor, secs)
+			outdoorZoneDays, err = store.ZoneDays(db, zoneFrom, zoneTo, "outdoor")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		render(w, "profile.html", map[string]any{
 			"History":            history,
@@ -62,10 +101,13 @@ func profileRoutes(r chi.Router, db *sql.DB) {
 			"HasFTPOutdoor":      hasFTPOutdoor,
 			"TrainerZones":       trainerZones,
 			"OutdoorZones":       outdoorZones,
+			"TrainerZoneDays":    trainerZoneDays,
+			"OutdoorZoneDays":    outdoorZoneDays,
 			"Today":              now.Format("2006-01-02"),
 			"WeeklyTarget":       target.TSS,
 			"HasWeeklyTarget":    target.Source != store.TargetSourceNone,
 			"WeeklyTargetSource": targetSourceText(target.Source),
+			"SuggestedTarget":    suggestedTarget,
 		})
 	})
 

@@ -4,9 +4,12 @@ import "cycling-dashboard/internal/store"
 
 // mmpCard — карточка «лучшего усилия» на деталке тренировки.
 type mmpCard struct {
-	Label string
-	Watts float64
-	PR    string // подпись рекорда, если это PR
+	Secs     int // окно, секунды
+	Label    string
+	Watts    float64
+	PR       string // подпись рекорда, если это PR
+	PRPeriod string // период рекорда для сводки («за месяц»), пусто — не PR
+	Trend    int    // разница к лучшему значению окна за 30 дней до даты тренировки, Вт (0 — не считается)
 }
 
 // mmpCardWindows — окна, которые показываем на деталке.
@@ -28,6 +31,15 @@ var prTitles = map[string]string{
 	"30d":  "рекорд за месяц",
 }
 
+// prPeriods — короткие подписи периодов для связной сводки: без слова
+// «рекорд» и без уточнений в скобках, фраза и так начинается с «Рекордные».
+var prPeriods = map[string]string{
+	"all":  "за всё время",
+	"365d": "за год",
+	"90d":  "за 90 дней",
+	"30d":  "за месяц",
+}
+
 // mmpCards собирает карточки лучших усилий; рекорд подписывается по самому
 // широкому периоду из списка WorkoutPRs.
 func mmpCards(records []store.PowerRecord, prs map[int][]string) []mmpCard {
@@ -41,10 +53,11 @@ func mmpCards(records []store.PowerRecord, prs map[int][]string) []mmpCard {
 		if !ok {
 			continue
 		}
-		card := mmpCard{Label: w.label, Watts: watts}
+		card := mmpCard{Secs: w.secs, Label: w.label, Watts: watts}
 		for _, p := range prs[w.secs] {
 			if title, ok := prTitles[p]; ok {
 				card.PR = title
+				card.PRPeriod = prPeriods[p]
 				break
 			}
 		}
