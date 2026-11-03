@@ -126,7 +126,9 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 	progressRoutes(r, db)
 
 	r.Get("/rides", func(w http.ResponseWriter, req *http.Request) {
-		view, err := buildRidesView(db)
+		// ?year= выбирает год; пусто или неизвестно — самый свежий год с данными
+		year, _ := strconv.Atoi(req.URL.Query().Get("year"))
+		view, err := buildRidesView(db, year)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

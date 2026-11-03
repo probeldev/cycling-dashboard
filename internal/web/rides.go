@@ -11,9 +11,11 @@ import (
 	"cycling-dashboard/internal/store"
 )
 
-// rideView — данные для шаблона /rides: дерево год→месяц с enriched поездками.
+// rideView — данные для шаблона /rides: меню годов + выбранный год
+// с enriched поездками.
 type rideView struct {
-	Years []rideYear
+	Years    []rideYear // меню годов: год и сводка, без месяцев
+	Selected *rideYear  // раскрытый год: месяцы и поездки
 }
 
 type rideYear struct {
@@ -21,6 +23,7 @@ type rideYear struct {
 	Outdoor store.Agg
 	Trainer store.Agg
 	Months  []rideMonth
+	Active  bool // подсветка года в меню годов
 }
 
 type rideMonth struct {
@@ -32,6 +35,7 @@ type rideMonth struct {
 	AvgIF         float64
 	Rides         []rideRow
 	VolumeSpark   string // inline-SVG bars: TSS по дням месяца
+	Open          bool   // раскрыт при загрузке страницы
 }
 
 type rideRow struct {
@@ -51,8 +55,11 @@ type rideRow struct {
 	Search       string
 }
 
-// buildRidesView собирает enriched дерево поездок для /rides.
-func buildRidesView(db *sql.DB) (*rideView, error) {
+// buildRidesView собирает enriched список поездок для /rides. wantYear —
+// параметр ?year=: если он непуст и есть в дереве — это выбранный год,
+// иначе год с самыми свежими данными (ListTree сортирует тренировки по
+// времени DESC, годы идут от свежих к старым).
+func buildRidesView(db *sql.DB, wantYear int) (*rideView, error) {
 	years, err := store.ListTree(db)
 	if err != nil {
 		return nil, err
@@ -62,16 +69,38 @@ func buildRidesView(db *sql.DB) (*rideView, error) {
 		return nil, err
 	}
 
-	ids := make([]int64, 0)
-	for _, y := range years {
-		for _, m := range y.Months {
-			for _, r := range m.Rides {
-				ids = append(ids, r.ID)
+	out := &rideView{Years: make([]rideYear, 0, len(years))}
+	if len(years) == 0 {
+		return out, nil
+	}
+	sel := 0
+	if wantYear > 0 {
+		for i, y := range years {
+			if y.Year == wantYear {
+				sel = i
+				break
 			}
 		}
 	}
-	// Метрики и сэмплы читаем пачками: дерево может содержать сотни поездок,
-	// и по два запроса на каждую — лишний N+1.
+	for i, y := range years {
+		out.Years = append(out.Years, rideYear{
+			Year: y.Year, Outdoor: y.Outdoor, Trainer: y.Trainer, Active: i == sel,
+		})
+	}
+
+	// список поездок показывается только у выбранного года — метрики и
+	// сэмплы читаем пачками лишь для него два запросами, а не N+1.
+	src := years[sel]
+	selYear := &rideYear{
+		Year: src.Year, Outdoor: src.Outdoor, Trainer: src.Trainer,
+		Months: make([]rideMonth, 0, len(src.Months)),
+	}
+	ids := make([]int64, 0)
+	for _, m := range src.Months {
+		for _, r := range m.Rides {
+			ids = append(ids, r.ID)
+		}
+	}
 	metas, err := loadRideWorkouts(db, ids)
 	if err != nil {
 		return nil, err
@@ -87,33 +116,51 @@ func buildRidesView(db *sql.DB) (*rideView, error) {
 		return nil, err
 	}
 
-	out := &rideView{Years: make([]rideYear, 0, len(years))}
-	for _, y := range years {
-		ry := rideYear{
-			Year:    y.Year,
-			Outdoor: y.Outdoor,
-			Trainer: y.Trainer,
-			Months:  make([]rideMonth, 0, len(y.Months)),
+	for _, m := range src.Months {
+		rm := rideMonth{
+			Month:         m.Month,
+			Outdoor:       m.Outdoor,
+			Trainer:       m.Trainer,
+			TotalCalories: m.TotalCalories,
+			TSS:           m.TSS,
+			AvgIF:         m.AvgIF,
+			Rides:         make([]rideRow, 0, len(m.Rides)),
 		}
-		for _, m := range y.Months {
-			rm := rideMonth{
-				Month:         m.Month,
-				Outdoor:       m.Outdoor,
-				Trainer:       m.Trainer,
-				TotalCalories: m.TotalCalories,
-				TSS:           m.TSS,
-				AvgIF:         m.AvgIF,
-				Rides:         make([]rideRow, 0, len(m.Rides)),
-			}
-			for _, r := range m.Rides {
-				rm.Rides = append(rm.Rides, buildRideRow(r, metas[r.ID], samples[r.ID], records[r.ID]))
-			}
-			rm.VolumeSpark = monthVolumeSpark(rm.Rides)
-			ry.Months = append(ry.Months, rm)
+		for _, r := range m.Rides {
+			rm.Rides = append(rm.Rides, buildRideRow(r, metas[r.ID], samples[r.ID], records[r.ID]))
 		}
-		out.Years = append(out.Years, ry)
+		rm.VolumeSpark = monthVolumeSpark(rm.Rides)
+		selYear.Months = append(selYear.Months, rm)
 	}
+	// какой месяц раскрыт по умолчанию — решает Go, не шаблон
+	if i := openMonthIndex(*selYear, time.Now()); i >= 0 {
+		selYear.Months[i].Open = true
+	}
+	out.Selected = selYear
 	return out, nil
+}
+
+// openMonthIndex — месяц, раскрытый при загрузке: в текущем году это текущий
+// календарный месяц, если в нём есть поездки; в любом другом случае самый
+// поздний месяц года с поездками (пустые месяцы не открываем).
+func openMonthIndex(ry rideYear, now time.Time) int {
+	latest := -1
+	for i, m := range ry.Months {
+		if len(m.Rides) == 0 {
+			continue
+		}
+		if latest < 0 || m.Month > ry.Months[latest].Month {
+			latest = i
+		}
+	}
+	if ry.Year == now.Year() {
+		for i, m := range ry.Months {
+			if m.Month == now.Month() && len(m.Rides) > 0 {
+				return i
+			}
+		}
+	}
+	return latest
 }
 
 // rideWorkoutMeta — только те поля тренировки, которые нужны строке списка:

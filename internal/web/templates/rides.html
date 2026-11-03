@@ -38,58 +38,65 @@ function pollSync() {
 document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSync);
 </script>
 
-{{ if .Rides.Years }}
-{{ range .Rides.Years }}
-<details open class="year">
-  <summary>{{ .Year }} <span class="sub">{{ if .Outdoor.Hours }}{{ km .Outdoor.DistanceKm }} км улица{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }} · {{ end }}{{ if .Trainer.Hours }}{{ hours .Trainer.Hours }} ч станок{{ end }}</span></summary>
-  <div class="months">
-  {{ range .Months }}
-    <details class="month">
-      <summary>
-        <span class="month-name">{{ monthName .Month }}</span>
-        {{ .VolumeSpark | safeHTML }}
-        <span class="month-stats">
-          {{ if .Outdoor.Hours }}улица {{ km .Outdoor.DistanceKm }} км{{ end }}
-          {{ if and .Outdoor.Hours .Trainer.Hours }}·{{ end }}
-          {{ if .Trainer.Hours }}станок {{ formatHours .Trainer.Hours }}{{ end }}
-          {{ if .TSS }}· {{ intFloat .TSS }} TSS{{ end }}
-        </span>
-      </summary>
-      <div class="ride-list">
-      {{ range .Rides }}
-        <a href="/workout/{{ .ID }}" class="ride" data-search="{{ .Search }}">
-          <span class="ride-date">{{ .Date }}</span>
-          <span class="ride-title-wrap">
-            <span class="ride-title">{{ .Title }}</span>
-            {{ if .Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
+{{ if .Rides.Selected }}
+<div class="rides-layout">
+  <nav class="rides-nav" aria-label="Года">
+    {{ range .Rides.Years }}
+    <a href="/rides?year={{ .Year }}"{{ if .Active }} class="active"{{ end }}>{{ .Year }}</a>
+    {{ end }}
+  </nav>
+  <div class="rides-content">
+    {{ with .Rides.Selected }}
+    <h2 class="rides-year">{{ .Year }} <span class="sub">{{ if .Outdoor.Hours }}{{ km .Outdoor.DistanceKm }} км улица{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }} · {{ end }}{{ if .Trainer.Hours }}{{ hours .Trainer.Hours }} ч станок{{ end }}</span></h2>
+    <div class="months">
+    {{ range .Months }}
+      <details class="month"{{ if .Open }} open{{ end }}>
+        <summary>
+          <span class="month-name">{{ monthName .Month }}</span>
+          {{ .VolumeSpark | safeHTML }}
+          <span class="month-stats">
+            {{ if .Outdoor.Hours }}улица {{ km .Outdoor.DistanceKm }} км{{ end }}
+            {{ if and .Outdoor.Hours .Trainer.Hours }}·{{ end }}
+            {{ if .Trainer.Hours }}станок {{ formatHours .Trainer.Hours }}{{ end }}
+            {{ if .TSS }}· {{ intFloat .TSS }} TSS{{ end }}
           </span>
-          {{ if .PowerSpark }}
-          <svg class="ride-spark" viewBox="0 0 60 16" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ .PowerSpark }}"/></svg>
-          {{ end }}
-          <span class="ride-metrics">
-            {{ if .HasRecord }}<span class="chip chip--record">рекорд</span>{{ end }}
-            {{ if .Trainer }}
-              <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
-            {{ else }}
-              <span class="ride-metric"><b>{{ km .DistanceKm }}</b><span class="ride-unit">км</span></span>
+        </summary>
+        <div class="ride-list">
+        {{ range .Rides }}
+          <a href="/workout/{{ .ID }}" class="ride" data-search="{{ .Search }}">
+            <span class="ride-date">{{ .Date }}</span>
+            <span class="ride-title-wrap">
+              <span class="ride-title">{{ .Title }}</span>
+              {{ if .Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
+            </span>
+            {{ if .PowerSpark }}
+            <svg class="ride-spark" viewBox="0 0 60 16" preserveAspectRatio="none" aria-hidden="true"><polyline points="{{ .PowerSpark }}"/></svg>
             {{ end }}
-            {{ if .AvgPower }}
-              <span class="ride-metric"><b>{{ .AvgPower }}</b><span class="ride-unit">Вт ср.</span></span>
-            {{ else if not .Trainer }}
-              <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
-            {{ end }}
-            {{ if .TSSText }}
-              <span class="ride-metric"><b>{{ .TSSText }}</b></span>
-            {{ end }}
-          </span>
-        </a>
-      {{ end }}
-      </div>
-    </details>
-  {{ end }}
+            <span class="ride-metrics">
+              {{ if .HasRecord }}<span class="chip chip--record">рекорд</span>{{ end }}
+              {{ if .Trainer }}
+                <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
+              {{ else }}
+                <span class="ride-metric"><b>{{ km .DistanceKm }}</b><span class="ride-unit">км</span></span>
+              {{ end }}
+              {{ if .AvgPower }}
+                <span class="ride-metric"><b>{{ .AvgPower }}</b><span class="ride-unit">Вт ср.</span></span>
+              {{ else if not .Trainer }}
+                <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
+              {{ end }}
+              {{ if .TSSText }}
+                <span class="ride-metric"><b>{{ .TSSText }}</b></span>
+              {{ end }}
+            </span>
+          </a>
+        {{ end }}
+        </div>
+      </details>
+    {{ end }}
+    </div>
+    {{ end }}
   </div>
-</details>
-{{ end }}
+</div>
 {{ else }}
 <p class="empty rides-empty">Поездки появятся после импорта или синхронизации. <a class="link-cta" href="#syncBtn">Синхронизировать с велокомпом</a></p>
 {{ end }}
@@ -105,10 +112,6 @@ function filterRides(q) {
     m.style.display = visible ? "" : "none";
     if (visible) m.open = true;
   });
-  document.querySelectorAll("details.year").forEach(y => {
-    const visible = [...y.querySelectorAll("details.month")].some(m => m.style.display !== "none");
-    y.style.display = visible ? "" : "none";
-  });
 }
 </script>
 
@@ -117,12 +120,27 @@ function filterRides(q) {
 .rides-search { font: inherit; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); width: 100%; margin-bottom: 8px; background: var(--bg); color: var(--text); }
 .sync-log { display: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px; font-size: 13px; max-height: 220px; overflow: auto; white-space: pre-wrap; margin: 0 0 12px; }
 
+/* раскладка: меню годов сбоку, контент справа (как на /workout) */
+.rides-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 28px; align-items: start; }
+.rides-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 16px; }
+.rides-nav a { padding: 6px 12px; border-radius: 999px; color: var(--text-2); font-size: 14px; }
+.rides-nav a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
+.rides-nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+.rides-content { min-width: 0; }
+.rides-year { margin: 8px 0 14px; font-size: 22px; }
+.rides-year .sub { font-weight: 400; font-size: 16px; }
+
+/* месяц — отдельная карточка: фон отделяет месяцы друг от друга */
+.rides-content .months { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.rides-content .month { margin: 0; border-radius: var(--radius); overflow: hidden; }
 .month > summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; }
 .month-name { min-width: 90px; }
 .month-stats { margin-left: auto; color: var(--text-2); font-size: 13px; font-weight: 500; }
 .rides-empty { margin: 20px 0; }
 
-.ride-list { display: flex; flex-direction: column; }
+/* список поездок на белом фоне карточной серости: сразу видно,
+   где шапка месяца, а где поездки */
+.ride-list { display: flex; flex-direction: column; background: var(--bg); }
 .ride {
   display: grid;
   grid-template-columns: 86px 1fr 70px auto;
@@ -147,6 +165,8 @@ function filterRides(q) {
 .ride-unit { color: var(--text-3); font-size: 12px; font-weight: 400; }
 
 @media (max-width: 700px) {
+  .rides-layout { grid-template-columns: 1fr; }
+  .rides-nav { position: static; flex-direction: row; flex-wrap: wrap; padding: 0 0 6px; }
   .ride { grid-template-columns: 1fr auto; gap: 6px 12px; }
   .ride-date { order: 1; }
   .ride-title-wrap { order: 3; grid-column: 1 / -1; }
