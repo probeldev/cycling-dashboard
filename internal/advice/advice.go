@@ -22,7 +22,6 @@ const (
 	HighZonePct       = 40   // больше — много времени в Z4+
 	HeavyTSS          = 100  // выше — тяжёлая тренировка
 	PreviousHeavyTSS  = 80   // выше — вчера тоже была тяжёлая
-	LowRPE            = 4    // не выше — субъективно легко
 	GrayZonePct       = 20   // больше — много серой зоны за неделю
 	GoodDecouplingPct = 5    // ниже — мощность не просела относительно пульса
 	GoodVI            = 1.08 // ниже — ровная работа
@@ -96,12 +95,6 @@ func For(w store.Workout, ctx Context) []Card {
 	}
 	if ctx.TSB < thresholds.TSBLoadedMin {
 		add(LevelWarn, "Накопленная усталость", "1–2 дня Z1 или отдых")
-	}
-	if w.RPE > 0 && w.RPE <= LowRPE && w.HasTSS && w.TSS > HeavyTSS {
-		add(LevelWarn, "Субъективно легко", "нагрузка высокая — возможно, FTP занижен")
-	}
-	if w.RPE == 0 {
-		add(LevelInfo, "Нет RPE", "поставь RPE: единственная метрика, которая не врёт на рваной городской езде")
 	}
 	if ctx.WeekGrayPct > GrayZonePct {
 		add(LevelWarn, "Много серой зоны", "добавь лёгкого станка или убери темповые")

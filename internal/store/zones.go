@@ -145,7 +145,6 @@ type Week struct {
 	LowPct       float64   `json:"lowPct"`  // Z1+Z2
 	HighPct      float64   `json:"highPct"` // Z4..Z7
 	GrayPct      float64   `json:"grayPct"` // Z3
-	SRPESum      float64   `json:"srpeSum"` // сумма RPE × минуты (0 — RPE не заполняли)
 }
 
 // WeekStart — понедельник 00:00 локального времени.
@@ -169,7 +168,7 @@ func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 	qNow := now.UTC().Format(time.RFC3339)
 
 	rows, err := db.Query(`SELECT id, start_time, duration_sec, COALESCE(distance_m, 0),
-	    trainer, COALESCE(tss, 0), COALESCE(rpe, 0)
+	    trainer, COALESCE(tss, 0)
 	    FROM workouts WHERE start_time >= ? AND start_time < ? AND start_time <= ?
 	    ORDER BY start_time`, qFrom, qTo, qNow)
 	if err != nil {
@@ -182,8 +181,7 @@ func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 		var start string
 		var dist, tss float64
 		var trainer bool
-		var rpe int
-		if err := rows.Scan(&id, &start, &dur, &dist, &trainer, &tss, &rpe); err != nil {
+		if err := rows.Scan(&id, &start, &dur, &dist, &trainer, &tss); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -207,7 +205,6 @@ func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 		w.Hours += h
 		w.DistanceKm += dist / 1000
 		w.Rides++
-		w.SRPESum += float64(rpe) * float64(dur) / 60
 		if trainer {
 			w.TrainerHours += h
 		} else {

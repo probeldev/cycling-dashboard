@@ -233,14 +233,14 @@ func loadRideSamples(db *sql.DB, ids []int64, maxN int) (map[int64][]store.Sampl
 	      SELECT workout_id, COUNT(*) AS total FROM samples
 	      WHERE workout_id IN (`+ph+`) GROUP BY workout_id
 	    ), numbered AS (
-	      SELECT workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms,
-	             altitude_m, distance_m, temperature,
-	             ROW_NUMBER() OVER (PARTITION BY workout_id ORDER BY ts_offset, rowid) - 1 AS rn
-	      FROM samples WHERE workout_id IN (`+ph+`)
-	    )
-	    SELECT n.workout_id, CAST(ROUND(AVG(n.ts_offset)) AS INTEGER), AVG(n.lat), AVG(n.lon),
-	           CAST(AVG(n.power) AS INTEGER), CAST(AVG(n.cadence) AS INTEGER), CAST(AVG(n.hr) AS INTEGER),
-	           AVG(n.speed_ms), AVG(n.altitude_m), MAX(n.distance_m), AVG(n.temperature)
+      SELECT workout_id, ts_offset, lat, lon, power, cadence, hr, speed_ms,
+             altitude_m, distance_m,
+             ROW_NUMBER() OVER (PARTITION BY workout_id ORDER BY ts_offset, rowid) - 1 AS rn
+      FROM samples WHERE workout_id IN (`+ph+`)
+    )
+    SELECT n.workout_id, CAST(ROUND(AVG(n.ts_offset)) AS INTEGER), AVG(n.lat), AVG(n.lon),
+           CAST(AVG(n.power) AS INTEGER), CAST(AVG(n.cadence) AS INTEGER), CAST(AVG(n.hr) AS INTEGER),
+           AVG(n.speed_ms), AVG(n.altitude_m), MAX(n.distance_m)
 	    FROM numbered n JOIN counts c ON c.workout_id = n.workout_id
 	    GROUP BY n.workout_id, n.rn / ((c.total + ? - 1) / ?)
 	    ORDER BY n.workout_id, 2`, args...)
@@ -251,9 +251,9 @@ func loadRideSamples(db *sql.DB, ids []int64, maxN int) (map[int64][]store.Sampl
 	for rows.Next() {
 		var id int64
 		var s store.Sample
-		var lat, lon, spd, alt, dist, temp sql.NullFloat64
+		var lat, lon, spd, alt, dist sql.NullFloat64
 		var p, c, h sql.NullInt64
-		if err := rows.Scan(&id, &s.Offset, &lat, &lon, &p, &c, &h, &spd, &alt, &dist, &temp); err != nil {
+		if err := rows.Scan(&id, &s.Offset, &lat, &lon, &p, &c, &h, &spd, &alt, &dist); err != nil {
 			return nil, err
 		}
 		s.Lat = lat.Float64
@@ -269,8 +269,6 @@ func loadRideSamples(db *sql.DB, ids []int64, maxN int) (map[int64][]store.Sampl
 		s.HasAlt = alt.Valid
 		s.DistanceM = dist.Float64
 		s.HasDist = dist.Valid
-		s.TempC = temp.Float64
-		s.HasTemp = temp.Valid
 		out[id] = append(out[id], s)
 	}
 	return out, rows.Err()

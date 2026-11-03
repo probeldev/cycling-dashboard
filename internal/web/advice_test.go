@@ -47,7 +47,7 @@ func TestWorkoutAdviceBlock(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Инсайты", "Низкий каденс", "Пульса нет", "Нет RPE"} {
+	for _, want := range []string{"Инсайты", "Низкий каденс", "Пульса нет"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)
 		}
@@ -81,7 +81,7 @@ func TestWorkoutAdviceContext(t *testing.T) {
 	id, err := store.InsertWorkout(db, &store.Workout{
 		StartTime: day, Duration: time.Hour, TSS: 150,
 		AvgCadence: 85, AvgPower: 150, NormPower: 150, HasPower: true,
-		VI: 1.0, AvgHR: 130, MaxHR: 160, RPE: 5, Trainer: true,
+		VI: 1.0, AvgHR: 130, MaxHR: 160, Trainer: true,
 	}, "hash-advice-ctx-main", filepath.Join(t.TempDir(), "x.fit"), 1)
 	if err != nil {
 		t.Fatal(err)

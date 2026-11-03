@@ -123,7 +123,6 @@
         {{ with .TSS }}<span>TSS <b>{{ intFloat (deref .) }}</b></span>{{ end }}
         {{ with .IF }}<span>IF <b>{{ printf "%.2f" (deref .) }}</b></span>{{ end }}
         {{ with .VI }}<span>VI <b>{{ printf "%.2f" (deref .) }}</b></span>{{ end }}
-        {{ if .RPE }}<span>RPE <b>{{ .RPE }}</b></span>{{ end }}
         {{ with .Bike }}<span>велосипед <b>{{ . }}</b></span>{{ end }}
       </div>
       {{ if .Advice }}

@@ -20,16 +20,15 @@
   section.blk { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; }
   section.blk:first-of-type { border-top: none; }
 
-  .rpe-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin: 10px 0 0; }
-  .rpe-row label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
-  .rpe-row select, .rpe-row textarea,
+  .notes-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin: 10px 0 0; }
+  .notes-row label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+  .notes-row textarea,
   .w-settings input, .w-settings select {
     font: inherit; font-size: 14px; padding: 6px 10px;
     border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text);
   }
-  .rpe-row .grow { flex: 1 1 280px; min-width: 200px; }
-  .rpe-row textarea { width: 100%; resize: vertical; }
-  .rpe-hint { font-size: 12px; color: var(--text-3); }
+  .notes-row .grow { flex: 1 1 280px; min-width: 200px; }
+  .notes-row textarea { width: 100%; resize: vertical; }
 
   .insight-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .insight .x { color: var(--text-2); }
@@ -67,7 +66,6 @@
   <div class="w-chips">
     {{ if .W.Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
     {{ if .W.IsTest }}<span class="chip chip--muted">тест · не в рекордах</span>{{ end }}
-    {{ if .W.HasTemp }}<span class="chip chip--muted">{{ trimFloat .W.AvgTemp }} °C</span>{{ end }}
     {{ if .W.Bike }}<span class="chip chip--muted">{{ .W.Bike }}</span>{{ end }}
     {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
   </div>
@@ -77,20 +75,13 @@
 <p class="w-summary">{{ range .Summary }}{{ . }} {{ end }}</p>
 {{ end }}
 
-<div class="rpe-row">
-  <div>
-    <label for="rpe">RPE — субъективная тяжесть{{ if .W.RPE }} · sRPE {{ printf "%.0f" .W.SRPE }}{{ end }}</label>
-    <select id="rpe">
-      <option value="">не указан</option>
-      {{ range .RPEOptions }}<option value="{{ .N }}"{{ if eq .N $.W.RPE }} selected{{ end }}>{{ .N }} — {{ .Label }}</option>{{ end }}
-    </select>
-  </div>
+<div class="notes-row">
   <div class="grow">
     <label for="notes">Заметка</label>
     <textarea id="notes" rows="1" maxlength="2000" placeholder="ощущения, погода, контекст">{{ .W.Notes }}</textarea>
   </div>
   <button class="btn--ghost" hx-post="/workout/{{ .W.ID }}/context"
-    hx-vals="js:{rpe: document.getElementById('rpe').value, notes: document.getElementById('notes').value}"
+    hx-vals="js:{notes: document.getElementById('notes').value}"
     hx-swap="none">Сохранить</button>
 </div>
 
@@ -162,10 +153,6 @@
   {{ if .W.MaxHR }}<div class="d-item"><div class="v">{{ .W.MaxHR }}</div><div class="k">пульс макс</div></div>{{ end }}
   {{ end }}
 </div>
-
-{{ if and .W.RPE .W.HasTSS }}
-<p class="rpe-hint" style="margin:8px 0 0">TSS {{ trimFloat .W.TSS }} (от мощности) и sRPE {{ printf "%.0f" .W.SRPE }} (RPE {{ .W.RPE }} × {{ printf "%.0f" .W.Duration.Minutes }} мин) — разные шкалы, напрямую не сравнивать.</p>
-{{ end }}
 
 {{ if .PowerZones }}
 <section class="blk">

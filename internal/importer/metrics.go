@@ -22,26 +22,19 @@ type sampleMetrics struct {
 	NoPowerSec        int     // время без данных поверметра (power IS NULL)
 	SuspectDropoutSec int     // power == 0 при cadence > 0 — похоже на отвал датчика
 	WorkKJ            float64 // Σ(power·dt)/1000
-	AvgTemp           float64 // средняя по записям с температурой
-	HasTemp           bool
-	HasPowerSample    bool // есть хоть одна запись с валидной мощностью
+	HasPowerSample    bool    // есть хоть одна запись с валидной мощностью
 }
 
 // sampleMetricsOf считает метрики по сэмплам. Время берём из ridedata.Timings —
 // того же источника, что NP и распределения, чтобы не появилось третьей логики.
 func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 	times := ridedata.Timings(samples)
-	var sumActive, secsActive, coast, noPower, suspect, workJ, tempSum float64
+	var sumActive, secsActive, coast, noPower, suspect, workJ float64
 	var sumCadence, secsCadence float64
-	var tempN int
 	var hasPower bool
 	for i, s := range samples {
 		if s.HasPwr {
 			hasPower = true
-		}
-		if s.HasTemp {
-			tempSum += s.TempC
-			tempN++
 		}
 		dt := times[i].Secs
 		if s.Cadence > 0 {
@@ -69,10 +62,6 @@ func sampleMetricsOf(samples []store.Sample) sampleMetrics {
 		SuspectDropoutSec: int(math.Round(suspect)),
 		WorkKJ:            workJ / 1000,
 	}
-	if tempN > 0 {
-		sm.AvgTemp = tempSum / float64(tempN)
-		sm.HasTemp = true
-	}
 	if secsActive > 0 {
 		sm.AvgPowerActive = int(math.Round(sumActive / secsActive))
 	}
@@ -93,7 +82,6 @@ func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, work
 	w.AvgPowerActive, w.AvgCadenceActive = 0, 0
 	w.CoastingSec, w.NoPowerSec, w.SuspectDropoutSec = 0, 0, 0
 	w.ElapsedSec, w.PauseSec, w.WorkKJ = 0, 0, 0
-	w.AvgTemp, w.HasTemp = 0, false
 	w.MetricsVersion = 0
 
 	sm := sampleMetricsOf(samples)
@@ -108,10 +96,6 @@ func applyMetrics(w *store.Workout, samples []store.Sample, elapsedSec int, work
 		w.WorkKJ = sm.WorkKJ
 	}
 	w.HasWork = workKJ > 0 || sm.HasPowerSample
-	if sm.HasTemp {
-		w.AvgTemp = math.Round(sm.AvgTemp*10) / 10
-		w.HasTemp = true
-	}
 	// паузы — разница между общим временем и временем в движении; отрицательную не пишем
 	if elapsedSec > 0 {
 		w.ElapsedSec = elapsedSec

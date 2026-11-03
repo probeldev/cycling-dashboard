@@ -130,15 +130,6 @@ func TestSummaryTrendDecoupling(t *testing.T) {
 	}
 }
 
-func TestSummaryRecommendNoRPE(t *testing.T) {
-	w, ctx := baseWorkout()
-	w.RPE = 0
-	out := joined(Summary(w, ctx))
-	if !strings.Contains(out, "Отметь RPE") {
-		t.Errorf("нет рекомендации про RPE: %v", out)
-	}
-}
-
 func TestSummaryPriorityAndCap(t *testing.T) {
 	// все правила сразу: оценка, рекорд, тренд, рекомендация — 4 кандидата,
 	// в вывод попадают первые три по приоритету §6

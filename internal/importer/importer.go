@@ -320,11 +320,6 @@ func ParseFile(path string) (*store.Workout, []store.Sample, error) {
 			smp.DistanceM = float64(r.Distance) / 100 // scale 100
 			smp.HasDist = true
 		}
-		// температура: invalid в FIT — 0x7F
-		if r.Temperature != math.MaxInt8 {
-			smp.TempC = float64(r.Temperature)
-			smp.HasTemp = true
-		}
 		if !r.PositionLat.Invalid() && !r.PositionLong.Invalid() {
 			smp.Lat = r.PositionLat.Degrees()
 			smp.Lon = r.PositionLong.Degrees()

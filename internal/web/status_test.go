@@ -20,7 +20,7 @@ import (
 
 // statusFixture — 7 полных недель по 220 TSS и текущая неделя 220. Предыдущая
 // неделя пустая: это даёт deltaPct=null, а медиана (0,220,220,220) всё равно
-// 220. Последняя тренировка без пульса/RPE и с низким каденсом — у неё будут
+// 220. Последняя тренировка без пульса и с низким каденсом — у неё будут
 // карточки советов.
 func statusFixture(t *testing.T) (*sql.DB, time.Time) {
 	t.Helper()
@@ -193,10 +193,10 @@ func TestStatusGolden(t *testing.T) {
 		t.Errorf("первая карточка = %+v", cards[0])
 	}
 
-	if len(got.Alerts) != 2 || got.Alerts[0].Code != "no_hr" || got.Alerts[1].Code != "no_rpe" {
+	if len(got.Alerts) != 1 || got.Alerts[0].Code != "no_hr" {
 		t.Errorf("alerts = %+v", got.Alerts)
 	}
-	if len(got.AllAlerts) != 2 || got.AlertsAll != nil {
+	if len(got.AllAlerts) != 1 || got.AlertsAll != nil {
 		t.Errorf("alerts/all = %+v / %+v", got.Alerts, got.AlertsAll)
 	}
 }
@@ -614,24 +614,17 @@ func TestStatusStaleBoundary(t *testing.T) {
 	}
 }
 
-func TestStatusMixedHRAndRPE(t *testing.T) {
+func TestStatusMixedHR(t *testing.T) {
 	db := openStatusDB(t)
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
 	workouts := []store.Workout{
 		{StartTime: now.AddDate(0, 0, -1), Duration: time.Hour, TSS: 30, AvgPower: 100, AvgHR: 120},
-		{StartTime: now.AddDate(0, 0, -2), Duration: time.Hour, TSS: 30, AvgPower: 100, RPE: 5},
+		{StartTime: now.AddDate(0, 0, -2), Duration: time.Hour, TSS: 30, AvgPower: 100},
 		{StartTime: now.AddDate(0, 0, -3), Duration: time.Hour, TSS: 30, AvgPower: 100},
 	}
 	for i := range workouts {
-		id, err := store.InsertWorkout(db, &workouts[i], fmt.Sprintf("hash-mixed-%d", i), filepath.Join(t.TempDir(), "m.fit"), 1)
-		if err != nil {
+		if _, err := store.InsertWorkout(db, &workouts[i], fmt.Sprintf("hash-mixed-%d", i), filepath.Join(t.TempDir(), "m.fit"), 1); err != nil {
 			t.Fatal(err)
-		}
-		if i == 1 {
-			rpe := 5
-			if err := store.SetWorkoutContext(db, id, store.WorkoutContextUpdate{RPE: &rpe}); err != nil {
-				t.Fatal(err)
-			}
 		}
 	}
 	got, err := buildStatus(db, now, false)
@@ -640,9 +633,6 @@ func TestStatusMixedHRAndRPE(t *testing.T) {
 	}
 	if hasAlertCode(got.AllAlerts, "no_hr") {
 		t.Errorf("no_hr при наличии пульса хотя бы в одной тренировке: %+v", got.AllAlerts)
-	}
-	if hasAlertCode(got.AllAlerts, "no_rpe") {
-		t.Errorf("no_rpe при наличии RPE хотя бы в одной тренировке: %+v", got.AllAlerts)
 	}
 }
 
@@ -667,10 +657,10 @@ func TestStatusAlertsTruncatedAndComplete(t *testing.T) {
 	if len(got.Alerts) != 3 {
 		t.Errorf("alerts = %d, хочу 3", len(got.Alerts))
 	}
-	if len(got.AllAlerts) < 4 {
-		t.Fatalf("allAlerts = %+v, хочу 4+", got.AllAlerts)
+	if len(got.AllAlerts) < 3 {
+		t.Fatalf("allAlerts = %+v, хочу 3+", got.AllAlerts)
 	}
-	for _, code := range []string{"data_gaps", "no_hr", "lowdata", "no_rpe"} {
+	for _, code := range []string{"data_gaps", "no_hr", "lowdata"} {
 		if !hasAlertCode(got.AllAlerts, code) {
 			t.Errorf("нет алерта %s: %+v", code, got.AllAlerts)
 		}

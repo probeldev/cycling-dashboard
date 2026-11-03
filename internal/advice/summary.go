@@ -132,8 +132,6 @@ func recommendPhrase(w store.Workout, ctx Context) string {
 		return "Завтра — лёгкий день Z1 или отдых."
 	case ctx.TSB < thresholds.TSBLightBelow:
 		return "Дальше — только лёгкая Z1–Z2, пока TSB не вернётся к нулю."
-	case w.RPE == 0:
-		return "Отметь RPE: субъективная оценка помогает контролировать нагрузку."
 	case ctx.WeekGrayPct > GrayZonePct:
 		return "На неделе много серой зоны — добавь лёгких тренировок или убери темповые."
 	}

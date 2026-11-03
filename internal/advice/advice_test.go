@@ -23,7 +23,6 @@ func baseWorkout() (store.Workout, Context) {
 		TSS:              50,
 		AvgHR:            130,
 		MaxHR:            160,
-		RPE:              5,
 	}, Context{}
 }
 
@@ -214,46 +213,6 @@ func TestRuleLowTSB(t *testing.T) {
 	}
 }
 
-func TestRuleEasyRPE(t *testing.T) {
-	for _, tt := range []struct {
-		name   string
-		rpe    int
-		tss    float64
-		hasTSS bool
-		want   bool
-	}{
-		{"RPE 4 при TSS 100.1", 4, 100.1, true, true},
-		{"RPE 5", 5, 200, true, false},
-		{"TSS 100 ровно", 4, 100, true, false},
-		{"RPE не задан — правило 10", 0, 200, true, false},
-		{"HasTSS false", 4, 200, false, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			w, ctx := baseWorkout()
-			w.RPE, w.TSS, w.HasTSS = tt.rpe, tt.tss, tt.hasTSS
-			if got := hasCard(For(w, ctx), "Субъективно легко"); got != tt.want {
-				t.Errorf("Субъективно легко = %v, хочу %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestRuleNoRPE(t *testing.T) {
-	for _, tt := range []struct {
-		rpe  int
-		want bool
-	}{
-		{0, true},
-		{1, false},
-	} {
-		w, ctx := baseWorkout()
-		w.RPE = tt.rpe
-		if got := hasCard(For(w, ctx), "Нет RPE"); got != tt.want {
-			t.Errorf("RPE=%d: Нет RPE = %v, хочу %v", tt.rpe, got, tt.want)
-		}
-	}
-}
-
 func TestRuleGrayZone(t *testing.T) {
 	for _, tt := range []struct {
 		gray float64
@@ -296,7 +255,7 @@ func TestRuleGoodDecoupling(t *testing.T) {
 func ptr(v float64) *float64 { return &v }
 
 // TestPriorityAndLimit — warn идёт первым, лимит 5 отрезает хвост: шестая
-// карточка «Нет RPE» отброшена.
+// карточка «Пульса нет» отброшена.
 func TestPriorityAndLimit(t *testing.T) {
 	w, ctx := baseWorkout()
 	w.AvgCadenceActive = 60                         // info
@@ -304,16 +263,16 @@ func TestPriorityAndLimit(t *testing.T) {
 	w.CoastingSec = int(w.Duration.Seconds() * 0.3) // info
 	w.NoPowerSec = int(w.Duration.Seconds() * 0.1)  // warn
 	w.AvgHR, w.MaxHR = 0, 0                         // info
-	w.RPE = 0                                       // info
+	ctx.WeekGrayPct = 30                            // warn
 	cards := For(w, ctx)
 	if len(cards) != 5 {
 		t.Fatalf("карточек %d, хочу 5 (MaxCards=%d)", len(cards), MaxCards)
 	}
-	if hasCard(cards, "Нет RPE") {
-		t.Error("шестая карточка «Нет RPE» не отброшена")
+	if hasCard(cards, "Пульса нет") {
+		t.Error("шестая карточка «Пульса нет» не отброшена")
 	}
-	wantLevels := []string{LevelWarn, LevelWarn, LevelInfo, LevelInfo, LevelInfo}
-	wantTitles := []string{"Рваная езда", "Пропуски данных", "Низкий каденс", "Много наката", "Пульса нет"}
+	wantLevels := []string{LevelWarn, LevelWarn, LevelWarn, LevelInfo, LevelInfo}
+	wantTitles := []string{"Рваная езда", "Пропуски данных", "Много серой зоны", "Низкий каденс", "Много наката"}
 	for i := range cards {
 		if cards[i].Level != wantLevels[i] || cards[i].Title != wantTitles[i] {
 			t.Errorf("карточка %d = %s/%s, хочу %s/%s", i, cards[i].Level, cards[i].Title, wantLevels[i], wantTitles[i])
@@ -339,11 +298,11 @@ func TestSortWarnInfoGood(t *testing.T) {
 	}
 }
 
-// TestEmptyData — у пустой тренировки единственное осмысленное напоминание:
-// поставить RPE. Пакет не паникует и не выдумывает «пульса нет».
+// TestEmptyData — у пустой тренировки нет ни одного основания для карточки.
+// Пакет не паникует и не выдумывает «пульса нет».
 func TestEmptyData(t *testing.T) {
 	cards := For(store.Workout{}, Context{})
-	if len(cards) != 1 || cards[0].Title != "Нет RPE" || cards[0].Level != LevelInfo {
+	if len(cards) != 0 {
 		t.Errorf("пустая тренировка: %+v", cards)
 	}
 }

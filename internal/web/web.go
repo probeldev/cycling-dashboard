@@ -202,7 +202,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			}
 		}
 		render(w, "workout.html", map[string]any{
-			"W": wo, "MMP": mmpC, "Bikes": bikes, "RPEOptions": rpeOptions,
+			"W": wo, "MMP": mmpC, "Bikes": bikes,
 			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx), "PowerZones": powerZones,
 			"Summary": advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP),
 		})
@@ -267,18 +267,6 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		var upd store.WorkoutContextUpdate
-		if req.Form.Has("rpe") {
-			rpe := 0
-			if raw := req.FormValue("rpe"); raw != "" {
-				v, err := strconv.Atoi(raw)
-				if err != nil || v < 1 || v > 10 {
-					http.Error(w, "RPE: нужно целое число от 1 до 10", http.StatusBadRequest)
-					return
-				}
-				rpe = v
-			}
-			upd.RPE = &rpe
-		}
 		if req.Form.Has("notes") {
 			notes := strings.TrimSpace(req.FormValue("notes"))
 			if len([]rune(notes)) > maxNotesLen {
@@ -287,8 +275,8 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			}
 			upd.Notes = &notes
 		}
-		if upd.RPE == nil && upd.Notes == nil {
-			http.Error(w, "нужно передать rpe и/или notes", http.StatusBadRequest)
+		if upd.Notes == nil {
+			http.Error(w, "нужно передать notes", http.StatusBadRequest)
 			return
 		}
 		if err := store.SetWorkoutContext(db, id, upd); err != nil {

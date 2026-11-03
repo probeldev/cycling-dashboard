@@ -152,7 +152,6 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 		AvgPower: 150, NormPower: 180, HasPower: true,
 		IF: 0.97, HasIF: true, // микро-вывод «почти гоночная»
 		VI: 1.2, HasVI: true, TSS: 120, HasTSS: true, // рваная + тяжёлая
-		RPE: 0, // нет RPE
 	}, "hash-insights-today", filepath.Join(t.TempDir(), "t.fit"), 1)
 	if err != nil {
 		t.Fatal(err)
@@ -167,10 +166,10 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if n := strings.Count(body, `class="insight insight--`); n != 5 {
-		t.Errorf("инсайтов %d, хочу 5 (3 + 2 под «ещё»)", n)
+	if n := strings.Count(body, `class="insight insight--`); n != 4 {
+		t.Errorf("инсайтов %d, хочу 4 (3 + 1 под «ещё»)", n)
 	}
-	for _, want := range []string{"<details class=\"insights-more\">", "ещё 2", "Рваная езда", "Два тяжёлых дня подряд", "Низкий каденс"} {
+	for _, want := range []string{"<details class=\"insights-more\">", "ещё 1", "Рваная езда", "Два тяжёлых дня подряд", "Низкий каденс"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("нет %q", want)
 		}

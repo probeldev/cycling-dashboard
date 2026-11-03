@@ -93,7 +93,6 @@ type lastWorkoutView struct {
 	TSS       *float64
 	IF        *float64
 	VI        *float64
-	RPE       int
 	Bike      string
 	HasPower  bool
 	Advice    []advice.Card
@@ -738,7 +737,6 @@ func makeLastWorkoutView(w *store.Workout, cards []advice.Card) *lastWorkoutView
 		KM:        round1(w.DistanceKm),
 		AvgPower:  w.AvgPower,
 		NormPower: w.NormPower,
-		RPE:       w.RPE,
 		Bike:      w.Bike,
 		HasPower:  w.HasPower,
 		Advice:    cards,
@@ -918,9 +916,6 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 	if len(recent) >= 3 && allNoHR(recent) {
 		alerts = append(alerts, statusAlert{Level: "info", Code: "no_hr", Text: "В последних 3 тренировках нет пульса."})
 	}
-	if len(recent) >= 3 && allNoRPE(recent) {
-		alerts = append(alerts, statusAlert{Level: "info", Code: "no_rpe", Text: "В последних 3 тренировках не заполнен RPE."})
-	}
 	hints, err := store.FTPHints(db, now)
 	if err != nil {
 		return nil, err
@@ -945,7 +940,7 @@ func statusAlerts(db *sql.DB, now time.Time, facts historyFacts, latest *store.W
 				daysText(facts.dataDays), daysText(facts.loadDays42)),
 		})
 	}
-	rank := map[string]int{"stale": 0, "data_gaps": 1, "no_hr": 2, "lowdata": 3, "no_rpe": 4, "ftp_hint": 5}
+	rank := map[string]int{"stale": 0, "data_gaps": 1, "no_hr": 2, "lowdata": 3, "ftp_hint": 4}
 	sort.SliceStable(alerts, func(i, j int) bool { return rank[alerts[i].Code] < rank[alerts[j].Code] })
 	return alerts, nil
 }
@@ -983,15 +978,6 @@ func recentWorkouts(db *sql.DB, n int, now time.Time) ([]*store.Workout, error) 
 func allNoHR(list []*store.Workout) bool {
 	for _, w := range list {
 		if w.AvgHR > 0 || w.MaxHR > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func allNoRPE(list []*store.Workout) bool {
-	for _, w := range list {
-		if w.RPE > 0 {
 			return false
 		}
 	}
