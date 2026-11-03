@@ -3,8 +3,9 @@
   /* ===== деталка тренировки (TODO-UI §4.3), page-scoped ===== */
   .w-head { margin: 0 0 10px; }
   .w-back { color: var(--text-2); font-size: 14px; }
+  /* дата и название — одной логической строкой «дата · название» (§4.3) */
   .w-head h1 { margin: 4px 0 2px; font-size: 26px; font-feature-settings: "tnum"; }
-  .w-name { color: var(--text-2); font-size: 15px; margin: 0 0 6px; }
+  .w-name { color: var(--text-2); font-size: 17px; font-weight: 600; }
   .w-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   .w-summary { font-size: 16px; line-height: 1.55; margin: 12px 0 2px; background: var(--surface); border: none; border-radius: var(--radius); padding: 12px 16px; }
 
@@ -86,8 +87,8 @@
   <h2 class="sec-h">Сводка</h2>
 <header class="w-head">
   <a class="w-back" href="/rides">← Поездки</a>
-  <h1>{{ datetime .W.StartTime }}</h1>
-  {{ if .W.Name }}<div class="w-name">{{ .W.Name }}</div>{{ end }}
+<h1>{{ datetime .W.StartTime }}{{ if .W.Name }} <span class="w-name">· {{ .W.Name }}</span>{{ end }}</h1>
+
   <div class="w-chips">
     {{ if .W.Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
     {{ if .W.IsTest }}<span class="chip chip--muted">тест · не в рекордах</span>{{ end }}
