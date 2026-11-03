@@ -112,12 +112,6 @@ func TestAutoTitleRules(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "тест",
-			w:     store.Workout{Name: "Ramp", IsTest: true},
-			zones: [7]float64{},
-			want:  "Тест FTP",
-		},
-		{
 			name: "пороговая работа",
 			w: store.Workout{
 				Name: "Интервалы", IF: 0.97, HasIF: true, TSS: 95, HasTSS: true,

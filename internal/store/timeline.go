@@ -21,7 +21,6 @@ type Day struct {
 	ATL          float64   `json:"atl"`
 	TSB          float64   `json:"tsb"`
 	Names        string    `json:"names,omitempty"` // названия тренировок дня для подсказок
-	Tests        int       `json:"tests,omitempty"` // сколько из них помечено тестовыми (замер)
 }
 
 // Timeline — дневной ряд [from, to] включительно.
@@ -56,7 +55,7 @@ func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 	qFrom := warmFrom.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	qTo := to.AddDate(0, 0, 3).UTC().Format(time.RFC3339)
 	query := `SELECT start_time, duration_sec, COALESCE(distance_m, 0),
-	    trainer, is_test, COALESCE(tss, 0), COALESCE(name, '')
+	    trainer, COALESCE(tss, 0), COALESCE(name, '')
 	    FROM workouts WHERE start_time >= ? AND start_time < ?`
 	args := []any{qFrom, qTo}
 	if !until.IsZero() {
@@ -72,7 +71,6 @@ func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 	type agg struct {
 		tss, hours, dist float64
 		rides, trainer   int
-		tests            int
 		names            []string
 	}
 	byDay := map[time.Time]*agg{}
@@ -80,9 +78,9 @@ func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 		var start string
 		var dur int64
 		var dist, tss float64
-		var trainer, isTest bool
+		var trainer bool
 		var name string
-		if err := rows.Scan(&start, &dur, &dist, &trainer, &isTest, &tss, &name); err != nil {
+		if err := rows.Scan(&start, &dur, &dist, &trainer, &tss, &name); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339, start)
@@ -109,11 +107,6 @@ func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 		if name != "" {
 			a.names = append(a.names, name)
 		}
-		if isTest {
-			// в PMC тест остаётся (нагрузка реальная) — в подсказке календаря
-			// только помечаем его, чтобы не путать с рабочей тренировкой
-			a.tests++
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -131,7 +124,6 @@ func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 			day.TrainerRides = a.trainer
 			day.OutdoorRides = a.rides - a.trainer
 			day.Names = strings.Join(a.names, ", ")
-			day.Tests = a.tests
 		}
 		// TSB — вчерашние CTL/ATL, до нагрузки текущего дня
 		day.TSB = ctl - atl

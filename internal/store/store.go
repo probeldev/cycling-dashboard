@@ -33,11 +33,6 @@ type Workout struct {
 	Override   *bool
 	SubSport   string // подсорт из FIT: generic, indoor_cycling, road, mountain…
 
-	// тестовая тренировка — замер (ramp/FTP-тест), а не работа. Нагрузка
-	// (TSS, PMC) остаётся, но рекорды MMP, PR-флаги и CP-фит по умолчанию
-	// её не видят: пик из теста — не рабочее достижение.
-	IsTest bool
-
 	AvgSpeedKmh float64
 	MaxSpeedKmh float64
 	AvgCadence  int
@@ -296,7 +291,6 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"workouts", "pause_sec", `ALTER TABLE workouts ADD COLUMN pause_sec INTEGER`},
 		{"workouts", "work_kj", `ALTER TABLE workouts ADD COLUMN work_kj REAL`},
 		{"workouts", "metrics_version", `ALTER TABLE workouts ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0`},
-		{"workouts", "is_test", `ALTER TABLE workouts ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "avg_cadence_active", `ALTER TABLE workouts ADD COLUMN avg_cadence_active INTEGER`},
 		{"profile_history", "synthetic", `ALTER TABLE profile_history ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0`},
 	} {
@@ -310,10 +304,10 @@ CREATE TABLE IF NOT EXISTS settings (
 			}
 		}
 	}
-	// температура и RPE выпилены из приложения: колонки и триггеры удаляем
-	// из существующих баз. DROP COLUMN требует SQLite ≥ 3.35 и падает, пока
-	// на колонку rpe ссылаются триггеры — поэтому сначала триггеры.
-	// Идемпотентно: DROP ... IF EXISTS и проверка колонки через PRAGMA.
+	// temperature, RPE, notes и is_test выпилены из приложения: колонки и
+	// триггеры удаляем из существующих баз. DROP COLUMN требует SQLite ≥ 3.35
+	// и падает, пока на колонку rpe ссылаются триггеры — поэтому сначала
+	// триггеры. Идемпотентно: DROP ... IF EXISTS и проверка колонки через PRAGMA.
 	if _, err := db.Exec(`
 DROP TRIGGER IF EXISTS workouts_rpe_insert;
 DROP TRIGGER IF EXISTS workouts_rpe_update;`); err != nil {
@@ -323,6 +317,7 @@ DROP TRIGGER IF EXISTS workouts_rpe_update;`); err != nil {
 		{"workouts", "rpe"},
 		{"workouts", "avg_temp"},
 		{"workouts", "notes"},
+		{"workouts", "is_test"},
 		{"samples", "temperature"},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
@@ -416,8 +411,8 @@ func Changed(db *sql.DB, hash string, mtime int64) (bool, error) {
 }
 
 // InsertWorkout вставляет тренировку или обновляет её по file_hash.
-// is_test в INSERT/ON CONFLICT не входит: это пользовательский флаг, ре-импорт
-// его не трогает (новая строка получает 0 из DEFAULT).
+// Пользовательские поля (bike_id, trainer_override, name) в INSERT/ON CONFLICT
+// не входят: это ручные настройки, ре-импорт их не трогает.
 func InsertWorkout(db DBTX, w *Workout, hash, path string, mtime int64) (int64, error) {
 	tr := 0
 	if w.Trainer {
@@ -1231,15 +1226,14 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
-	var isTest int
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
-	    trainer_override, is_test, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_cadence_active, avg_power, max_power,
+	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_cadence_active, avg_power, max_power,
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	    elapsed_sec, pause_sec, work_kj, metrics_version, bike_id,
 	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), '')
 	    FROM workouts WHERE id = ?`, id).Scan(
-		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov, &isTest,
+		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
 		&spd, &mspd, &cad, &mcad, &cadActive, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &w.MetricsVersion,
 		&bikeID, &bikeName)
@@ -1254,7 +1248,6 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.StartTime = t.Local()
 	w.HasGPS = gps == 1
 	w.Trainer = tr == 1
-	w.IsTest = isTest == 1
 	if ov.Valid {
 		b := ov.Int64 == 1
 		w.Override = &b

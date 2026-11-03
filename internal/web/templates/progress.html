@@ -140,7 +140,7 @@
     <div class="metric-card"><div class="v">{{ printf "%.1f" .CP.WPrime }} кДж</div><div class="k">W' · запас над CP</div></div>
     {{ with .CP.FTP }}<div class="metric-card"><div class="v">{{ printf "%.0f" . }} Вт</div><div class="k">FTP оценка (0.95·20 мин)</div></div>{{ end }}
   </div>
-  <p class="coverage">Оценка по огибающей MMP за всё время, замеры не входят · {{ .CP.Points }} точек 120–1200 с · R² {{ printf "%.3f" .CP.R2 }}{{ if .CP.Low }} — низкая достоверность (&lt; 0.95), ориентир грубый{{ end }}</p>
+  <p class="coverage">Оценка по огибающей MMP за всё время · {{ .CP.Points }} точек 120–1200 с · R² {{ printf "%.3f" .CP.R2 }}{{ if .CP.Low }} — низкая достоверность (&lt; 0.95), ориентир грубый{{ end }}</p>
   {{ else }}
   <p class="sub" style="color:var(--text-2)">{{ if eq .CP.Reason "few" }}CP/W' не посчитать: нужно ≥3 окна MMP 120–1200 с (сейчас {{ .CP.Points }}).{{ else }}Кривая MMP не описывается моделью CP/W' — CP или W' неположительные либо фит слишком шумный.{{ end }}{{ with .CP.FTP }} FTP-оценка по 20 мин: {{ printf "%.0f" . }} Вт.{{ end }}</p>
   {{ end }}
@@ -316,9 +316,8 @@ async function loadHeatmap() {
       e.title = `${ddmmyyyy(key)} · ещё не наступило`;
     } else {
       e.className = "hm lvl" + level(tss) + (key === todayKey ? " today" : "");
-      const test = day && day.tests ? " · тест" : "";
       e.title = day && day.rides
-        ? `${ddmmyyyy(key)} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}${test}`
+        ? `${ddmmyyyy(key)} · ${day.distanceKm.toFixed(1)} км · ${tss.toFixed(0)} TSS${day.names ? " · " + day.names : ""}`
         : `${ddmmyyyy(key)} · отдых`;
     }
     root.appendChild(e);

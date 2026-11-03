@@ -49,7 +49,6 @@ type rideRow struct {
 	AvgPower     int
 	TSSText      string
 	Trainer      bool
-	IsTest       bool
 	HasRecord    bool
 	PowerSpark   string // inline-SVG polyline points
 	Search       string
@@ -168,7 +167,6 @@ func openMonthIndex(ry rideYear, now time.Time) int {
 type rideWorkoutMeta struct {
 	hasPower bool
 	ftp      int
-	isTest   bool
 	iff      float64
 	hasIF    bool
 	tss      float64
@@ -187,7 +185,7 @@ func loadRideWorkouts(db *sql.DB, ids []int64) (map[int64]rideWorkoutMeta, error
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := db.Query(`SELECT id, avg_power, ftp_w, if, tss, vi, is_test
+	rows, err := db.Query(`SELECT id, avg_power, ftp_w, if, tss, vi
 	    FROM workouts WHERE id IN (`+sqlPlaceholders(len(ids))+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -197,12 +195,11 @@ func loadRideWorkouts(db *sql.DB, ids []int64) (map[int64]rideWorkoutMeta, error
 		var id int64
 		var ap, ftp sql.NullInt64
 		var iff, tss, vi sql.NullFloat64
-		var isTest int
-		if err := rows.Scan(&id, &ap, &ftp, &iff, &tss, &vi, &isTest); err != nil {
+		if err := rows.Scan(&id, &ap, &ftp, &iff, &tss, &vi); err != nil {
 			return nil, err
 		}
 		out[id] = rideWorkoutMeta{
-			hasPower: ap.Valid, ftp: int(ftp.Int64), isTest: isTest == 1,
+			hasPower: ap.Valid, ftp: int(ftp.Int64),
 			iff: iff.Float64, hasIF: iff.Valid,
 			tss: tss.Float64, hasTSS: tss.Valid,
 			vi: vi.Float64, hasVI: vi.Valid,
@@ -219,7 +216,6 @@ func buildRideRow(r store.WorkoutRow, meta rideWorkoutMeta, samples []store.Samp
 		Name:      r.Name,
 		Duration:  time.Duration(r.DurationSec) * time.Second,
 		Trainer:   r.Trainer,
-		IsTest:    meta.isTest,
 		HasPower:  meta.hasPower,
 		FTP:       meta.ftp,
 		IF:        meta.iff,
@@ -239,7 +235,6 @@ func buildRideRow(r store.WorkoutRow, meta rideWorkoutMeta, samples []store.Samp
 		DurationText: formatDurationShort(r.DurationSec),
 		AvgPower:     r.AvgPower,
 		Trainer:      r.Trainer,
-		IsTest:       meta.isTest,
 		HasRecord:    hasRecord,
 		Search:       fmt.Sprintf("%s %s", r.StartTime.Format("02.01.2006"), r.Name),
 	}
@@ -326,9 +321,9 @@ func sqlPlaceholders(n int) string {
 }
 
 // recordWorkoutIDs возвращает workout_id, у которых есть хотя бы один рекорд
-// all-time (без тестов). Достаточно одного запроса для всего списка.
+// all-time. Достаточно одного запроса для всего списка.
 func recordWorkoutIDs(db *sql.DB) (map[int64]bool, error) {
-	records, err := store.BestRecordsUntil(db, time.Time{}, time.Now(), false)
+	records, err := store.BestRecordsUntil(db, time.Time{}, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -340,12 +335,8 @@ func recordWorkoutIDs(db *sql.DB) (map[int64]bool, error) {
 }
 
 // autoTitle — детерминированные правила человеческого названия тренировки.
-// Факты: зоны, IF, TSS, VI, длительность, флаг теста. Не использует LLM.
+// Факты: зоны, IF, TSS, VI, длительность. Не использует LLM.
 func autoTitle(w *store.Workout, zones [7]float64) string {
-	if w.IsTest {
-		return "Тест FTP"
-	}
-
 	total := 0.0
 	for _, s := range zones {
 		total += s

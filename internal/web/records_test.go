@@ -244,7 +244,7 @@ func TestWorkoutPageMMP(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Лучшие усилия", "5 с", ">300.0<", "рекорд за всё время (без замеров)", "1 мин", ">200.0<",
+	for _, want := range []string{"Лучшие усилия", "5 с", ">300.0<", "рекорд за всё время", "1 мин", ">200.0<",
 		`class="w-summary"`, "Рекордные отрезки: 5 с и 1 мин (за всё время)", `class="chip chip--record"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)

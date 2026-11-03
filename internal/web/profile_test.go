@@ -175,7 +175,7 @@ func TestTrainerToggleRecalculatesMetrics(t *testing.T) {
 		t.Fatalf("исходно: FTP=%d kind=%s IF=%v TSS=%v, хочу 250/outdoor/0.56/31.36", ftp, kind, iff, tss)
 	}
 
-	// та же валидация, что у флага теста: только 0 или 1
+	// валидация значения: только 0 или 1
 	for _, v := range []string{"", "2", "true"} {
 		if code := toggle(id, v); code != http.StatusBadRequest {
 			t.Errorf("value=%q: код %d, хочу 400", v, code)

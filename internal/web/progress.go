@@ -54,7 +54,7 @@ func progressRoutes(r chi.Router, db *sql.DB) {
 		tsb := round1(round1(pmcDay.CTL) - round1(pmcDay.ATL))
 		// CP/W' по всем данным: окна MMP за всё время, но не позже now —
 		// будущая тренировка не должна менять фит.
-		allRecords, err := store.BestRecordsUntil(db, time.Time{}, now, false)
+		allRecords, err := store.BestRecordsUntil(db, time.Time{}, now)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -239,7 +239,7 @@ func outdoorRolling28(db *sql.DB, now time.Time) (km, hours float64, err error) 
 	var secs int64
 	err = db.QueryRow(`SELECT COALESCE(SUM(distance_m), 0), COALESCE(SUM(duration_sec), 0)
 	    FROM workouts
-	    WHERE trainer = 0 AND is_test = 0 AND distance_m > 0 AND duration_sec > 0
+	    WHERE trainer = 0 AND distance_m > 0 AND duration_sec > 0
 	      AND start_time >= ? AND start_time <= ?`,
 		from.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339)).Scan(&distM, &secs)
 	if err != nil {

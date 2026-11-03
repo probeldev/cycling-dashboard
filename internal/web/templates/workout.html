@@ -121,7 +121,6 @@
       </span>
     </span>
     {{ if .W.Override }}<span class="chip chip--muted">выбран вручную</span>{{ end }}
-    {{ if .W.IsTest }}<span class="chip chip--muted">тест · не в рекордах</span>{{ end }}
     {{ if .W.Bike }}<span class="chip chip--muted">{{ .W.Bike }}</span>{{ end }}
     {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
   </div>
@@ -257,12 +256,6 @@
 <details class="w-settings">
   <summary>Параметры</summary>
   <div class="ws-body">
-    <div class="ws-row">
-      <span class="lbl">Замер (тест)</span>
-      <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"0"}' hx-swap="none">тренировка</button>
-      <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"1"}' hx-swap="none">тест</button>
-      {{ if .W.IsTest }}<span class="chip chip--muted">не участвует в рекордах</span>{{ end }}
-    </div>
     <div class="ws-row">
       <span class="lbl">Велосипед</span>
       <select id="bike">

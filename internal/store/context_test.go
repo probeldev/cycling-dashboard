@@ -7,7 +7,8 @@ import (
 )
 
 // TestDropRemovedColumns — миграция удаляет колонки temperature, avg_temp,
-// rpe и notes вместе с триггерами из баз старой схемы, остальные данные целы.
+// rpe, notes и is_test вместе с триггерами из баз старой схемы, остальные
+// данные целы.
 // Повторный прогон безопасен (идемпотентность).
 func TestDropRemovedColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
@@ -15,7 +16,8 @@ func TestDropRemovedColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// старая схема: колонки rpe/avg_temp/temperature/notes и триггеры инварианта
+	// старая схема: колонки rpe/avg_temp/temperature/notes/is_test и триггеры
+	// инварианта
 	if _, err := raw.Exec(`
 CREATE TABLE workouts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,6 +48,7 @@ CREATE TABLE workouts (
     rpe           INTEGER,
     avg_temp      REAL,
     notes         TEXT,
+    is_test       INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE samples (
@@ -77,9 +80,9 @@ END;`); err != nil {
 	}
 	res, err := raw.Exec(`INSERT INTO workouts
 	    (file_hash, file_path, file_mtime, start_time, year, month, has_gps, trainer,
-	     duration_sec, distance_m, avg_power, calories, rpe, avg_temp, notes)
+	     duration_sec, distance_m, avg_power, calories, rpe, avg_temp, notes, is_test)
 	    VALUES ('hash-old', '/tmp/old.fit', 1, '2026-10-01T10:00:00Z', 2026, 10, 1, 0,
-	     3600, 30000, 200, 500, 7, 12.5, 'старая заметка')`)
+	     3600, 30000, 200, 500, 7, 12.5, 'старая заметка', 1)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +106,7 @@ END;`); err != nil {
 		{"workouts", "rpe"},
 		{"workouts", "avg_temp"},
 		{"workouts", "notes"},
+		{"workouts", "is_test"},
 		{"samples", "temperature"},
 	} {
 		has, err := hasColumn(db, m.table, m.column)

@@ -78,48 +78,6 @@ func TestReadinessWindows(t *testing.T) {
 	}
 }
 
-// TestReadinessExcludesTests — замеры не участвуют ни в окнах, ни в рекордах,
-// ни в ккал/ч и наборе: это не рабочая нагрузка.
-func TestReadinessExcludesTests(t *testing.T) {
-	withLocal(t, "Europe/Minsk")
-	db := openTestDB(t)
-	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.Local)
-	today := StartOfDay(now)
-	insertReadinessWorkout(t, db, "hash-rd-work", today.AddDate(0, 0, -1).Add(12*time.Hour),
-		10, time.Hour, 20, 100, 10)
-	testID := insertReadinessWorkout(t, db, "hash-rd-test", today.AddDate(0, 0, -2).Add(12*time.Hour),
-		150, 5*time.Hour, 300, 1000, 500)
-	if err := SetWorkoutTest(db, testID, true); err != nil {
-		t.Fatal(err)
-	}
-
-	r, err := Readiness(db, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Rolling7.Rides != 1 || !near(r.Rolling7.KM, 10) {
-		t.Errorf("7 дней с замером: %+v, хочу одну рабочую на 10 км", r.Rolling7)
-	}
-	if r.Longest90d == nil || !near(r.Longest90d.KM, 10) || r.Longest90d.WorkoutID == testID {
-		t.Errorf("макс. за 90 дней: %+v, замер попал в рекорд", r.Longest90d)
-	}
-	if r.LongestEver == nil || !near(r.LongestEver.KM, 10) {
-		t.Errorf("макс. за всё время: %+v, хочу 10 км без замера", r.LongestEver)
-	}
-	if r.CenturyCount != 0 {
-		t.Errorf("100+ км: %d, замер не должен считаться", r.CenturyCount)
-	}
-	if r.KcalPerHour == nil || !near(*r.KcalPerHour, 100) {
-		t.Errorf("ккал/ч: %v, хочу 100 без замера", r.KcalPerHour)
-	}
-	if r.AscentPer100km == nil || !near(*r.AscentPer100km, 100) {
-		t.Errorf("набор на 100 км: %v, хочу 100 без замера", r.AscentPer100km)
-	}
-	if r.LongestStreak != 1 {
-		t.Errorf("серия дней: %d, хочу 1 (замер не продлевает)", r.LongestStreak)
-	}
-}
-
 // TestReadinessKcalWeighted — ккал/ч взвешены по времени, а не среднее
 // арифметическое часовых норм; поездки без калорий знаменатель не раздувают.
 func TestReadinessKcalWeighted(t *testing.T) {
@@ -147,7 +105,7 @@ func TestReadinessKcalWeighted(t *testing.T) {
 	}
 }
 
-// TestReadinessCenturyThreshold — 100+ км считаются включительно, замеры — нет.
+// TestReadinessCenturyThreshold — 100+ км считаются включительно.
 func TestReadinessCenturyThreshold(t *testing.T) {
 	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
@@ -159,18 +117,13 @@ func TestReadinessCenturyThreshold(t *testing.T) {
 		99.9, 5*time.Hour, 100, 0, 0)
 	long := insertReadinessWorkout(t, db, "hash-rd-120", today.AddDate(0, 0, -3).Add(time.Hour),
 		120, 6*time.Hour, 120, 0, 0)
-	testID := insertReadinessWorkout(t, db, "hash-rd-200-test", today.AddDate(0, 0, -4).Add(time.Hour),
-		200, 8*time.Hour, 200, 0, 0)
-	if err := SetWorkoutTest(db, testID, true); err != nil {
-		t.Fatal(err)
-	}
 
 	r, err := Readiness(db, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.CenturyCount != 2 {
-		t.Errorf("100+ км: %d, хочу 2 (100 и 120, без замера 200)", r.CenturyCount)
+		t.Errorf("100+ км: %d, хочу 2 (100 и 120)", r.CenturyCount)
 	}
 	if r.LongestEver == nil || !near(r.LongestEver.KM, 120) || r.LongestEver.WorkoutID != long {
 		t.Errorf("макс. за всё время: %+v, хочу 120 км (id %d)", r.LongestEver, long)
@@ -178,7 +131,7 @@ func TestReadinessCenturyThreshold(t *testing.T) {
 }
 
 // TestReadinessStreak — самая длинная серия подряд идущих дней за год;
-// замер не продлевает серию, день ровно на границе года входит.
+// день ровно на границе года входит.
 func TestReadinessStreak(t *testing.T) {
 	withLocal(t, "Europe/Minsk")
 	db := openTestDB(t)
@@ -191,10 +144,7 @@ func TestReadinessStreak(t *testing.T) {
 		insertReadinessWorkout(t, db, "hash-rd-streak-"+string(rune('a'+i)), at(daysAgo),
 			10, time.Hour, 10, 0, 0)
 	}
-	testID := insertReadinessWorkout(t, db, "hash-rd-streak-test", at(3), 10, time.Hour, 10, 0, 0)
-	if err := SetWorkoutTest(db, testID, true); err != nil {
-		t.Fatal(err)
-	}
+	insertReadinessWorkout(t, db, "hash-rd-streak-day3", at(3), 10, time.Hour, 10, 0, 0)
 	for i, daysAgo := range []int{10, 11, 12, 13, 14} {
 		insertReadinessWorkout(t, db, "hash-rd-streak-b"+string(rune('0'+i)), at(daysAgo),
 			10, time.Hour, 10, 0, 0)

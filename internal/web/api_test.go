@@ -113,7 +113,7 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 	}
 }
 
-// TestWorkoutsListJSON — список отдаёт массив; у объекта 41 поле, Override и IsTest
+// TestWorkoutsListJSON — список отдаёт массив; у объекта 40 полей, Override
 // присутствует (контракт JSON не должен незаметно меняться).
 func TestWorkoutsListJSON(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -144,18 +144,15 @@ func TestWorkoutsListJSON(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("%d элементов, хочу 2", len(list))
 	}
-	if got := len(list[0]); got != 41 {
+	if got := len(list[0]); got != 40 {
 		keys := make([]string, 0, got)
 		for k := range list[0] {
 			keys = append(keys, k)
 		}
-		t.Errorf("полей в объекте %d, хочу 41: %v", got, keys)
+		t.Errorf("полей в объекте %d, хочу 40: %v", got, keys)
 	}
 	if _, ok := list[0]["Override"]; !ok {
 		t.Errorf("в объекте нет поля Override")
-	}
-	if v, ok := list[0]["IsTest"]; !ok || v != false {
-		t.Errorf("в объекте IsTest = %v (есть: %v), хочу false", v, ok)
 	}
 }
 
@@ -198,5 +195,19 @@ func TestWorkoutMMPAPI(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workout/99999/mmp", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("неизвестный id: код %d, хочу 404", rec.Code)
+	}
+}
+
+// getJSON делает GET-запрос и декодирует JSON-ответ; ошибка теста при
+// не-200 или при ошибке декодирования.
+func getJSON(t *testing.T, h http.Handler, path string, v any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s: код %d", path, rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), v); err != nil {
+		t.Fatalf("%s: %v", path, err)
 	}
 }

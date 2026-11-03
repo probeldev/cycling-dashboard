@@ -18,7 +18,7 @@ type ReadinessRolling struct {
 	Rides int     `json:"rides"`
 }
 
-// ReadinessStats — бревет-показатели по рабочим тренировкам (is_test = 0).
+// ReadinessStats — бревет-показатели по тренировкам.
 // Окна — локальные календарные дни, включая сегодня: 7 дней — [today-6, today],
 // 28 — [today-27, today], 90 — [today-89, today]. Пустые значения (нет
 // подходящих поездок) — null, а не ноль: ноль км или ккал/ч неотличим от
@@ -39,7 +39,7 @@ type ReadinessStats struct {
 // входят ни в числитель, ни в знаменатель). Набор на 100 км — Σнабор /
 // Σкилометры × 100 по поездкам с ненулевой дистанцией; при нулевой сумме
 // дистанций — null, без деления на ноль. Серия дней — самый длинный отрезок
-// подряд идущих локальных дней с рабочими тренировками за последний год.
+// подряд идущих локальных дней с тренировками за последний год.
 func Readiness(db DBTX, now time.Time) (ReadinessStats, error) {
 	today := StartOfDay(now)
 	yearFrom := today.AddDate(0, 0, -364)
@@ -49,7 +49,7 @@ func Readiness(db DBTX, now time.Time) (ReadinessStats, error) {
 
 	rows, err := db.Query(`SELECT id, start_time, COALESCE(distance_m, 0), duration_sec,
 	    COALESCE(tss, 0), COALESCE(calories, 0), COALESCE(total_ascent, 0)
-	    FROM workouts WHERE is_test = 0 AND start_time <= ?
+	    FROM workouts WHERE start_time <= ?
 	    ORDER BY start_time ASC, id ASC`, now.UTC().Format(time.RFC3339))
 	if err != nil {
 		return ReadinessStats{}, err

@@ -28,7 +28,7 @@ func TestBestRecords(t *testing.T) {
 	a := mk("hash-rec-1", day(1), PowerRecord{WindowSec: 5, Watts: 300}, PowerRecord{WindowSec: 60, Watts: 200})
 	b := mk("hash-rec-2", day(2), PowerRecord{WindowSec: 5, Watts: 350}, PowerRecord{WindowSec: 60, Watts: 150})
 
-	recs, err := BestRecords(db, time.Time{}, day(10), false)
+	recs, err := BestRecords(db, time.Time{}, day(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestBestRecords(t *testing.T) {
 
 	// равное значение позже — рекорд остаётся у более ранней
 	c := mk("hash-rec-3", day(3), PowerRecord{WindowSec: 5, Watts: 350})
-	recs, err = BestRecords(db, time.Time{}, day(10), false)
+	recs, err = BestRecords(db, time.Time{}, day(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestBestRecords(t *testing.T) {
 	}
 
 	// период: в [day(3), day(10)) остаётся только c
-	recs, err = BestRecords(db, day(3), day(10), false)
+	recs, err = BestRecords(db, day(3), day(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,10 +63,10 @@ func TestBestRecords(t *testing.T) {
 
 	// границы: [from, to) — запись ровно на from входит, ровно на to — нет
 	d := mk("hash-rec-edge", day(5), PowerRecord{WindowSec: 5, Watts: 400})
-	if recs, err := BestRecords(db, day(5), day(6), false); err != nil || len(recs) != 1 || recs[0].WorkoutID != d {
+	if recs, err := BestRecords(db, day(5), day(6)); err != nil || len(recs) != 1 || recs[0].WorkoutID != d {
 		t.Errorf("from включительно: %+v, %v", recs, err)
 	}
-	if recs, err := BestRecords(db, day(4), day(5), false); err != nil || len(recs) != 0 {
+	if recs, err := BestRecords(db, day(4), day(5)); err != nil || len(recs) != 0 {
 		t.Errorf("to исключительно: %+v, %v", recs, err)
 	}
 }
@@ -91,7 +91,7 @@ func TestBestRecordsUntil(t *testing.T) {
 	atNow := mk("hash-until-now", now, 300)
 	mk("hash-until-future", now.Add(2*time.Hour), 500)
 
-	recs, err := BestRecordsUntil(db, time.Time{}, now, false)
+	recs, err := BestRecordsUntil(db, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestWorkoutPRs(t *testing.T) {
 	}, 1); err != nil {
 		t.Fatal(err)
 	}
-	prs, err := WorkoutPRs(db, id, now, false)
+	prs, err := WorkoutPRs(db, id, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestWorkoutPRsIgnoreFuture(t *testing.T) {
 	}
 
 	past := mk("hash-pr-future-past", now.Add(-24*time.Hour), 300)
-	before, err := WorkoutPRs(db, past, now, false)
+	before, err := WorkoutPRs(db, past, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestWorkoutPRsIgnoreFuture(t *testing.T) {
 	}
 
 	future := mk("hash-pr-future", now.Add(2*time.Hour), 500)
-	after, err := WorkoutPRs(db, past, now, false)
+	after, err := WorkoutPRs(db, past, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestWorkoutPRsIgnoreFuture(t *testing.T) {
 		t.Errorf("PR прошлой изменились от будущей:\nдо  %v\nпосле %v", before, after)
 	}
 
-	prs, err := WorkoutPRs(db, future, now, false)
+	prs, err := WorkoutPRs(db, future, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestWorkoutPRsIgnoreFuture(t *testing.T) {
 		t.Errorf("PR будущей тренировки: %v, хочу пусто", prs)
 	}
 
-	recs, err := BestRecordsUntil(db, time.Time{}, now, false)
+	recs, err := BestRecordsUntil(db, time.Time{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -134,7 +134,7 @@ type statusAlert struct {
 }
 
 // historyFacts — то, что нельзя вывести из одного дня: начало истории,
-// дни до тяжёлой/тестовой тренировки и доля станка за 4 недели.
+// дни до тяжёлой тренировки и доля станка за 4 недели.
 type historyFacts struct {
 	hasHistory    bool
 	firstDay      time.Time
@@ -142,9 +142,8 @@ type historyFacts struct {
 	dataDays      int // дней с первой нагрузки в окне 42 дней
 	loadDays42    int // различных дней с TSS > 0 за 42 дня
 	daysSinceHard int // -1 — тяжёлой тренировки не было
-	daysSinceTest int // -1 — тестовой тренировки не было
 	trainerShare  float64
-	cov7          int // дней с TSS > 0 у рабочих тренировок за 7 дней
+	cov7          int // дней с нагрузкой за 7 дней
 	cov28         int // то же за 28 дней
 	cov90         int // то же за 90 дней
 }
@@ -205,7 +204,7 @@ func buildStatus(db *sql.DB, now time.Time, debug bool) (*statusResponse, error)
 		CTL:           pmcCTL,
 		ATL:           pmcATL,
 		DaysSinceHard: facts.daysSinceHard,
-		DaysSinceTest: facts.daysSinceTest,
+		DaysSinceTest: -1,
 		WeekTSS:       weekTSS,
 		TargetTSS:     target,
 		GrayPct:       gray4,
@@ -476,7 +475,7 @@ func z2Minutes(tss float64) int {
 
 func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	today := store.StartOfDay(now)
-	rows, err := db.Query(`SELECT start_time, COALESCE(tss, 0), COALESCE(if, 0), is_test, trainer
+	rows, err := db.Query(`SELECT start_time, COALESCE(tss, 0), COALESCE(if, 0), trainer
 	    FROM workouts WHERE start_time <= ? ORDER BY start_time DESC`,
 		now.UTC().Format(time.RFC3339))
 	if err != nil {
@@ -488,8 +487,7 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 		tss   float64
 		maxIF float64
 	}
-	nonTest := map[time.Time]*hardDay{}
-	testDays := map[time.Time]bool{}
+	hardDays := map[time.Time]*hardDay{}
 	coverageDays := map[time.Time]bool{}
 	var first, last time.Time
 	var firstLoad time.Time
@@ -502,8 +500,8 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	for rows.Next() {
 		var start string
 		var tss, iff float64
-		var isTest, isTrainer bool
-		if err := rows.Scan(&start, &tss, &iff, &isTest, &isTrainer); err != nil {
+		var isTrainer bool
+		if err := rows.Scan(&start, &tss, &iff, &isTrainer); err != nil {
 			return historyFacts{}, err
 		}
 		t, err := time.Parse(time.RFC3339, start)
@@ -533,18 +531,13 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 				trainer++
 			}
 		}
-		if tss > 0 && !isTest {
-			// Coverage считаем по тому же набору, что Readiness: без тестов.
+		if tss > 0 {
 			coverageDays[day] = true
 		}
-		if isTest {
-			testDays[day] = true
-			continue
-		}
-		d := nonTest[day]
+		d := hardDays[day]
 		if d == nil {
 			d = &hardDay{}
-			nonTest[day] = d
+			hardDays[day] = d
 		}
 		d.tss += tss
 		if iff > d.maxIF {
@@ -557,7 +550,6 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 
 	out := historyFacts{
 		daysSinceHard: -1,
-		daysSinceTest: -1,
 	}
 	out.cov7 = coverageCount(coverageDays, today.AddDate(0, 0, -6), today)
 	out.cov28 = coverageCount(coverageDays, today.AddDate(0, 0, -27), today)
@@ -575,18 +567,12 @@ func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	if total > 0 {
 		out.trainerShare = float64(trainer) / float64(total)
 	}
-	for day, d := range nonTest {
+	for day, d := range hardDays {
 		if d.tss >= 80 || d.maxIF >= 0.85 {
 			n := daysBetween(day, today)
 			if out.daysSinceHard < 0 || n < out.daysSinceHard {
 				out.daysSinceHard = n
 			}
-		}
-	}
-	for day := range testDays {
-		n := daysBetween(day, today)
-		if out.daysSinceTest < 0 || n < out.daysSinceTest {
-			out.daysSinceTest = n
 		}
 	}
 	return out, nil
