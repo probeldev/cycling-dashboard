@@ -221,3 +221,61 @@ func TestWorkoutPageNamedHeader(t *testing.T) {
 		t.Error("в настройках остался дублирующий редактор названия")
 	}
 }
+
+// TestWorkoutPageTypeToggle — тип тренировки переключается из шапки: карандаш
+// у чипа открывает поповер с опциями улица/станок, метка «выбран вручную»
+// живёт там же; дублирующая строка из «Параметров» убрана (§4.3).
+func TestWorkoutPageTypeToggle(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour,
+	}, "hash-type-toggle", filepath.Join(t.TempDir(), "t.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("код %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := get()
+	for _, want := range []string{`id="wTypeBtn"`, `id="wTypePop"`, `chip chip--outdoor`, `data-value="0"`, `data-value="1"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в шапке нет контрола типа %q", want)
+		}
+	}
+	if strings.Contains(body, "Тип тренировки") {
+		t.Error("в «Параметрах» осталась строка переключения типа")
+	}
+	if strings.Contains(body, "выбран вручную") {
+		t.Error("без override метки «выбран вручную» быть не должно")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/workout/%d/trainer", id), strings.NewReader("value=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST trainer: код %d", rec.Code)
+	}
+	body = get()
+	if !strings.Contains(body, `chip chip--trainer`) {
+		t.Error("после переключения чип «станок» не отрендерился")
+	}
+	if !strings.Contains(body, "выбран вручную") {
+		t.Error("после ручного переключения в шапке нет метки «выбран вручную»")
+	}
+}

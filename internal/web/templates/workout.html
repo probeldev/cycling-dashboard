@@ -17,6 +17,14 @@
   .w-name-edit input { font: inherit; font-size: 14px; padding: 6px 10px; width: 280px;
     border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); }
   .w-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  /* переключение улица/станок: карандаш у чипа + маленький поповер под ним */
+  .w-type { position: relative; display: inline-flex; align-items: center; }
+  .w-type-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+    display: flex; gap: 4px; align-items: center; white-space: nowrap;
+    background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm);
+    padding: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.10); }
+  .w-type-pop[hidden] { display: none; }
+  .w-type-pop .sub { font-size: 13px; padding: 0 4px; }
   .w-summary { font-size: 16px; line-height: 1.55; margin: 12px 0 2px; background: var(--surface); border: none; border-radius: var(--radius); padding: 12px 16px; }
 
   .heroes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0 4px; }
@@ -108,7 +116,16 @@
     <span id="wNameHint" class="sub" style="font-size:13px" hidden>не сохранилось, попробуй ещё раз</span>
   </form>
   <div class="w-chips">
-    {{ if .W.Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
+    <span class="w-type">
+      {{ if .W.Trainer }}<span class="chip chip--trainer">станок</span>{{ else }}<span class="chip chip--outdoor">улица</span>{{ end }}
+      <button id="wTypeBtn" class="w-name-btn" title="Изменить тип тренировки" aria-label="Изменить тип тренировки"><svg class="ic" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg></button>
+      <span id="wTypePop" class="w-type-pop" hidden>
+        <button type="button" class="tab{{ if not .W.Trainer }} active{{ end }}" data-value="0">улица</button>
+        <button type="button" class="tab{{ if .W.Trainer }} active{{ end }}" data-value="1">станок</button>
+        <span id="wTypeHint" class="sub" hidden>не сохранилось, попробуй ещё раз</span>
+      </span>
+    </span>
+    {{ if .W.Override }}<span class="chip chip--muted">выбран вручную</span>{{ end }}
     {{ if .W.IsTest }}<span class="chip chip--muted">тест · не в рекордах</span>{{ end }}
     {{ if .W.Bike }}<span class="chip chip--muted">{{ .W.Bike }}</span>{{ end }}
     {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
@@ -256,12 +273,6 @@
   <summary>Параметры</summary>
   <div class="ws-body">
     <div class="ws-row">
-      <span class="lbl">Тип тренировки</span>
-      <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"0"}' hx-swap="none">улица</button>
-      <button hx-post="/workout/{{ .W.ID }}/trainer" hx-vals='{"value":"1"}' hx-swap="none">станок</button>
-      {{ if .W.Override }}<span class="chip chip--muted">выбран вручную</span>{{ end }}
-    </div>
-    <div class="ws-row">
       <span class="lbl">Замер (тест)</span>
       <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"0"}' hx-swap="none">тренировка</button>
       <button hx-post="/workout/{{ .W.ID }}/test" hx-vals='{"value":"1"}' hx-swap="none">тест</button>
@@ -346,6 +357,37 @@ if (nameEdit && nameBtn) {
       .catch(() => {
         nameSave.disabled = false;
         nameHint.hidden = false;
+      });
+  });
+}
+
+// переключение улица/станок: карандаш у чипа → поповер → POST /workout/{id}/trainer
+// (роут ждёт form-поле value=0|1); после сохранения — перезагрузка страницы
+const typeBtn = document.getElementById("wTypeBtn");
+const typePop = document.getElementById("wTypePop");
+if (typeBtn && typePop) {
+  const typeHint = document.getElementById("wTypeHint");
+  typeBtn.onclick = e => {
+    e.stopPropagation();
+    typePop.hidden = !typePop.hidden;
+    typeHint.hidden = true;
+  };
+  // клик мимо поповера или Escape — закрыть
+  document.addEventListener("click", e => { if (!typePop.contains(e.target)) typePop.hidden = true; });
+  typePop.addEventListener("keydown", e => { if (e.key === "Escape") typePop.hidden = true; });
+  typePop.querySelectorAll("button").forEach(b => b.onclick = () => {
+    // защита от повторного нажатия, пока запрос в полёте
+    b.disabled = true;
+    typeHint.hidden = true;
+    fetch(`/workout/${id}/trainer`, { method: "POST", body: new URLSearchParams({ value: b.dataset.value }) })
+      .then(r => {
+        if (r.ok) { location.reload(); return; }
+        b.disabled = false;
+        typeHint.hidden = false;
+      })
+      .catch(() => {
+        b.disabled = false;
+        typeHint.hidden = false;
       });
   });
 }
