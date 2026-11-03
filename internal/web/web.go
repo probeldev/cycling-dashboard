@@ -12,7 +12,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -252,36 +251,6 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		if err := tx.Commit(); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("HX-Redirect", "/workout/"+strconv.FormatInt(id, 10))
-	})
-
-	r.Post("/workout/{id}/context", func(w http.ResponseWriter, req *http.Request) {
-		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
-		if _, err := store.GetWorkout(db, id); err != nil {
-			notFoundOr500(w, req, err)
-			return
-		}
-		if err := req.ParseForm(); err != nil {
-			http.Error(w, "некорректная форма", http.StatusBadRequest)
-			return
-		}
-		var upd store.WorkoutContextUpdate
-		if req.Form.Has("notes") {
-			notes := strings.TrimSpace(req.FormValue("notes"))
-			if len([]rune(notes)) > maxNotesLen {
-				http.Error(w, "заметка длиннее 2000 символов", http.StatusBadRequest)
-				return
-			}
-			upd.Notes = &notes
-		}
-		if upd.Notes == nil {
-			http.Error(w, "нужно передать notes", http.StatusBadRequest)
-			return
-		}
-		if err := store.SetWorkoutContext(db, id, upd); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

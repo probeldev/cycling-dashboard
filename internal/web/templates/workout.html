@@ -39,15 +39,10 @@
   section.blk { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; }
   section.blk:first-of-type { border-top: none; }
 
-  .notes-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin: 10px 0 0; }
-  .notes-row label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
-  .notes-row textarea,
   .w-settings input, .w-settings select {
     font: inherit; font-size: 14px; padding: 6px 10px;
     border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text);
   }
-  .notes-row .grow { flex: 1 1 280px; min-width: 200px; }
-  .notes-row textarea { width: 100%; resize: vertical; }
 
   .insight-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .insight .x { color: var(--text-2); }
@@ -135,16 +130,6 @@
 {{ if .Summary }}
 <p class="w-summary">{{ range .Summary }}{{ . }} {{ end }}</p>
 {{ end }}
-
-<div class="notes-row">
-  <div class="grow">
-    <label for="notes">Заметка</label>
-    <textarea id="notes" rows="1" maxlength="2000" placeholder="ощущения, погода, контекст">{{ .W.Notes }}</textarea>
-  </div>
-  <button class="btn--ghost" hx-post="/workout/{{ .W.ID }}/context"
-    hx-vals="js:{notes: document.getElementById('notes').value}"
-    hx-swap="none">Сохранить</button>
-</div>
 
 {{ if .FTPHint }}
 <div class="insight insight--warn" style="margin-top:12px">

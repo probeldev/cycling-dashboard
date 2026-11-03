@@ -10,7 +10,7 @@ import (
 )
 
 // TestReimportPreservesUserFields — реимпорт того же файла (upsert) не трогает
-// пользовательские поля: bike_id, notes, trainer_override и is_test.
+// пользовательские поля: bike_id, trainer_override и is_test.
 func TestReimportPreservesUserFields(t *testing.T) {
 	dir := t.TempDir()
 	writeFIT(t, filepath.Join(dir, "user.fit"), fit.SubSportRoad, 30)
@@ -28,10 +28,6 @@ func TestReimportPreservesUserFields(t *testing.T) {
 	}
 	bike := bikes[0].ID
 	if err := store.SetWorkoutBike(db, w.ID, &bike); err != nil {
-		t.Fatal(err)
-	}
-	note := "заметка пользователя"
-	if err := store.SetWorkoutContext(db, w.ID, store.WorkoutContextUpdate{Notes: &note}); err != nil {
 		t.Fatal(err)
 	}
 	// станок из FIT → вручную «улица», чтобы проверить сохранение override
@@ -53,9 +49,6 @@ func TestReimportPreservesUserFields(t *testing.T) {
 	}
 	if got.BikeID != bike || got.Bike != bikes[0].Name {
 		t.Errorf("bike: BikeID=%d Bike=%q, хочу %d/%q", got.BikeID, got.Bike, bike, bikes[0].Name)
-	}
-	if got.Notes != "заметка пользователя" {
-		t.Errorf("контекст: Notes=%q", got.Notes)
 	}
 	if got.Override == nil || *got.Override || got.Trainer {
 		t.Errorf("trainer_override потерян: override=%v trainer=%v", got.Override, got.Trainer)

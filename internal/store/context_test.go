@@ -4,57 +4,10 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-// TestWorkoutContextStore — заметка сохраняется, пустое значение пишется
-// как NULL.
-func TestWorkoutContextStore(t *testing.T) {
-	db := openTestDB(t)
-	id, err := InsertWorkout(db, &Workout{StartTime: time.Now(), Duration: 90 * time.Minute},
-		"hash-ctx-store", "/tmp/c.fit", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	notes := "темповая, ветер"
-	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{Notes: &notes}); err != nil {
-		t.Fatal(err)
-	}
-	w, err := GetWorkout(db, id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w.Notes != "темповая, ветер" {
-		t.Errorf("Notes=%q", w.Notes)
-	}
-
-	// пустой апдейт ничего не трогает
-	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{}); err != nil {
-		t.Fatal(err)
-	}
-	if w, _ := GetWorkout(db, id); w.Notes != "темповая, ветер" {
-		t.Errorf("пустой апдейт стёр заметку: Notes=%q", w.Notes)
-	}
-
-	// очистка: пустая строка → NULL
-	empty := ""
-	if err := SetWorkoutContext(db, id, WorkoutContextUpdate{Notes: &empty}); err != nil {
-		t.Fatal(err)
-	}
-	var sqlNotes sql.NullString
-	if err := db.QueryRow(`SELECT notes FROM workouts WHERE id = ?`, id).Scan(&sqlNotes); err != nil {
-		t.Fatal(err)
-	}
-	if sqlNotes.Valid {
-		t.Errorf("после очистки не NULL: notes=%v", sqlNotes)
-	}
-	if w, _ := GetWorkout(db, id); w.Notes != "" {
-		t.Errorf("после очистки: Notes=%q", w.Notes)
-	}
-}
-
-// TestDropRemovedColumns — миграция удаляет колонки temperature, avg_temp и
-// rpe вместе с триггерами из базы старой схемы, остальные данные целы.
+// TestDropRemovedColumns — миграция удаляет колонки temperature, avg_temp,
+// rpe и notes вместе с триггерами из баз старой схемы, остальные данные целы.
 // Повторный прогон безопасен (идемпотентность).
 func TestDropRemovedColumns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
@@ -62,7 +15,7 @@ func TestDropRemovedColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// старая схема: колонки rpe/avg_temp/temperature и триггеры инварианта
+	// старая схема: колонки rpe/avg_temp/temperature/notes и триггеры инварианта
 	if _, err := raw.Exec(`
 CREATE TABLE workouts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,8 +44,8 @@ CREATE TABLE workouts (
     total_ascent  INTEGER,
     total_descent INTEGER,
     rpe           INTEGER,
-    notes         TEXT,
     avg_temp      REAL,
+    notes         TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE samples (
@@ -124,9 +77,9 @@ END;`); err != nil {
 	}
 	res, err := raw.Exec(`INSERT INTO workouts
 	    (file_hash, file_path, file_mtime, start_time, year, month, has_gps, trainer,
-	     duration_sec, distance_m, avg_power, calories, rpe, notes, avg_temp)
+	     duration_sec, distance_m, avg_power, calories, rpe, avg_temp, notes)
 	    VALUES ('hash-old', '/tmp/old.fit', 1, '2026-10-01T10:00:00Z', 2026, 10, 1, 0,
-	     3600, 30000, 200, 500, 7, 'старая заметка', 12.5)`)
+	     3600, 30000, 200, 500, 7, 12.5, 'старая заметка')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,6 +102,7 @@ END;`); err != nil {
 	for _, m := range []struct{ table, column string }{
 		{"workouts", "rpe"},
 		{"workouts", "avg_temp"},
+		{"workouts", "notes"},
 		{"samples", "temperature"},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
@@ -170,13 +124,12 @@ END;`); err != nil {
 
 	// данные выжили
 	var dist, power, kcal int
-	var notes string
-	if err := db.QueryRow(`SELECT distance_m, avg_power, calories, COALESCE(notes, '')
-	    FROM workouts WHERE id = ?`, wid).Scan(&dist, &power, &kcal, &notes); err != nil {
+	if err := db.QueryRow(`SELECT distance_m, avg_power, calories
+	    FROM workouts WHERE id = ?`, wid).Scan(&dist, &power, &kcal); err != nil {
 		t.Fatal(err)
 	}
-	if dist != 30000 || power != 200 || kcal != 500 || notes != "старая заметка" {
-		t.Errorf("тренировка: dist=%d power=%d kcal=%d notes=%q", dist, power, kcal, notes)
+	if dist != 30000 || power != 200 || kcal != 500 {
+		t.Errorf("тренировка: dist=%d power=%d kcal=%d", dist, power, kcal)
 	}
 	var samples int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM samples WHERE workout_id = ?`, wid).Scan(&samples); err != nil {

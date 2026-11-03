@@ -65,10 +65,6 @@ type Workout struct {
 	BikeID int64
 	Bike   string
 
-	// контекст тренировки: заметка (пользовательское поле, ре-импорт
-	// его не трогает)
-	Notes string `json:"Notes"`
-
 	// версия алгоритма, которым посчитан NormPower (0 — старый, до окна 30 с);
 	// по ней бэкфилл понимает, что тренировку надо пересчитать
 	NPVersion int
@@ -286,7 +282,6 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"workouts", "zones_version", `ALTER TABLE workouts ADD COLUMN zones_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "mmp_version", `ALTER TABLE workouts ADD COLUMN mmp_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "bike_id", `ALTER TABLE workouts ADD COLUMN bike_id INTEGER`},
-		{"workouts", "notes", `ALTER TABLE workouts ADD COLUMN notes TEXT`},
 		{"workouts", "weight_kg", `ALTER TABLE workouts ADD COLUMN weight_kg REAL`},
 		{"workouts", "np_version", `ALTER TABLE workouts ADD COLUMN np_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "subsport_checked", `ALTER TABLE workouts ADD COLUMN subsport_checked INTEGER NOT NULL DEFAULT 0`},
@@ -327,6 +322,7 @@ DROP TRIGGER IF EXISTS workouts_rpe_update;`); err != nil {
 	for _, m := range []struct{ table, column string }{
 		{"workouts", "rpe"},
 		{"workouts", "avg_temp"},
+		{"workouts", "notes"},
 		{"samples", "temperature"},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
@@ -1232,7 +1228,6 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var ftpKind sql.NullString
 	var bikeID sql.NullInt64
 	var bikeName string
-	var notes sql.NullString
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
@@ -1242,13 +1237,12 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
 	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
 	    elapsed_sec, pause_sec, work_kj, metrics_version, bike_id,
-	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), ''),
-	    notes
+	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), '')
 	    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov, &isTest,
 		&spd, &mspd, &cad, &mcad, &cadActive, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &w.MetricsVersion,
-		&bikeID, &bikeName, &notes)
+		&bikeID, &bikeName)
 	if err != nil {
 		return nil, err
 	}
@@ -1291,7 +1285,6 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.WeightKg = wkg.Float64
 	w.BikeID = bikeID.Int64
 	w.Bike = bikeName
-	w.Notes = notes.String
 	w.IF = ifv.Float64
 	w.TSS = tss.Float64
 	w.VI = vi.Float64
