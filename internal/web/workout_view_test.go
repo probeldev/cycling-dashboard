@@ -181,3 +181,43 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkoutPageNamedHeader — тренировка С названием рендерит именную ветку
+// шапки: <span class="w-name">· Название</span> внутри h1, рядом карандаш
+// переименования; дубль редактирования названия в настройках убран (§4.3).
+func TestWorkoutPageNamedHeader(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour,
+	}, "hash-name-header", filepath.Join(t.TempDir(), "t.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// InsertWorkout имя не пишет — это пользовательское поле, переживает ресинк
+	if err := store.SetName(db, id, "Название"); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<span class="w-name">· Название</span>`) {
+		t.Error("именная ветка шапки не отрендерилась")
+	}
+	if !strings.Contains(body, `icons.svg#pencil`) {
+		t.Error("в шапке нет карандаша переименования")
+	}
+	if strings.Contains(body, `id="wname"`) {
+		t.Error("в настройках остался дублирующий редактор названия")
+	}
+}
