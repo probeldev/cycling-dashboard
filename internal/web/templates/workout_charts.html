@@ -46,9 +46,9 @@ const zoneColors = [1, 2, 3, 4, 5, 6, 7].map(i => cssVar(`--zone-z${i}`));
 
 const metrics = [
   { key: "Power",     label: "Мощность, Вт",    color: cssVar("--brand"),   has: s => s.Power > 0, fill: true },
-  { key: "HR",        label: "Пульс, уд/мин",   color: cssVar("--danger"),  has: s => s.HR > 0 },
-  { key: "Cadence",   label: "Каденс, об/мин",  color: cssVar("--text-2"),  has: s => s.Cadence > 0 },
-  { key: "SpeedMs",   label: "Скорость, км/ч",  color: cssVar("--outdoor"), has: s => s.SpeedMs > 0, conv: v => v * 3.6, skip: isTrainer },
+  { key: "HR",        label: "Пульс, уд/мин",   color: cssVar("--danger"),  has: s => s.HR > 0, fill: true },
+  { key: "Cadence",   label: "Каденс, об/мин",  color: cssVar("--zone-z2"), has: s => s.Cadence > 0, fill: true },
+  { key: "SpeedMs",   label: "Скорость, км/ч",  color: cssVar("--outdoor"), has: s => s.SpeedMs > 0, conv: v => v * 3.6, skip: isTrainer, fill: true },
   { key: "AltitudeM", label: "Высота, м",       color: cssVar("--text-3"),  has: s => s.HasAlt, skip: isTrainer, fill: true },
 ].filter(m => !m.skip && data.some(m.has));
 
