@@ -431,6 +431,86 @@ func TestRideSamplesBatchMatchesStore(t *testing.T) {
 	}
 }
 
+// TestRidesCalories — калории на /rides: у поездки с поверметром в строке
+// метрика «N ккал», у поездки без поверметра её нет; в заголовке месяца —
+// суммарные калории и геймификация (пиццы пепперони и кг жира).
+func TestRidesCalories(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// две поездки с поверметром: калории = кДж работы
+	for i, w := range []struct {
+		start time.Time
+		kcal  int
+	}{
+		{time.Date(2026, 10, 29, 8, 0, 0, 0, time.Local), 700},
+		{time.Date(2026, 10, 30, 8, 0, 0, 0, time.Local), 800},
+	} {
+		if _, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: w.start, Duration: time.Hour,
+			AvgPower: 180, HasPower: true, Calories: w.kcal,
+		}, fmt.Sprintf("hash-rides-kcal-%d", i), filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// станок без поверметра — калорий не считаем и не показываем
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Date(2026, 10, 31, 18, 0, 0, 0, time.Local),
+		Duration:  time.Hour, Trainer: true,
+	}, "hash-rides-kcal-nopwr", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rides", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /rides: код %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// метрика ккал — только у двух поездок с мощностью
+	if n := strings.Count(body, `<span class="ride-unit">ккал</span>`); n != 2 {
+		t.Errorf("метрик ккал в строках = %d, хочу 2 (без поверметра ккал нет)", n)
+	}
+	for _, want := range []string{
+		`<b>700</b><span class="ride-unit">ккал</span>`,
+		`<b>800</b><span class="ride-unit">ккал</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("нет метрики %q в строке поездки", want)
+		}
+	}
+	// заголовок месяца: сумма 1500 ккал = 0.6 пиццы и ~0.2 кг жира
+	if !strings.Contains(body, "· 1500 ккал (0.6 пицц пепперони, ~0.2 кг жира)") {
+		t.Error("в заголовке месяца нет суммы калорий с пиццами и жиром")
+	}
+}
+
+// TestMonthExtras — пороги геймификации месяца: пиццы от 0.3 (<720 ккал
+// пицц нет), жир от 0.05 кг; пустые части не дают «0.0».
+func TestMonthExtras(t *testing.T) {
+	cases := map[int]string{
+		0:    "",
+		300:  "",
+		500:  "~0.1 кг жира",
+		719:  "~0.1 кг жира",
+		720:  "0.3 пицц пепперони, ~0.1 кг жира",
+		4200: "1.8 пицц пепперони, ~0.5 кг жира",
+	}
+	for kcal, want := range cases {
+		if got := monthExtras(kcal); got != want {
+			t.Errorf("monthExtras(%d) = %q, хочу %q", kcal, got, want)
+		}
+	}
+}
+
 // TestHumanMin — «осталось ≈ N Z2» на главной показываем часами и минутами.
 func TestHumanMin(t *testing.T) {
 	cases := map[int]string{

@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -78,13 +79,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	},
 	"divf":  func(a int, b float64) float64 { return float64(a) / b },
 	"divff": func(a, b float64) float64 { return a / b },
-	"pizzas": func(kcal int) string {
-		p := float64(kcal) / 2400 // Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал
-		if p < 0.3 {
-			return ""
-		}
-		return strconv.FormatFloat(p, 'f', 1, 64) + " пицц пепперони"
-	},
+	"pizzas": pizzaText,
 	"datetime": func(t time.Time) string { return t.Format("02.01.2006 15:04") },
 	"dur": func(d time.Duration) string {
 		h := int(d.Hours())
@@ -111,6 +106,40 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 
 func trimFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', 1, 64)
+}
+
+// pizzaText — геймификация калорий в пиццах пепперони: 1 пицца =
+// Domino's Пепперони Делюкс 100, L (950 г × 252.22 ккал/100 г) ≈ 2400 ккал.
+// Меньше 0.3 пиццы — пустая строка.
+func pizzaText(kcal int) string {
+	p := float64(kcal) / 2400
+	if p < 0.3 {
+		return ""
+	}
+	return strconv.FormatFloat(p, 'f', 1, 64) + " пицц пепперони"
+}
+
+// fatText — калории в жир: ~7700 ккал = 1 кг. Меньше 0.05 кг — пустая
+// строка, чтобы не показывать «~0.0 кг жира».
+func fatText(kcal int) string {
+	f := float64(kcal) / 7700
+	if f < 0.05 {
+		return ""
+	}
+	return "~" + strconv.FormatFloat(f, 'f', 1, 64) + " кг жира"
+}
+
+// monthExtras — геймификация суммарных калорий месяца: пиццы и жир через
+// запятую, пустые части пропускаются. Совсем без калорий — пустая строка.
+func monthExtras(kcal int) string {
+	parts := make([]string, 0, 2)
+	if p := pizzaText(kcal); p != "" {
+		parts = append(parts, p)
+	}
+	if f := fatText(kcal); f != "" {
+		parts = append(parts, f)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // mapAvailable — показывать ли карту тренировки: нужен трек хотя бы из двух

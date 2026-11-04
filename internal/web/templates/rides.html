@@ -61,6 +61,7 @@
             {{ if and .Outdoor.Hours .Trainer.Hours }}·{{ end }}
             {{ if .Trainer.Hours }}станок {{ formatHours .Trainer.Hours }}{{ end }}
             {{ if .TSS }}· {{ intFloat .TSS }} TSS{{ end }}
+            {{ if .TotalCalories }}· {{ .TotalCalories }} ккал{{ if .Extras }} ({{ .Extras }}){{ end }}{{ end }}
           </span>
         </div>
         <div class="ride-list">
@@ -85,6 +86,9 @@
                 <span class="ride-metric"><b>{{ .AvgPower }}</b><span class="ride-unit">Вт ср.</span></span>
               {{ else if not .Trainer }}
                 <span class="ride-metric"><b>{{ .DurationText }}</b><span class="ride-unit">время</span></span>
+              {{ end }}
+              {{ if .Calories }}
+                <span class="ride-metric"><b>{{ .Calories }}</b><span class="ride-unit">ккал</span></span>
               {{ end }}
               {{ if .TSSText }}
                 <span class="ride-metric"><b>{{ .TSSText }}</b></span>

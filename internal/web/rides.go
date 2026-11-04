@@ -31,6 +31,7 @@ type rideMonth struct {
 	Outdoor       store.Agg
 	Trainer       store.Agg
 	TotalCalories int
+	Extras        string // геймификация калорий месяца: «1.8 пицц пепперони, ~0.5 кг жира»
 	TSS           float64
 	AvgIF         float64
 	Rides         []rideRow
@@ -46,6 +47,7 @@ type rideRow struct {
 	DurationSec  int64
 	DurationText string
 	AvgPower     int
+	Calories     int // только если есть мощность и калории > 0
 	TSSText      string
 	Trainer      bool
 	HasRecord    bool
@@ -127,6 +129,7 @@ func buildRidesView(db *sql.DB, wantYear int) (*rideView, error) {
 		for _, r := range m.Rides {
 			rm.Rides = append(rm.Rides, buildRideRow(r, metas[r.ID], samples[r.ID], records[r.ID]))
 		}
+		rm.Extras = monthExtras(rm.TotalCalories)
 		rm.VolumeSpark = monthVolumeSpark(rm.Rides)
 		selYear.Months = append(selYear.Months, rm)
 	}
@@ -212,6 +215,11 @@ func buildRideRow(r store.WorkoutRow, meta rideWorkoutMeta, samples []store.Samp
 	}
 	if r.TSS > 0 {
 		row.TSSText = fmt.Sprintf("%.0f TSS", math.Round(r.TSS))
+	}
+	// калории есть смысл показывать только при поверметре: без него
+	// workouts.calories не считается (расход = кДж работы)
+	if meta.hasPower && r.Calories > 0 {
+		row.Calories = r.Calories
 	}
 
 	if meta.hasPower {
