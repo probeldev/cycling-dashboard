@@ -474,6 +474,14 @@ func formatHours(h float64) string {
 	return fmt.Sprintf("%.1f ч", h)
 }
 
+// humanMin — минуты в читаемый вид: "5 ч 35 мин", а меньше часа — "45 мин".
+func humanMin(minutes int) string {
+	if minutes < 60 {
+		return fmt.Sprintf("%d мин", minutes)
+	}
+	return fmt.Sprintf("%d ч %d мин", minutes/60, minutes%60)
+}
+
 // formatDurationShort — "1:30" или "45:00" для времени в секундах.
 func formatDurationShort(sec int64) string {
 	if sec <= 0 {

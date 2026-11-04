@@ -145,7 +145,7 @@
       <p class="coverage" style="margin:2px 0 0">({{ $s.Week.CoverageDays }} {{ pluralDays $s.Week.CoverageDays }} из 7 с нагрузкой)</p>
       <div class="bar"><i class="{{ progressClass $s.Week.TSS $s.Week.Target }}" style="width:{{ meterWidth $s.Week.TSS $s.Week.Target }}%"></i></div>
       <div class="week-line">на сегодня {{ intFloat (deref $s.Week.TargetToDate) }} · на неделю {{ intFloat (deref $s.Week.Target) }}</div>
-      <div class="week-line">осталось {{ intFloat (deref $s.Week.Remaining) }} TSS{{ with $s.Week.RemainingMinZ2Total }} · ≈ {{ derefInt . }} мин Z2{{ end }}</div>
+      <div class="week-line">осталось {{ intFloat (deref $s.Week.Remaining) }} TSS{{ with $s.Week.RemainingMinZ2Total }} · ≈ {{ humanMin (derefInt .) }} Z2{{ end }}</div>
       <div class="week-line">источник цели: {{ targetSourceText $s.Week.TargetSource }}</div>
       {{ else }}
       <div class="week-num"><b>{{ intFloat $s.Week.TSS }}</b><span class="muted"><span class="unit">TSS</span></span></div>

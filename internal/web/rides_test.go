@@ -467,3 +467,18 @@ func TestRideSamplesBatchMatchesStore(t *testing.T) {
 		t.Errorf("batch отличается от store.Samples: %d точек против %d", len(batch[id]), len(want))
 	}
 }
+
+// TestHumanMin — «осталось ≈ N Z2» на главной показываем часами и минутами.
+func TestHumanMin(t *testing.T) {
+	cases := map[int]string{
+		335: "5 ч 35 мин",
+		60:  "1 ч 0 мин",
+		45:  "45 мин",
+		0:   "0 мин",
+	}
+	for min, want := range cases {
+		if got := humanMin(min); got != want {
+			t.Errorf("humanMin(%d) = %q, хочу %q", min, got, want)
+		}
+	}
+}

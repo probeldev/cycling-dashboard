@@ -105,6 +105,7 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	},
 	"durationShort": formatDurationShort,
 	"formatHours":   formatHours,
+	"humanMin":      humanMin,
 	"safeHTML":      func(s string) template.HTML { return template.HTML(s) },
 }).ParseFS(assets, "templates/*.html"))
 
