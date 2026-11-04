@@ -1,51 +1,53 @@
 {{ template "head" . }}
-<h1>Поездки</h1>
-
-<div class="rides-sync">
-  <button id="syncBtn" class="btn btn--primary" hx-post="/sync" hx-swap="none">
-    <svg class="ic" aria-hidden="true"><use href="/static/icons.svg#refresh"/></svg>
-    Синхронизировать с велокомпом
-  </button>
-  <span id="syncState" class="sub"></span>
-</div>
-<pre id="syncLog" class="sync-log" style="display:none"></pre>
-
-<input id="search" class="rides-search" type="text" placeholder="Поиск по имени или дате (напр. 05.2025)" oninput="filterRides(this.value)">
-
-<script>
-let syncTimer = null;
-function pollSync() {
-  fetch("/sync/status").then(r => r.json()).then(st => {
-    const log = document.getElementById("syncLog");
-    const btn = document.getElementById("syncBtn");
-    const state = document.getElementById("syncState");
-    if (st.lines.length) {
-      log.style.display = "block";
-      log.textContent = st.lines.join("\n");
-      log.scrollTop = log.scrollHeight;
-    }
-    if (st.running) {
-      btn.disabled = true;
-      state.textContent = "синхронизация...";
-      syncTimer = setTimeout(pollSync, 1500);
-    } else {
-      btn.disabled = false;
-      state.textContent = "";
-      if (syncTimer) { syncTimer = null; location.reload(); }
-    }
-  });
-}
-document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSync);
-</script>
-
-{{ if .Rides.Selected }}
-<div class="rides-layout">
+<div class="rides-layout{{ if not .Rides.Selected }} rides-layout--single{{ end }}">
+  {{ if .Rides.Selected }}
   <nav class="rides-nav" aria-label="Года">
     {{ range .Rides.Years }}
     <a href="/rides?year={{ .Year }}"{{ if .Active }} class="active"{{ end }}>{{ .Year }}</a>
     {{ end }}
   </nav>
+  {{ end }}
   <div class="rides-content">
+    <h1>Поездки</h1>
+
+    <div class="rides-sync">
+      <button id="syncBtn" class="btn btn--primary" hx-post="/sync" hx-swap="none">
+        <svg class="ic" aria-hidden="true"><use href="/static/icons.svg#refresh"/></svg>
+        Синхронизировать с велокомпом
+      </button>
+      <span id="syncState" class="sub"></span>
+    </div>
+    <pre id="syncLog" class="sync-log" style="display:none"></pre>
+
+    <input id="search" class="rides-search" type="text" placeholder="Поиск по имени или дате (напр. 05.2025)" oninput="filterRides(this.value)">
+
+    <script>
+    let syncTimer = null;
+    function pollSync() {
+      fetch("/sync/status").then(r => r.json()).then(st => {
+        const log = document.getElementById("syncLog");
+        const btn = document.getElementById("syncBtn");
+        const state = document.getElementById("syncState");
+        if (st.lines.length) {
+          log.style.display = "block";
+          log.textContent = st.lines.join("\n");
+          log.scrollTop = log.scrollHeight;
+        }
+        if (st.running) {
+          btn.disabled = true;
+          state.textContent = "синхронизация...";
+          syncTimer = setTimeout(pollSync, 1500);
+        } else {
+          btn.disabled = false;
+          state.textContent = "";
+          if (syncTimer) { syncTimer = null; location.reload(); }
+        }
+      });
+    }
+    document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSync);
+    </script>
+
+    {{ if .Rides.Selected }}
     {{ with .Rides.Selected }}
     <h2 class="rides-year">{{ .Year }} <span class="sub">{{ if .Outdoor.Hours }}{{ km .Outdoor.DistanceKm }} км улица{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }} · {{ end }}{{ if .Trainer.Hours }}{{ hours .Trainer.Hours }} ч станок{{ end }}</span></h2>
     <div class="months">
@@ -95,11 +97,11 @@ document.getElementById("syncBtn").addEventListener("htmx:afterRequest", pollSyn
     {{ end }}
     </div>
     {{ end }}
+    {{ else }}
+    <p class="empty rides-empty">Поездки появятся после импорта или синхронизации. <a class="link-cta" href="#syncBtn">Синхронизировать с велокомпом</a></p>
+    {{ end }}
   </div>
 </div>
-{{ else }}
-<p class="empty rides-empty">Поездки появятся после импорта или синхронизации. <a class="link-cta" href="#syncBtn">Синхронизировать с велокомпом</a></p>
-{{ end }}
 
 <script>
 function filterRides(q) {
@@ -122,7 +124,8 @@ function filterRides(q) {
 
 /* раскладка: меню годов сбоку, контент справа (как на /workout) */
 .rides-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 28px; align-items: start; }
-.rides-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; padding-top: 16px; }
+.rides-layout--single { grid-template-columns: minmax(0, 1fr); }
+.rides-nav { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; }
 .rides-nav a { padding: 6px 12px; border-radius: 999px; color: var(--text-2); font-size: 14px; }
 .rides-nav a:hover { background: var(--surface); color: var(--text); text-decoration: none; }
 .rides-nav a.active { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
