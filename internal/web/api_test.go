@@ -58,7 +58,7 @@ func TestWorkoutJSONNullMetrics(t *testing.T) {
 	}
 
 	got := get(none)
-	for _, key := range []string{"IF", "TSS", "VI", "WorkKJ", "AvgCadenceActive"} {
+	for _, key := range []string{"IF", "TSS", "VI", "WorkKJ", "AvgCadenceActive", "tss_est", "tss_est_low"} {
 		v, ok := got[key]
 		if !ok || v != nil {
 			t.Errorf("без мощности: %s = %v, хочу null", key, v)
@@ -71,6 +71,46 @@ func TestWorkoutJSONNullMetrics(t *testing.T) {
 		if !ok || v != want {
 			t.Errorf("%s = %v, хочу %v", key, got[key], want)
 		}
+	}
+}
+
+// TestWorkoutJSONTSSEst — у тренировки с оценкой по пульсу в JSON есть
+// tss_est (число) и tss_est_low (bool), без оценки — null.
+func TestWorkoutJSONTSSEst(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour, AvgHR: 140,
+	}, "hash-json-tssest", filepath.Join(t.TempDir(), "c.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 75.5, tss_est_low = 1 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d", rec.Code)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := m["tss_est"].(float64); !ok || v != 75.5 {
+		t.Errorf("tss_est = %v, хочу 75.5", m["tss_est"])
+	}
+	if v, ok := m["tss_est_low"].(bool); !ok || !v {
+		t.Errorf("tss_est_low = %v, хочу true", m["tss_est_low"])
 	}
 }
 
@@ -113,7 +153,7 @@ func TestProfileEntryRollbackOnMetricsError(t *testing.T) {
 	}
 }
 
-// TestWorkoutsListJSON — список отдаёт массив; у объекта 40 полей, Override
+// TestWorkoutsListJSON — список отдаёт массив; у объекта 42 поля, Override
 // присутствует (контракт JSON не должен незаметно меняться).
 func TestWorkoutsListJSON(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -144,15 +184,19 @@ func TestWorkoutsListJSON(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("%d элементов, хочу 2", len(list))
 	}
-	if got := len(list[0]); got != 40 {
+	if got := len(list[0]); got != 42 {
 		keys := make([]string, 0, got)
 		for k := range list[0] {
 			keys = append(keys, k)
 		}
-		t.Errorf("полей в объекте %d, хочу 40: %v", got, keys)
+		t.Errorf("полей в объекте %d, хочу 42: %v", got, keys)
 	}
 	if _, ok := list[0]["Override"]; !ok {
 		t.Errorf("в объекте нет поля Override")
+	}
+	// неизвестная оценка по пульсу — null, а не пропущенное поле
+	if v, ok := list[0]["tss_est"]; !ok || v != nil {
+		t.Errorf("tss_est = %v (есть=%v), хочу null", v, ok)
 	}
 }
 

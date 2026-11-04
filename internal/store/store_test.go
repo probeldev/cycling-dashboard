@@ -718,3 +718,104 @@ func TestSetTrainerOverrideRestampsFTP(t *testing.T) {
 		t.Errorf("после улицы: FTP=%d kind=%q, хочу 170/outdoor", w.FTP, w.FTPKind)
 	}
 }
+
+// TestGetWorkoutReadsTSSEst — GetWorkout читает tss_est и tss_est_low.
+func TestGetWorkoutReadsTSSEst(t *testing.T) {
+	db := openTestDB(t)
+	id, err := InsertWorkout(db, &Workout{StartTime: time.Now(), Duration: time.Hour, AvgHR: 140},
+		"hash-hr-est", "/tmp/hr-est.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 75.5, tss_est_low = 1 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	w, err := GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.HasTSSEst || math.Abs(w.TSSEst-75.5) > 1e-9 {
+		t.Errorf("TSSEst = %v (has=%v), хочу 75.5/true", w.TSSEst, w.HasTSSEst)
+	}
+	if !w.TSSEstLow {
+		t.Error("TSSEstLow должен быть true")
+	}
+
+	// NULL оценки
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = NULL, tss_est_low = 0 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	w, err = GetWorkout(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.HasTSSEst || w.TSSEstLow {
+		t.Errorf("после NULL: HasTSSEst=%v TSSEstLow=%v, хочу false/false", w.HasTSSEst, w.TSSEstLow)
+	}
+}
+
+// TestPowerHRRidesClosest — обучающий набор берётся из ближайших по времени
+// тренировок с мощностью и пульсом с обеих сторон от даты: до и после.
+func TestPowerHRRidesClosest(t *testing.T) {
+	db := openTestDB(t)
+	day := func(d int) time.Time { return time.Date(2026, 1, d, 12, 0, 0, 0, time.UTC) }
+	ins := func(start time.Time, hr int, tss float64) {
+		t.Helper()
+		if _, err := InsertWorkout(db, &Workout{
+			StartTime: start, Duration: time.Hour,
+			AvgPower: 200, AvgHR: hr, TSS: tss,
+		}, "hash-closest-"+start.Format(time.RFC3339), "/nonexistent/closest.fit", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 2 тренировки до даты, 2 после; плюс дальняя и без мощности — не должны попасть
+	ins(day(1), 130, 60)
+	ins(day(2), 140, 70)
+	ins(day(20), 150, 80)
+	ins(day(21), 160, 90)
+	ins(day(28), 170, 100) // самая дальняя
+	// HR-only тренировка рядом — не обучающая
+	if _, err := InsertWorkout(db, &Workout{
+		StartTime: day(3), Duration: time.Hour, AvgHR: 150,
+	}, "hash-closest-hronly", "/nonexistent/hronly.fit", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	rides, err := PowerHRRidesClosest(db, day(10), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rides) != 4 {
+		t.Fatalf("получено %d тренировок, хочу 4 ближайших", len(rides))
+	}
+	got := map[int]bool{}
+	for _, r := range rides {
+		got[r.AvgHR] = true
+	}
+	for _, hr := range []int{130, 140, 150, 160} {
+		if !got[hr] {
+			t.Errorf("в выборке нет ближайшей тренировки hr=%d", hr)
+		}
+	}
+	if got[170] {
+		t.Error("дальняя тренировка hr=170 не должна попасть в 4 ближайших")
+	}
+
+	// дата в середине: ближайшие идут с обеих сторон, ближняя — первой
+	rides, err = PowerHRRidesClosest(db, day(10), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rides) != 3 || rides[0].AvgHR != 140 {
+		t.Fatalf("3 ближайших к д.10: %v, хочу первой hr=140 (д.2)", rides)
+	}
+	got = map[int]bool{}
+	for _, r := range rides {
+		got[r.AvgHR] = true
+	}
+	for _, hr := range []int{140, 130, 150} {
+		if !got[hr] {
+			t.Errorf("в 3 ближайших нет hr=%d (д.2/д.1 до и д.20 после)", hr)
+		}
+	}
+}

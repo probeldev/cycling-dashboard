@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"cycling-dashboard/internal/hrtss"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -84,11 +86,18 @@ type Workout struct {
 	HasTSS  bool `json:"-"`
 	HasVI   bool `json:"-"`
 	HasWork bool `json:"-"`
+
+	// оценка TSS по пульсу (для тренировок без поверметра);
+	// в JSON — null, пока оценки нет (как остальные метрики)
+	TSSEst    float64 `json:"tss_est"`
+	HasTSSEst bool    `json:"-"`
+	TSSEstLow bool    `json:"tss_est_low"`
 }
 
 // MarshalJSON отдаёт null для неизвестных метрик: ноль в IF/TSS/VI/WorkKJ —
 // это «данных нет», а не «нулевая нагрузка» (0 кДж при наличии данных — валидный
-// ноль, его различает HasWork).
+// ноль, его различает HasWork). Оценка по пульсу (tss_est/tss_est_low) —
+// по той же конвенции: null, пока оценки нет.
 func (w Workout) MarshalJSON() ([]byte, error) {
 	type plain Workout // без метода, чтобы не было рекурсии
 	out := struct {
@@ -98,6 +107,8 @@ func (w Workout) MarshalJSON() ([]byte, error) {
 		VI               *float64 `json:"VI"`
 		WorkKJ           *float64 `json:"WorkKJ"`
 		AvgCadenceActive *int     `json:"AvgCadenceActive"`
+		TSSEst           *float64 `json:"tss_est"`
+		TSSEstLow        *bool    `json:"tss_est_low"`
 	}{plain: plain(w)}
 	if w.HasIF {
 		out.IF = &out.plain.IF
@@ -113,6 +124,10 @@ func (w Workout) MarshalJSON() ([]byte, error) {
 	}
 	if w.AvgCadenceActive > 0 {
 		out.AvgCadenceActive = &out.plain.AvgCadenceActive
+	}
+	if w.HasTSSEst {
+		out.TSSEst = &out.plain.TSSEst
+		out.TSSEstLow = &out.plain.TSSEstLow
 	}
 	return json.Marshal(out)
 }
@@ -293,6 +308,8 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"workouts", "metrics_version", `ALTER TABLE workouts ADD COLUMN metrics_version INTEGER NOT NULL DEFAULT 0`},
 		{"workouts", "avg_cadence_active", `ALTER TABLE workouts ADD COLUMN avg_cadence_active INTEGER`},
 		{"profile_history", "synthetic", `ALTER TABLE profile_history ADD COLUMN synthetic INTEGER NOT NULL DEFAULT 0`},
+		{"workouts", "tss_est", `ALTER TABLE workouts ADD COLUMN tss_est REAL`},
+		{"workouts", "tss_est_low", `ALTER TABLE workouts ADD COLUMN tss_est_low INTEGER NOT NULL DEFAULT 0`},
 	} {
 		has, err := hasColumn(db, m.table, m.column)
 		if err != nil {
@@ -979,7 +996,41 @@ func WorkoutsNeedingMetrics(db DBTX, version int) ([]FileRef, error) {
 	return out, rows.Err()
 }
 
-// SetWorkoutMetricsBatch записывает метрики нагрузки пачкой. Транзакцией
+// PowerHRRidesClosest возвращает limit тренировок с мощностью и пульсом,
+// ближайших по времени к around (до или после — неважно): исторические
+// HR-only тренировки в начале истории тоже получают обучающий набор.
+// Используется для обучения модели оценки TSS по пульсу.
+func PowerHRRidesClosest(q DBTX, around time.Time, limit int) ([]hrtss.Ride, error) {
+	rows, err := q.Query(`SELECT avg_hr, duration_sec, tss FROM workouts
+	    WHERE avg_power IS NOT NULL AND avg_power > 0
+	      AND avg_hr IS NOT NULL AND avg_hr > 0 AND tss IS NOT NULL AND tss > 0
+	      AND duration_sec > 0
+	    ORDER BY ABS(strftime('%s', start_time) - ?) LIMIT ?`,
+		around.Unix(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []hrtss.Ride
+	for rows.Next() {
+		var hr, dur sql.NullInt64
+		var tss sql.NullFloat64
+		if err := rows.Scan(&hr, &dur, &tss); err != nil {
+			return nil, err
+		}
+		if !hr.Valid || !dur.Valid || !tss.Valid {
+			continue
+		}
+		out = append(out, hrtss.Ride{
+			AvgHR:       int(hr.Int64),
+			DurationSec: dur.Int64,
+			TSS:         tss.Float64,
+		})
+	}
+	return out, rows.Err()
+}
+
+// SetWorkoutMetricsBatch записывает метрики нагрузки пачкой; транзакцией
 // управляет вызывающий: бэкфилл при старте открывает свою, а правка профиля —
 // общую с записью в profile_history.
 // Пользовательские поля (name, trainer_override) не трогает.
@@ -1226,17 +1277,19 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	var apa, coast, nop, susp, elapsed, pause sql.NullInt64
 	var tr, gps int
 	var ov sql.NullInt64
+	var tssEst sql.NullFloat64
+	var tssEstLow int
 	err := db.QueryRow(`SELECT id, start_time, name, subsport, duration_sec, distance_m, has_gps, trainer,
-	    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_cadence_active, avg_power, max_power,
-	    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
-	    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
-	    elapsed_sec, pause_sec, work_kj, metrics_version, bike_id,
-	    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), '')
-	    FROM workouts WHERE id = ?`, id).Scan(
+    trainer_override, avg_speed_ms, max_speed_ms, avg_cadence, max_cadence, avg_cadence_active, avg_power, max_power,
+    norm_power, np_version, avg_hr, max_hr, calories, total_ascent, total_descent, ftp_w, ftp_kind, weight_kg,
+    if, tss, vi, avg_power_active, coasting_sec, no_power_sec, suspect_dropout_sec,
+    elapsed_sec, pause_sec, work_kj, metrics_version, tss_est, tss_est_low, bike_id,
+    COALESCE((SELECT name FROM bikes WHERE bikes.id = workouts.bike_id), '')
+    FROM workouts WHERE id = ?`, id).Scan(
 		&w.ID, &start, &w.Name, &w.SubSport, &durSec, &dist, &gps, &tr, &ov,
 		&spd, &mspd, &cad, &mcad, &cadActive, &ap, &mp, &np, &w.NPVersion, &hr, &mhr, &kcal, &asc, &desc, &ftp, &ftpKind, &wkg,
 		&ifv, &tss, &vi, &apa, &coast, &nop, &susp, &elapsed, &pause, &work, &w.MetricsVersion,
-		&bikeID, &bikeName)
+		&tssEst, &tssEstLow, &bikeID, &bikeName)
 	if err != nil {
 		return nil, err
 	}
@@ -1292,6 +1345,9 @@ func GetWorkout(db DBTX, id int64) (*Workout, error) {
 	w.PauseSec = int(pause.Int64)
 	w.WorkKJ = work.Float64
 	w.HasWork = work.Valid
+	w.TSSEst = tssEst.Float64
+	w.HasTSSEst = tssEst.Valid
+	w.TSSEstLow = tssEstLow != 0
 	return &w, nil
 }
 

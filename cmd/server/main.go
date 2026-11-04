@@ -75,6 +75,13 @@ func main() {
 		fmt.Printf("бэкфилл MMP: %d тренировок\n", n)
 	}
 
+	// Оценка TSS по пульсу для тренировок без поверметра (после метрик).
+	if n, err := importer.BackfillTSSEst(db); err != nil {
+		log.Printf("бэкфилл оценки TSS: %v", err)
+	} else if n > 0 {
+		fmt.Printf("бэкфилл оценки TSS: %d тренировок\n", n)
+	}
+
 	syncMgr := web.NewSyncManager()
 	h, err := web.Handler(db, syncMgr, absDir, func() {
 		n, _, err := importer.ImportDir(db, absDir)
@@ -83,6 +90,12 @@ func main() {
 			return
 		}
 		fmt.Printf("импорт после синка: %d новых\n", n)
+		// новые HR-only тренировки сразу получают оценку TSS, без рестарта
+		if n, err := importer.BackfillTSSEst(db); err != nil {
+			log.Printf("бэкфилл оценки TSS: %v", err)
+		} else if n > 0 {
+			fmt.Printf("бэкфилл оценки TSS: %d тренировок\n", n)
+		}
 	})
 	if err != nil {
 		log.Fatal(err)
