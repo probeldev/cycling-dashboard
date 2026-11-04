@@ -35,8 +35,27 @@ func TestRenderPages(t *testing.T) {
 		HasIF:      true,
 		HasTSS:     true,
 		HasVI:      true,
+		Calories:   900,
+		ElapsedSec: 5700,
+		PauseSec:   300,
+		AvgHR:      140,
+		MaxHR:      165,
+		AvgCadence: 85,
+		MaxCadence: 100,
+		AvgSpeedKmh: 28.8,
 	}, "hash-render", filepath.Join(t.TempDir(), "x.fit"), 1)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// пульс/каденс/скорость/мощность сэмплами — чтобы на сводке были полоски
+	var samples []store.Sample
+	for i := 0; i < 60; i++ {
+		samples = append(samples, store.Sample{
+			Offset: int64(i), Power: 100, HasPwr: true,
+			HR: 140, Cadence: 85, HasCad: true, SpeedMs: 8,
+		})
+	}
+	if err := store.InsertSamples(db, id, samples); err != nil {
 		t.Fatal(err)
 	}
 	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
@@ -65,6 +84,43 @@ func TestRenderPages(t *testing.T) {
 	code, body = get(fmt.Sprintf("/workout/%d", id))
 	if code != http.StatusOK || !strings.Contains(body, "Сводка") || !strings.Contains(body, "</html>") {
 		t.Errorf("GET /workout: код %d, тело %d байт", code, len(body))
+	}
+	// плитки: Дистанция (улица), Время, Калории, TSS; IF и NP — не плитки
+	for _, want := range []string{">Дистанция<", ">Время<", ">Калории<", "TSS — нагрузка"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /workout: нет плитки %q", want)
+		}
+	}
+	if strings.Contains(body, "IF — доля от FTP</div><div class=\"verdict\">") {
+		t.Error("GET /workout: IF остался плиткой с вердиктом")
+	}
+	// строки «значения слева, полоска справа»: мощность с зонами,
+	// пульс/каденс/скорость с распределениями
+	for _, want := range []string{
+		`aria-label="распределение времени по зонам мощности"`,
+		`aria-label="распределение времени: Пульс"`,
+		`aria-label="распределение времени: Каденс"`,
+		`aria-label="распределение времени: Скорость"`,
+		`title="140–150 уд/мин — 1 мин (100.0%)"`,
+		`class="zone-bar z2"`,
+		"NP", "средняя с весом пиков", ">436 Вт<", "FTP 156 Вт",
+		">Средний<", ">Макс<", ">Средняя<", "28.8 км/ч",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /workout: нет строки метрик %q", want)
+		}
+	}
+	// отдельные секции полосок больше нет
+	if strings.Contains(body, "Зоны мощности") || strings.Contains(body, "Распределение времени") {
+		t.Error("GET /workout: остались секции «Зоны мощности»/«Распределение времени»")
+	}
+	// остальные параметры — под «Больше данных»
+	for _, want := range []string{
+		"Больше данных", "общее время", ">паузы<", "VI — ровность", "IF — доля от FTP",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /workout: нет «Больше данных» %q", want)
+		}
 	}
 
 	code, body = get(fmt.Sprintf("/workout/%d/charts", id))
@@ -255,8 +311,9 @@ func TestRidesPageCountAndFilterData(t *testing.T) {
 	}
 }
 
-// TestWorkoutCadenceActive — на деталке основная цифра каденса — «в работе»,
-// а общий средний подписан явно «с накатом».
+// TestWorkoutCadenceActive — в строке каденса основной цифрой средний «в
+// работе», общий средний подписан мелко «с накатом»; в «Больше данных»
+// каденса больше нет.
 func TestWorkoutCadenceActive(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -280,9 +337,14 @@ func TestWorkoutCadenceActive(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{">78<", "в работе", "66 с накатом"} {
+	for _, want := range []string{">78<", "66 с накатом", "Средний"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)
+		}
+	}
+	for _, bad := range []string{"каденс в работе", "каденс макс"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("в «Больше данных» остался %q", bad)
 		}
 	}
 }

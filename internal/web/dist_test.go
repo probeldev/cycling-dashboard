@@ -392,8 +392,9 @@ func TestZoneTimeMatchesZoneDistribution(t *testing.T) {
 	}
 }
 
-// TestWorkoutZonesHTMLMatchesZoneDistribution — стрип зон на деталке строится
-// из того же zoneDistribution: метки, время и % от педалирования совпадают.
+// TestWorkoutZonesHTMLMatchesZoneDistribution — полоска зон в строке мощности
+// на сводке строится из того же zoneDistribution: метки, время и % от
+// педалирования совпадают; подпись FTP — под значениями строки.
 func TestWorkoutZonesHTMLMatchesZoneDistribution(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -433,7 +434,7 @@ func TestWorkoutZonesHTMLMatchesZoneDistribution(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Зоны мощности", "FTP 156 Вт", "станок, уличный не задан",
+		"распределение времени по зонам мощности", "FTP 156 Вт", "станок, уличный не задан",
 		"% — от времени педалирования",
 	} {
 		if !strings.Contains(body, want) {
@@ -461,8 +462,9 @@ func TestWorkoutZonesHTMLMatchesZoneDistribution(t *testing.T) {
 	}
 }
 
-// TestWorkoutDistStripsHTML — на сводке полоски пульса, каденса и скорости;
-// подсказка сегмента содержит диапазон, время и долю. У станка скорости нет.
+// TestWorkoutDistStripsHTML — на сводке строки пульса, каденса и скорости:
+// значения слева, полоска справа; подсказка сегмента содержит диапазон,
+// время и долю. У станка скорости нет — ни строки, ни полоски.
 func TestWorkoutDistStripsHTML(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -492,7 +494,10 @@ func TestWorkoutDistStripsHTML(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Распределение времени", "Пульс", "Каденс", "Скорость",
+		`aria-label="распределение времени: Пульс"`,
+		`aria-label="распределение времени: Каденс"`,
+		`aria-label="распределение времени: Скорость"`,
+		"Пульс", "Каденс", "Скорость", "Средний", "Макс", "Средняя",
 		"dist-hr", "dist-cadence", "dist-speed",
 		`title="140–150 уд/мин — 10 с (100.0%)"`,
 		`title="80–90 об/мин — 10 с (100.0%)"`,
@@ -503,7 +508,7 @@ func TestWorkoutDistStripsHTML(t *testing.T) {
 		}
 	}
 
-	// станок: полоски скорости нет, остальные остаются
+	// станок: строки скорости нет, остальные остаются
 	if err := store.SetTrainerOverride(db, id, true); err != nil {
 		t.Fatal(err)
 	}
@@ -528,6 +533,9 @@ func TestWorkoutDistStripsHTML(t *testing.T) {
 	}
 	if strings.Contains(body, "км/ч —") {
 		t.Error("на станке осталась подсказка полоски скорости")
+	}
+	if strings.Contains(body, "28.8 км/ч") {
+		t.Error("на станке осталась строка скорости")
 	}
 
 	// на странице графиков раздела «Распределения» больше нет, endpoint удалён

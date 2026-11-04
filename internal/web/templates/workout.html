@@ -55,14 +55,21 @@
   .effort .trend.up { color: var(--ok); }
   .effort .trend.down { color: var(--danger); }
 
-  .zone-strip { margin-top: 8px; }
-  .zone-legend { display: flex; gap: 4px 14px; flex-wrap: wrap; margin-top: 6px; }
-  .zdot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--zone-color, var(--text-3)); margin-right: 4px; }
+  /* строки сводки «значения слева, полоска справа» (§4.3): правая колонка
+     фиксированной доли ширины — все полоски одной ширины, друг под другом */
+  .metric-rows { display: flex; flex-direction: column; gap: 14px; margin: 16px 0 4px; }
+  .metric-row { display: grid; grid-template-columns: minmax(220px, 1fr) 55%; gap: 6px 16px; align-items: center; }
+  .metric-row .zone-bars { width: 100%; min-width: 0; }
+  .metric-row .name { font-size: 12px; color: var(--text-2); }
+  .metric-pair { display: flex; gap: 4px 18px; flex-wrap: wrap; align-items: baseline; }
+  .metric-pair .k { font-size: 12px; color: var(--text-2); }
+  .metric-pair .v { font-size: 17px; font-weight: 600; font-feature-settings: "tnum"; }
+  .metric-pair .note { font-size: 12px; color: var(--text-3); }
+  .metric-foot { font-size: 12px; color: var(--text-3); }
+  @media (max-width: 700px) {
+    .metric-row { grid-template-columns: 1fr; }
+  }
 
-  .dist-strips { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
-  .dist-row { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 4px 12px; align-items: center; }
-  .dist-row .name { font-size: 13px; color: var(--text-2); }
-  .dist-row .zone-bars { min-width: 0; }
   .dist-hr { background: var(--danger); }
   .dist-cadence { background: var(--text-2); }
   .dist-speed { background: var(--outdoor); }
@@ -72,6 +79,11 @@
   .ws-body { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
   .ws-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 14px; }
   .ws-row .lbl { color: var(--text-2); min-width: 150px; }
+
+  /* «Больше данных»: спрятанные параметры деталки */
+  .more-data { margin-top: 16px; }
+  .more-data > summary { color: var(--text-2); }
+  .more-data .details { padding: 4px 16px 12px; }
 
   .ftp-hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .ftp-hint .v { font-size: 20px; font-weight: 600; }
@@ -127,95 +139,58 @@
 {{ end }}
 
 <div class="heroes">
+  {{ if and (not .W.Trainer) .W.DistanceKm }}
+  <div class="metric-card"><div class="v">{{ km .W.DistanceKm }}<span class="u"> км</span></div><div class="k">Дистанция</div></div>
+  {{ end }}
+  <div class="metric-card"><div class="v">{{ dur .W.Duration }}</div><div class="k">Время</div></div>
+  {{ if .W.Calories }}
+  <div class="metric-card"><div class="v">{{ .W.Calories }}<span class="u"> ккал</span></div><div class="k">Калории</div></div>
+  {{ end }}
   {{ if .W.HasTSS }}
   <div class="metric-card"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS — нагрузка</div><div class="verdict">{{ tssVerdict .W.TSS }}</div></div>
   {{ end }}
-  {{ if .W.HasIF }}
-  <div class="metric-card"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF — доля от FTP</div><div class="verdict">{{ ifVerdict .W.IF }}</div></div>
-  {{ end }}
-  {{ if .W.NormPower }}
-  <div class="metric-card"><div class="v">{{ .W.NormPower }}<span class="u"> Вт</span></div><div class="k">NP — приведённая мощность</div><div class="verdict">средняя с весом пиков</div></div>
-  {{ else if .W.AvgPower }}
-  <div class="metric-card"><div class="v">{{ .W.AvgPower }}<span class="u"> Вт</span></div><div class="k">Средняя мощность</div></div>
-  {{ end }}
-  {{ if not .W.Trainer }}{{ if .W.DistanceKm }}
-  <div class="metric-card"><div class="v">{{ km .W.DistanceKm }}<span class="u"> км</span></div><div class="k">Дистанция</div></div>
-  {{ end }}{{ end }}
-  {{ if or .W.Trainer (not .W.DistanceKm) (not .W.HasPower) }}
-  <div class="metric-card"><div class="v">{{ dur .W.Duration }}</div><div class="k">Время</div></div>
-  {{ end }}
 </div>
 
-<div class="details">
-  {{ if and (not .W.Trainer) .W.HasPower .W.DistanceKm }}
-  <div class="d-item"><div class="v">{{ dur .W.Duration }}</div><div class="k">время в движении</div></div>
-  {{ end }}
-  {{ if .W.ElapsedSec }}<div class="d-item"><div class="v">{{ dur (secs .W.ElapsedSec) }}</div><div class="k">общее время</div></div>{{ end }}
-  {{ if .W.PauseSec }}<div class="d-item"><div class="v">{{ dur (secs .W.PauseSec) }}</div><div class="k">паузы</div><div class="note">{{ pauseVerdict .W.Trainer }}</div></div>{{ end }}
-  {{ if and (not .W.Trainer) .W.AscentM }}<div class="d-item"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор высоты</div></div>{{ end }}
-  {{ if .W.Calories }}<div class="d-item"><div class="v">{{ .W.Calories }}</div><div class="k">ккал</div></div>{{ end }}
-
-  {{ if .W.HasPower }}
-  {{ if .W.NormPower }}<div class="d-item"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя мощность</div></div>{{ end }}
-  <div class="d-item"><div class="v">{{ .W.MaxPower }} Вт</div><div class="k">макс мощность</div></div>
-  {{ if .W.AvgPowerActive }}<div class="d-item"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">средняя в работе</div><div class="note">без наката и остановок</div></div>{{ end }}
-  {{ if .W.FTP }}<div class="d-item"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату{{ if .W.FTPFallback }} (станок, уличный не задан){{ else if eq .W.FTPKind "outdoor" }} (улица){{ else if eq .W.FTPKind "trainer" }} (станок){{ end }}</div><div class="note">порог мощности, от которого считаны зоны</div></div>{{ end }}
-  {{ if .W.HasVI }}<div class="d-item"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI — ровность</div><div class="note">{{ viVerdict .W.VI }}</div></div>{{ end }}
-  {{ if and .W.WeightKg .W.AvgPower }}<div class="d-item"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг</div><div class="note">удельная мощность, вес {{ km .W.WeightKg }} кг</div></div>{{ end }}
-  {{ end }}
-
-  {{ if not .W.Trainer }}
-  <div class="d-item"><div class="v">{{ trimFloat .W.AvgSpeedKmh }}</div><div class="k">скорость средняя, км/ч</div></div>
-  {{ if .W.MaxSpeedKmh }}<div class="d-item"><div class="v">{{ trimFloat .W.MaxSpeedKmh }}</div><div class="k">скорость макс, км/ч</div></div>{{ end }}
-  {{ end }}
-
-  {{ if or .W.AvgCadence .W.AvgCadenceActive }}
-  <div class="d-item">
-    <div class="v">{{ if .W.AvgCadenceActive }}{{ .W.AvgCadenceActive }}{{ else }}—{{ end }}</div>
-    <div class="k">каденс в работе</div>
-    {{ if .W.AvgCadence }}<div class="note">{{ .W.AvgCadence }} с накатом</div>{{ end }}
-  </div>
-  {{ if .W.MaxCadence }}<div class="d-item"><div class="v">{{ .W.MaxCadence }}</div><div class="k">каденс макс</div></div>{{ end }}
-  {{ end }}
-
-  {{ if .W.AvgHR }}
-  <div class="d-item"><div class="v">{{ .W.AvgHR }}</div><div class="k">пульс средний</div></div>
-  {{ if .W.MaxHR }}<div class="d-item"><div class="v">{{ .W.MaxHR }}</div><div class="k">пульс макс</div></div>{{ end }}
-  {{ end }}
-</div>
-
-{{ if or .PowerZones .DistStrips }}
-<section class="blk">
-  {{ if .PowerZones }}
-  <div class="section-label">Зоны мощности</div>
-  <div class="zone-strip">
-    <div class="zone-bars" role="img" aria-label="распределение времени по зонам мощности">
-      {{ range .PowerZones }}{{ if gt .PctNum 0.0 }}<span class="zone-bar z{{ .N }}" style="width:{{ .Pct }}%" title="{{ .Label }} — {{ .Time }} ({{ .Pct }}%)"></span>{{ end }}{{ end }}
-    </div>
-    <div class="zone-legend">
-      {{ range .PowerZones }}{{ if gt .PctNum 0.0 }}<span class="zone-bar-lbl"><i class="zdot z{{ .N }}"></i>Z{{ .N }} · {{ .Time }}</span>{{ end }}{{ end }}
-    </div>
-  </div>
-  <p class="coverage" style="margin:6px 0 0">
-    FTP {{ .W.FTP }} Вт —{{ if .W.FTPFallback }} станок, уличный не задан{{ else if eq .W.FTPKind "outdoor" }} улица{{ else }} станок{{ end }}; % — от времени педалирования.
-  </p>
-  {{ end }}
-  {{ if .DistStrips }}
-  <div class="section-label"{{ if .PowerZones }} style="margin-top:18px"{{ end }}>Распределение времени</div>
-  <div class="dist-strips">
-    {{ range .DistStrips }}
-    {{ $s := . }}
-    <div class="dist-row">
-      <span class="name">{{ $s.Label }}</span>
-      <div class="zone-bars" role="img" aria-label="распределение времени: {{ $s.Label }}">
-        {{ range .Entries }}<span class="zone-bar {{ $s.Class }}" style="width:{{ .Pct }}%" title="{{ .Label }} {{ $s.Unit }} — {{ .Time }} ({{ .Pct }}%)"></span>{{ end }}
+{{ if .MetricRows }}
+<div class="metric-rows">
+  {{ range .MetricRows }}
+  <div class="metric-row">
+    <div class="metric-vals">
+      <div class="name">{{ .Label }}</div>
+      <div class="metric-pair">
+        {{ if .AvgVal }}<span class="metric-val"><span class="k">{{ .AvgName }}</span> <span class="v">{{ .AvgVal }}</span>{{ if .AvgNote }} <span class="note">{{ .AvgNote }}</span>{{ end }}</span>{{ end }}
+        {{ if .MaxVal }}<span class="metric-val"><span class="k">{{ .MaxName }}</span> <span class="v">{{ .MaxVal }}</span></span>{{ end }}
       </div>
+      {{ if .Footer }}<div class="metric-foot">{{ .Footer }}</div>{{ end }}
     </div>
+    <div class="zone-bars" role="img" aria-label="{{ .StripAria }}">
+      {{ range .Strip }}{{ if gt .PctNum 0.0 }}<span class="zone-bar {{ .Class }}" style="width:{{ .Pct }}%" title="{{ .Title }}"></span>{{ end }}{{ end }}
+    </div>
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+
+<details class="more-data">
+  <summary>Больше данных</summary>
+  <div class="details">
+    {{ if and (not .W.Trainer) .W.HasPower .W.DistanceKm }}
+    <div class="d-item"><div class="v">{{ dur .W.Duration }}</div><div class="k">время в движении</div></div>
+    {{ end }}
+    {{ if .W.ElapsedSec }}<div class="d-item"><div class="v">{{ dur (secs .W.ElapsedSec) }}</div><div class="k">общее время</div></div>{{ end }}
+    {{ if .W.PauseSec }}<div class="d-item"><div class="v">{{ dur (secs .W.PauseSec) }}</div><div class="k">паузы</div><div class="note">{{ pauseVerdict .W.Trainer }}</div></div>{{ end }}
+    {{ if and (not .W.Trainer) .W.AscentM }}<div class="d-item"><div class="v">{{ .W.AscentM }} м</div><div class="k">набор высоты</div></div>{{ end }}
+
+    {{ if .W.HasPower }}
+    {{ if and .W.NormPower .W.AvgPower }}<div class="d-item"><div class="v">{{ .W.AvgPower }} Вт</div><div class="k">средняя мощность</div></div>{{ end }}
+    {{ if .W.AvgPowerActive }}<div class="d-item"><div class="v">{{ .W.AvgPowerActive }} Вт</div><div class="k">средняя в работе</div><div class="note">без наката и остановок</div></div>{{ end }}
+    {{ if .W.FTP }}<div class="d-item"><div class="v">{{ .W.FTP }} Вт</div><div class="k">FTP на дату{{ if .W.FTPFallback }} (станок, уличный не задан){{ else if eq .W.FTPKind "outdoor" }} (улица){{ else if eq .W.FTPKind "trainer" }} (станок){{ end }}</div><div class="note">порог мощности, от которого считаны зоны</div></div>{{ end }}
+    {{ if .W.HasVI }}<div class="d-item"><div class="v">{{ printf "%.2f" .W.VI }}</div><div class="k">VI — ровность</div><div class="note">{{ viVerdict .W.VI }}</div></div>{{ end }}
+    {{ if and .W.WeightKg .W.AvgPower }}<div class="d-item"><div class="v">{{ trimFloat (divf .W.AvgPower .W.WeightKg) }}</div><div class="k">Вт/кг</div><div class="note">удельная мощность, вес {{ km .W.WeightKg }} кг</div></div>{{ end }}
+    {{ if .W.HasIF }}<div class="d-item"><div class="v">{{ printf "%.2f" .W.IF }}</div><div class="k">IF — доля от FTP</div><div class="note">{{ ifVerdict .W.IF }}</div></div>{{ end }}
     {{ end }}
   </div>
-  {{ end }}
-</section>
-{{ end }}
+</details>
 
 {{ if .MMP }}
 <section class="blk">

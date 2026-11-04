@@ -1,7 +1,9 @@
 package web
 
 import (
+	"fmt"
 	"math"
+	"strconv"
 
 	"cycling-dashboard/internal/advice"
 	"cycling-dashboard/internal/ridedata"
@@ -135,4 +137,165 @@ func zoneEdgesW(ftp int) []float64 {
 		out[i] = math.Round(f*float64(ftp)*10) / 10
 	}
 	return out
+}
+
+// metricSegment — сегмент полоски в строке сводки: единый вид для зон
+// мощности и распределений пульса/каденса/скорости. Детализация при
+// наведении — в Title.
+type metricSegment struct {
+	Class  string  // цвет сегмента: .zN у зон, .dist-* у распределений
+	Pct    string
+	PctNum float64 // тот же процент числом — для ширины бара
+	Title  string
+}
+
+// workoutMetricRow — строка сводки «значения слева, полоска справа» (§4.3):
+// среднее и максимум метрики плюс полоска распределения времени.
+type workoutMetricRow struct {
+	Label     string // «Мощность», «Пульс», «Каденс», «Скорость»
+	AvgName   string // «NP», «Средний», «Средняя»
+	AvgVal    string
+	AvgNote   string // мелкая подпись у среднего («66 с накатом»)
+	MaxName   string
+	MaxVal    string
+	StripAria string          // aria-label полоски
+	Strip     []metricSegment // сегменты; без полоски строка остаётся со значениями
+	Footer    string          // мелкая подпись под значениями (FTP у мощности)
+}
+
+// workoutMetricRows собирает строки сводки: мощность — от зон Коггана,
+// пульс/каденс/скорость — от распределений времени. Значения переезжают из
+// деталей, полоски — из секций «Зоны мощности» и «Распределение времени»;
+// строка без значений и полоски не показывается, скорость — только улица.
+func workoutMetricRows(wo *store.Workout, zones []workoutZoneRow, strips []metricStrip) []workoutMetricRow {
+	distStrip := func(label string) []metricSegment {
+		for _, s := range strips {
+			if s.Label == label {
+				return stripSegments(s)
+			}
+		}
+		return nil
+	}
+
+	var rows []workoutMetricRow
+
+	// мощность: NP или средняя (если NP не считался) + максимум; полоска —
+	// зоны от FTP, подпись — сам FTP
+	if wo.NormPower > 0 || wo.AvgPower > 0 {
+		row := workoutMetricRow{
+			Label:     "Мощность",
+			MaxName:   "Макс",
+			StripAria: "распределение времени по зонам мощности",
+			Strip:     zoneSegments(zones),
+		}
+		if wo.NormPower > 0 {
+			row.AvgName, row.AvgVal = "NP", fmt.Sprintf("%d Вт", wo.NormPower)
+			row.AvgNote = "средняя с весом пиков"
+		} else {
+			row.AvgName, row.AvgVal = "Средняя", fmt.Sprintf("%d Вт", wo.AvgPower)
+		}
+		if wo.MaxPower > 0 {
+			row.MaxVal = fmt.Sprintf("%d Вт", wo.MaxPower)
+		}
+		if wo.FTP > 0 {
+			row.Footer = fmt.Sprintf("FTP %d Вт — %s; %% — от времени педалирования", wo.FTP, ftpKindLabel(wo))
+		}
+		rows = append(rows, row)
+	}
+
+	// пульс: значения остаются и без полоски, если сэмплов не нашлось
+	if hr := distStrip("Пульс"); wo.AvgHR > 0 || wo.MaxHR > 0 || len(hr) > 0 {
+		row := workoutMetricRow{
+			Label: "Пульс", AvgName: "Средний", MaxName: "Макс",
+			StripAria: "распределение времени: Пульс", Strip: hr,
+		}
+		if wo.AvgHR > 0 {
+			row.AvgVal = strconv.Itoa(wo.AvgHR)
+		}
+		if wo.MaxHR > 0 {
+			row.MaxVal = strconv.Itoa(wo.MaxHR)
+		}
+		rows = append(rows, row)
+	}
+
+	// каденс: основной средний — «в работе» (без наката), общий — мелкой
+	// подписью; если «в работе» не считался, общий и есть основной
+	if cad := distStrip("Каденс"); wo.AvgCadence > 0 || wo.AvgCadenceActive > 0 || wo.MaxCadence > 0 || len(cad) > 0 {
+		row := workoutMetricRow{
+			Label: "Каденс", AvgName: "Средний", MaxName: "Макс",
+			StripAria: "распределение времени: Каденс", Strip: cad,
+		}
+		if wo.AvgCadenceActive > 0 {
+			row.AvgVal = strconv.Itoa(wo.AvgCadenceActive)
+			if wo.AvgCadence > 0 {
+				row.AvgNote = fmt.Sprintf("%d с накатом", wo.AvgCadence)
+			}
+		} else {
+			row.AvgVal = strconv.Itoa(wo.AvgCadence)
+		}
+		if wo.MaxCadence > 0 {
+			row.MaxVal = strconv.Itoa(wo.MaxCadence)
+		}
+		rows = append(rows, row)
+	}
+
+	// скорость: только улица — у станка её нет ни в метриках, ни в полосках
+	if !wo.Trainer {
+		if spd := distStrip("Скорость"); wo.AvgSpeedKmh > 0 || wo.MaxSpeedKmh > 0 || len(spd) > 0 {
+			row := workoutMetricRow{
+				Label: "Скорость", AvgName: "Средняя", MaxName: "Макс",
+				StripAria: "распределение времени: Скорость", Strip: spd,
+			}
+			if wo.AvgSpeedKmh > 0 {
+				row.AvgVal = trimFloat(wo.AvgSpeedKmh) + " км/ч"
+			}
+			if wo.MaxSpeedKmh > 0 {
+				row.MaxVal = trimFloat(wo.MaxSpeedKmh) + " км/ч"
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	return rows
+}
+
+// zoneSegments переводит строки зон Коггана в сегменты полоски.
+func zoneSegments(zones []workoutZoneRow) []metricSegment {
+	out := make([]metricSegment, 0, len(zones))
+	for _, z := range zones {
+		out = append(out, metricSegment{
+			Class:  fmt.Sprintf("z%d", z.N),
+			Pct:    z.Pct,
+			PctNum: z.PctNum,
+			Title:  fmt.Sprintf("%s — %s (%s%%)", z.Label, z.Time, z.Pct),
+		})
+	}
+	return out
+}
+
+// stripSegments переводит распределение времени в сегменты полоски.
+func stripSegments(s metricStrip) []metricSegment {
+	out := make([]metricSegment, 0, len(s.Entries))
+	for _, e := range s.Entries {
+		out = append(out, metricSegment{
+			Class:  s.Class,
+			Pct:    e.Pct,
+			PctNum: e.PctNum,
+			Title:  fmt.Sprintf("%s %s — %s (%s%%)", e.Label, s.Unit, e.Time, e.Pct),
+		})
+	}
+	return out
+}
+
+// ftpKindLabel — источник FTP для подписи у полоски зон: тот же текст, что
+// был у подписи секции «Зоны мощности».
+func ftpKindLabel(wo *store.Workout) string {
+	switch {
+	case wo.FTPFallback():
+		return "станок, уличный не задан"
+	case wo.FTPKind == "outdoor":
+		return "улица"
+	default:
+		return "станок"
+	}
 }

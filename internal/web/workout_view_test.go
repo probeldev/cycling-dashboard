@@ -131,6 +131,93 @@ func TestZoneEdgesW(t *testing.T) {
 	}
 }
 
+// TestWorkoutMetricRows — сборка строк сводки «значения слева, полоска
+// справа»: порядок мощность/пульс/каденс/скорость; у станка строки скорости
+// нет, без метрик строк нет.
+func TestWorkoutMetricRows(t *testing.T) {
+	street := &store.Workout{
+		AvgPower: 156, NormPower: 180, MaxPower: 400, FTP: 200, FTPKind: "outdoor",
+		AvgHR: 140, MaxHR: 165, AvgCadence: 66, AvgCadenceActive: 78, MaxCadence: 100,
+		AvgSpeedKmh: 28.8, MaxSpeedKmh: 44.6,
+	}
+	zones := []workoutZoneRow{{N: 2, Label: "Z2 · 112–152", Time: "30 с", Pct: "50.0", PctNum: 50}}
+	strips := []metricStrip{
+		{Label: "Пульс", Unit: "уд/мин", Class: "dist-hr",
+			Entries: []metricStripEntry{{Label: "140–150", Time: "30 с", Pct: "100.0", PctNum: 100}}},
+		{Label: "Каденс", Unit: "об/мин", Class: "dist-cadence",
+			Entries: []metricStripEntry{{Label: "70–80", Time: "30 с", Pct: "100.0", PctNum: 100}}},
+		{Label: "Скорость", Unit: "км/ч", Class: "dist-speed",
+			Entries: []metricStripEntry{{Label: "25–30", Time: "30 с", Pct: "100.0", PctNum: 100}}},
+	}
+
+	rows := workoutMetricRows(street, zones, strips)
+	if len(rows) != 4 {
+		t.Fatalf("строк %d, хочу 4 (мощность, пульс, каденс, скорость)", len(rows))
+	}
+	for i, want := range []string{"Мощность", "Пульс", "Каденс", "Скорость"} {
+		if rows[i].Label != want {
+			t.Errorf("строка %d = %q, хочу %q", i, rows[i].Label, want)
+		}
+	}
+	pwr := rows[0]
+	if pwr.AvgName != "NP" || pwr.AvgVal != "180 Вт" || pwr.AvgNote != "средняя с весом пиков" {
+		t.Errorf("мощность: средняя = %q/%q/%q", pwr.AvgName, pwr.AvgVal, pwr.AvgNote)
+	}
+	if pwr.MaxVal != "400 Вт" {
+		t.Errorf("мощность: макс = %q, хочу %q", pwr.MaxVal, "400 Вт")
+	}
+	if pwr.Footer != "FTP 200 Вт — улица; % — от времени педалирования" {
+		t.Errorf("мощность: подпись FTP = %q", pwr.Footer)
+	}
+	if len(pwr.Strip) != 1 || pwr.Strip[0].Class != "z2" || pwr.Strip[0].Title != "Z2 · 112–152 — 30 с (50.0%)" {
+		t.Errorf("мощность: полоска = %+v", pwr.Strip)
+	}
+	if rows[2].AvgVal != "78" || rows[2].AvgNote != "66 с накатом" {
+		t.Errorf("каденс: средний = %q/%q", rows[2].AvgVal, rows[2].AvgNote)
+	}
+	if rows[3].AvgVal != "28.8 км/ч" || rows[3].MaxVal != "44.6 км/ч" {
+		t.Errorf("скорость: %q/%q", rows[3].AvgVal, rows[3].MaxVal)
+	}
+	if rows[3].StripAria != "распределение времени: Скорость" {
+		t.Errorf("скорость: aria = %q", rows[3].StripAria)
+	}
+
+	// станок: строки скорости нет, остальные остаются
+	trainer := *street
+	trainer.Trainer = true
+	if rows := workoutMetricRows(&trainer, nil, strips[:2]); len(rows) != 3 {
+		t.Fatalf("у станка строк %d, хочу 3 (без скорости)", len(rows))
+	}
+
+	// NP не считался — слева средняя мощность, без подписи про пики
+	avgOnly := *street
+	avgOnly.NormPower = 0
+	if rows := workoutMetricRows(&avgOnly, nil, nil); rows[0].AvgName != "Средняя" || rows[0].AvgNote != "" {
+		t.Errorf("без NP: средняя = %q/%q", rows[0].AvgName, rows[0].AvgNote)
+	}
+
+	// «в работе» не считался — основной каденс общий, подпись про накат не нужна
+	fallback := *street
+	fallback.AvgCadenceActive = 0
+	if rows := workoutMetricRows(&fallback, nil, nil); rows[2].AvgVal != "66" || rows[2].AvgNote != "" {
+		t.Errorf("каденс без «в работе» = %q/%q", rows[2].AvgVal, rows[2].AvgNote)
+	}
+
+	// тренировка без пульса — строки пульса нет
+	noHR := *street
+	noHR.AvgHR, noHR.MaxHR = 0, 0
+	for _, r := range workoutMetricRows(&noHR, nil, nil) {
+		if r.Label == "Пульс" {
+			t.Error("без пульса собралась строка пульса")
+		}
+	}
+
+	// без метрик строк нет вовсе
+	if rows := workoutMetricRows(&store.Workout{}, nil, nil); len(rows) != 0 {
+		t.Errorf("строк %d, хочу 0", len(rows))
+	}
+}
+
 // TestWorkoutPageInsightsCollapsed — на деталке видно не больше 3 инсайтов,
 // остальные — под кнопкой «ещё» (§4.3), а не простынёй.
 func TestWorkoutPageInsightsCollapsed(t *testing.T) {

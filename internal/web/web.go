@@ -225,8 +225,8 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		}
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpC, "Bikes": bikes,
-			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx), "PowerZones": powerZones,
-			"DistStrips": distStrips,
+			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx),
+			"MetricRows": workoutMetricRows(wo, powerZones, distStrips),
 			"Summary":    advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "summary",
 			"HasMap": hasMap,
 		})
