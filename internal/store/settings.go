@@ -161,11 +161,12 @@ func firstWorkoutDay(db DBTX, now time.Time) (time.Time, bool, error) {
 }
 
 // weeklyTSS — сумма TSS за календарную неделю, начинающуюся с monday,
-// с учётом только тренировок не позже now.
+// с учётом только тренировок не позже now. TSS эффективный: по мощности —
+// обычный, без мощности — оценка по пульсу (tss_est).
 func weeklyTSS(db DBTX, monday, now time.Time) (float64, error) {
 	end := monday.AddDate(0, 0, 7)
 	var tss float64
-	err := db.QueryRow(`SELECT COALESCE(SUM(COALESCE(tss, 0)), 0) FROM workouts
+	err := db.QueryRow(`SELECT COALESCE(SUM(COALESCE(tss, tss_est, 0)), 0) FROM workouts
 	    WHERE start_time >= ? AND start_time < ? AND start_time <= ?`,
 		monday.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339),
 		now.UTC().Format(time.RFC3339)).Scan(&tss)

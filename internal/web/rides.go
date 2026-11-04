@@ -49,6 +49,7 @@ type rideRow struct {
 	AvgPower     int
 	Calories     int // только если есть мощность и калории > 0
 	TSSText      string
+	TSSVal       float64 // эффективный TSS числом: для спарка объёма месяца
 	Trainer      bool
 	HasRecord    bool
 	PowerSpark   string // inline-SVG polyline points
@@ -140,14 +141,16 @@ func buildRidesView(db *sql.DB, wantYear int) (*rideView, error) {
 // rideWorkoutMeta — только те поля тренировки, которые нужны строке списка:
 // достаточно для авто-названия и выбора источника сэмплов.
 type rideWorkoutMeta struct {
-	hasPower bool
-	ftp      int
-	iff      float64
-	hasIF    bool
-	tss      float64
-	hasTSS   bool
-	vi       float64
-	hasVI    bool
+	hasPower  bool
+	ftp       int
+	iff       float64
+	hasIF     bool
+	tss       float64
+	hasTSS    bool
+	tssEst    float64
+	hasTSSEst bool
+	vi        float64
+	hasVI     bool
 }
 
 // loadRideWorkouts читает метаданные всех поездок одним запросом.
@@ -160,7 +163,7 @@ func loadRideWorkouts(db *sql.DB, ids []int64) (map[int64]rideWorkoutMeta, error
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := db.Query(`SELECT id, avg_power, ftp_w, if, tss, vi
+	rows, err := db.Query(`SELECT id, avg_power, ftp_w, if, tss, tss_est, vi
 	    FROM workouts WHERE id IN (`+sqlPlaceholders(len(ids))+`)`, args...)
 	if err != nil {
 		return nil, err
@@ -169,14 +172,15 @@ func loadRideWorkouts(db *sql.DB, ids []int64) (map[int64]rideWorkoutMeta, error
 	for rows.Next() {
 		var id int64
 		var ap, ftp sql.NullInt64
-		var iff, tss, vi sql.NullFloat64
-		if err := rows.Scan(&id, &ap, &ftp, &iff, &tss, &vi); err != nil {
+		var iff, tss, tssEst, vi sql.NullFloat64
+		if err := rows.Scan(&id, &ap, &ftp, &iff, &tss, &tssEst, &vi); err != nil {
 			return nil, err
 		}
 		out[id] = rideWorkoutMeta{
 			hasPower: ap.Valid, ftp: int(ftp.Int64),
 			iff: iff.Float64, hasIF: iff.Valid,
 			tss: tss.Float64, hasTSS: tss.Valid,
+			tssEst: tssEst.Float64, hasTSSEst: tssEst.Valid,
 			vi: vi.Float64, hasVI: vi.Valid,
 		}
 	}
@@ -213,8 +217,14 @@ func buildRideRow(r store.WorkoutRow, meta rideWorkoutMeta, samples []store.Samp
 		HasRecord:    hasRecord,
 		Search:       fmt.Sprintf("%s %s", r.StartTime.Format("02.01.2006"), r.Name),
 	}
+	// TSS по мощности — точный («124 TSS»); без поверметра — оценка
+	// по пульсу со знаком приближения («≈124 TSS»)
 	if r.TSS > 0 {
 		row.TSSText = fmt.Sprintf("%.0f TSS", math.Round(r.TSS))
+		row.TSSVal = r.TSS
+	} else if meta.hasTSSEst && meta.tssEst > 0 {
+		row.TSSText = fmt.Sprintf("≈%.0f TSS", math.Round(meta.tssEst))
+		row.TSSVal = meta.tssEst
 	}
 	// калории есть смысл показывать только при поверметре: без него
 	// workouts.calories не считается (расход = кДж работы)
@@ -406,15 +416,12 @@ func monthVolumeSpark(rides []rideRow) string {
 	tssByDay := make([]float64, daysInMonth)
 	maxTSS := 0.0
 	for _, r := range rides {
-		if r.TSSText == "" {
+		if r.TSSVal <= 0 {
 			continue
 		}
-		// TSSText формата "123 TSS" — извлекаем число.
-		var tss float64
-		fmt.Sscanf(r.TSSText, "%f", &tss)
 		day := r.StartTime.Day() - 1
 		if day >= 0 && day < daysInMonth {
-			tssByDay[day] += tss
+			tssByDay[day] += r.TSSVal
 			if tssByDay[day] > maxTSS {
 				maxTSS = tssByDay[day]
 			}

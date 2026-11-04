@@ -159,7 +159,8 @@ func WeekStart(t time.Time) time.Time {
 // Weeks — последние n ISO-недель (включая текущую) с TSS, временем, дистанцией
 // и зонами. Недели без тренировок присутствуют с нулями. Тренировки с
 // start_time позже now не учитываются: будущая запись не должна раздувать
-// текущую неделю.
+// текущую неделю. TSS эффективный: у тренировки без мощности берётся оценка
+// по пульсу (tss_est); зон у неё нет — в Zones она не попадает.
 func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 	cur := WeekStart(now)
 	from := cur.AddDate(0, 0, -7*(n-1))
@@ -168,7 +169,7 @@ func Weeks(db DBTX, n int, now time.Time) ([]Week, error) {
 	qNow := now.UTC().Format(time.RFC3339)
 
 	rows, err := db.Query(`SELECT id, start_time, duration_sec, COALESCE(distance_m, 0),
-	    trainer, COALESCE(tss, 0)
+	    trainer, COALESCE(tss, tss_est, 0)
 	    FROM workouts WHERE start_time >= ? AND start_time < ? AND start_time <= ?
 	    ORDER BY start_time`, qFrom, qTo, qNow)
 	if err != nil {

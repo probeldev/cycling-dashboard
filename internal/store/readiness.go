@@ -48,7 +48,7 @@ func Readiness(db DBTX, now time.Time) (ReadinessStats, error) {
 	day7 := today.AddDate(0, 0, -6)
 
 	rows, err := db.Query(`SELECT id, start_time, COALESCE(distance_m, 0), duration_sec,
-	    COALESCE(tss, 0), COALESCE(calories, 0), COALESCE(total_ascent, 0)
+	    COALESCE(tss, tss_est, 0), COALESCE(calories, 0), COALESCE(total_ascent, 0)
 	    FROM workouts WHERE start_time <= ?
 	    ORDER BY start_time ASC, id ASC`, now.UTC().Format(time.RFC3339))
 	if err != nil {

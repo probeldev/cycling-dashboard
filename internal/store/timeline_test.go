@@ -269,6 +269,31 @@ func TestTimelineWarmUp(t *testing.T) {
 	}
 }
 
+// TestTimelineTSSEst — тренировка без мощности с оценкой по пульсу входит
+// в дневную сумму TSS и в EWMA, как обычная тренировка с поверметром.
+func TestTimelineTSSEst(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
+	db := openTestDB(t)
+	insertTimelineWorkout(t, db, "hash-tl-est-power", dayOf(t, 1), 100, 60, 20, false)
+	est := insertTimelineWorkout(t, db, "hash-tl-est-hr", dayOf(t, 2), 0, 60, 20, false)
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 60 WHERE id = ?`, est); err != nil {
+		t.Fatal(err)
+	}
+
+	days, err := Timeline(db, dayOf(t, 1), dayOf(t, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !near(days[1].TSS, 60) {
+		t.Errorf("день с оценкой: TSS = %v, хочу 60", days[1].TSS)
+	}
+	// EWMA тоже видит оценку: ATL второго дня считается от 60, а не от 0
+	atl1 := 100.0 / 7
+	if want := atl1 + (60-atl1)/7; !near(days[1].ATL, want) {
+		t.Errorf("ATL второго дня = %v, хочу %v", days[1].ATL, want)
+	}
+}
+
 // TestTimelineUntilIgnoresFuture — будущая тренировка сегодня не попадает
 // в день, даже если его дата входит в запрошенный диапазон.
 func TestTimelineUntilIgnoresFuture(t *testing.T) {

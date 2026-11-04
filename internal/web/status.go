@@ -475,7 +475,7 @@ func z2Minutes(tss float64) int {
 
 func loadHistoryFacts(db *sql.DB, now time.Time) (historyFacts, error) {
 	today := store.StartOfDay(now)
-	rows, err := db.Query(`SELECT start_time, COALESCE(tss, 0), COALESCE(if, 0), trainer
+	rows, err := db.Query(`SELECT start_time, COALESCE(tss, tss_est, 0), COALESCE(if, 0), trainer
 	    FROM workouts WHERE start_time <= ? ORDER BY start_time DESC`,
 		now.UTC().Format(time.RFC3339))
 	if err != nil {

@@ -290,6 +290,83 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 	}
 }
 
+// TestWorkoutPageTSSEst — TSS-плитка без поверметра: с оценкой по пульсу —
+// «≈N» с подписью «оценка по пульсу» (менее надёжная — с пометкой), без
+// оценки, но с пульсом — честный прочерк «не оценён».
+func TestWorkoutPageTSSEst(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	insert := func(hash string, est string, args ...any) int64 {
+		t.Helper()
+		id, err := store.InsertWorkout(db, &store.Workout{
+			StartTime: time.Now(), Duration: time.Hour, AvgHR: 140,
+		}, hash, filepath.Join(t.TempDir(), hash+".fit"), 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if est != "" {
+			args = append(args, id)
+			if _, err := db.Exec(`UPDATE workouts SET `+est+` WHERE id = ?`, args...); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return id
+	}
+	estID := insert("hash-page-est", `tss_est = 82`)
+	lowID := insert("hash-page-est-low", `tss_est = 82, tss_est_low = 1`)
+	noEstID := insert("hash-page-noest", "")
+
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(id int64) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /workout/%d: код %d", id, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := get(estID)
+	if !strings.Contains(body, `<div class="v">≈82.0</div>`) {
+		t.Error("нет плитки «≈82.0» для оценки по пульсу")
+	}
+	if !strings.Contains(body, "средняя нагрузка") {
+		t.Error("у плитки оценки нет verdict tssVerdict")
+	}
+	if !strings.Contains(body, `<div class="note">оценка по пульсу</div>`) {
+		t.Error("нет подписи «оценка по пульсу»")
+	}
+	if strings.Contains(body, "менее надёжная") {
+		t.Error("надёжная оценка помечена как менее надёжная")
+	}
+
+	body = get(lowID)
+	if !strings.Contains(body, "оценка по пульсу, менее надёжная") {
+		t.Error("нет пометки «менее надёжная» у low-оценки")
+	}
+	if !strings.Contains(body, "note--warn") {
+		t.Error("пометка «менее надёжная» не подсвечена")
+	}
+
+	body = get(noEstID)
+	if !strings.Contains(body, `<div class="v">—</div>`) {
+		t.Error("без оценки нет плитки с прочерком")
+	}
+	if !strings.Contains(body, "TSS не оценён: мало данных для модели") {
+		t.Error("нет честной подписи «TSS не оценён»")
+	}
+	if strings.Contains(body, "оценка по пульсу") {
+		t.Error("тренировка без оценки подписана как оценённая")
+	}
+}
+
 // TestWorkoutPagesSeparate — «Сводка», «Графики» и «Карта» — отдельные
 // страницы: боковое меню ссылается на /workout/{id}, /workout/{id}/charts и
 // /workout/{id}/map (без якорей); графики живут только на своей странице,

@@ -30,6 +30,8 @@ type Day struct {
 // EWMA греется с даты самой ранней тренировки (или с from, если истории нет),
 // а в ответ попадают только дни [from, to] — иначе CTL/TSB зависели бы от окна.
 // День тренировки — локальная дата start_time (в БД время хранится в UTC).
+// TSS эффективный: по мощности — обычный, без мощности — оценка по пульсу
+// (tss_est): оценённые тренировки участвуют в нагрузке и форме.
 func Timeline(db DBTX, from, to time.Time) ([]Day, error) {
 	return timeline(db, from, to, time.Time{})
 }
@@ -55,7 +57,7 @@ func timeline(db DBTX, from, to, until time.Time) ([]Day, error) {
 	qFrom := warmFrom.AddDate(0, 0, -2).UTC().Format(time.RFC3339)
 	qTo := to.AddDate(0, 0, 3).UTC().Format(time.RFC3339)
 	query := `SELECT start_time, duration_sec, COALESCE(distance_m, 0),
-	    trainer, COALESCE(tss, 0), COALESCE(name, '')
+	    trainer, COALESCE(tss, tss_est, 0), COALESCE(name, '')
 	    FROM workouts WHERE start_time >= ? AND start_time < ?`
 	args := []any{qFrom, qTo}
 	if !until.IsZero() {

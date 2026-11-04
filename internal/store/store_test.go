@@ -374,6 +374,52 @@ func TestListTreeMonthMetrics(t *testing.T) {
 	}
 }
 
+// TestListTreeTSSEst — тренировка без мощности с оценкой по пульсу входит
+// в сумму TSS месяца, и её строка несёт саму оценку.
+func TestListTreeTSSEst(t *testing.T) {
+	db := openTestDB(t)
+	jan := func(day int) time.Time { return time.Date(2026, 1, day, 10, 0, 0, 0, time.Local) }
+	if _, err := InsertWorkout(db, &Workout{StartTime: jan(10), Duration: time.Hour, TSS: 100},
+		"hash-est-power", "/tmp/hash-est-power.fit", 1); err != nil {
+		t.Fatal(err)
+	}
+	estID, err := InsertWorkout(db, &Workout{StartTime: jan(20), Duration: time.Hour, AvgHR: 140},
+		"hash-est-hr", "/tmp/hash-est-hr.fit", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 75.5 WHERE id = ?`, estID); err != nil {
+		t.Fatal(err)
+	}
+
+	years, err := ListTree(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(years) != 1 || len(years[0].Months) != 1 {
+		t.Fatalf("дерево: %d лет, хочу 1 год с 1 месяцем", len(years))
+	}
+	m := years[0].Months[0]
+	if math.Abs(m.TSS-175.5) > 1e-9 {
+		t.Errorf("TSS за месяц = %v, хочу 175.5 (100 по мощности + 75.5 оценка)", m.TSS)
+	}
+	var row *WorkoutRow
+	for i := range m.Rides {
+		if m.Rides[i].ID == estID {
+			row = &m.Rides[i]
+		}
+	}
+	if row == nil {
+		t.Fatal("в дереве нет оценённой тренировки")
+	}
+	if !row.HasTSSEst || math.Abs(row.TSSEst-75.5) > 1e-9 {
+		t.Errorf("строка оценённой тренировки: %+v, хочу tss_est 75.5", row)
+	}
+	if row.TSS != 0 {
+		t.Errorf("TSS оценённой тренировки = %v, хочу 0 (мощности нет)", row.TSS)
+	}
+}
+
 // TestWorkoutDataGapsPct — процент пропусков считается от duration (не от
 // elapsed) и остаётся вещественным, чтобы 5.4% не терялись при округлении.
 func TestWorkoutDataGapsPct(t *testing.T) {

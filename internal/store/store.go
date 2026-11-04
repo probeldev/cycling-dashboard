@@ -1085,6 +1085,8 @@ type WorkoutRow struct {
 	AvgCadence  int
 	Calories    int
 	TSS         float64
+	TSSEst      float64 // оценка TSS по пульсу (для тренировок без поверметра)
+	HasTSSEst   bool
 	IF          float64
 }
 
@@ -1100,14 +1102,14 @@ type Month struct {
 	Outdoor       Agg
 	Trainer       Agg
 	TotalCalories int
-	TSS           float64 // сумма TSS за месяц
+	TSS           float64 // сумма эффективного TSS за месяц (tss, без мощности — tss_est)
 	AvgIF         float64 // квадратичное среднее IF: sqrt(Σ(IF²·t)/Σt) по тренировкам с IF
 	Rides         []WorkoutRow
 }
 
 func ListTree(db *sql.DB) ([]Year, error) {
 	rows, err := db.Query(`SELECT id, start_time, name, duration_sec, distance_m, trainer,
-	    avg_power, avg_cadence, calories, tss, if
+	    avg_power, avg_cadence, calories, tss, tss_est, if
 	    FROM workouts ORDER BY start_time DESC`)
 	if err != nil {
 		return nil, err
@@ -1123,9 +1125,9 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		var start string
 		var dist sql.NullInt64
 		var ap, ac, kcal sql.NullInt64
-		var tss, iff sql.NullFloat64
+		var tss, tssEst, iff sql.NullFloat64
 		if err := rows.Scan(&r.ID, &start, &r.Name, &r.DurationSec, &dist, &r.Trainer,
-			&ap, &ac, &kcal, &tss, &iff); err != nil {
+			&ap, &ac, &kcal, &tss, &tssEst, &iff); err != nil {
 			return nil, err
 		}
 		t, err := time.Parse(time.RFC3339, start)
@@ -1141,6 +1143,8 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		r.AvgCadence = int(ac.Int64)
 		r.Calories = int(kcal.Int64)
 		r.TSS = tss.Float64
+		r.TSSEst = tssEst.Float64
+		r.HasTSSEst = tssEst.Valid
 		r.IF = iff.Float64
 
 		yi, ok := yearIdx[t.Year()]
@@ -1174,7 +1178,11 @@ func ListTree(db *sql.DB) ([]Year, error) {
 		magg.Hours += hours
 		magg.Calories += r.Calories
 		m.TotalCalories += r.Calories
+		// эффективный TSS: по мощности — обычный, без мощности — оценка по пульсу
 		m.TSS += r.TSS
+		if !tss.Valid {
+			m.TSS += r.TSSEst
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -178,6 +178,32 @@ func TestReadinessEmpty(t *testing.T) {
 	}
 }
 
+// TestReadinessTSSEst — оценка по пульсу входит в Rolling7/28 как обычный TSS.
+func TestReadinessTSSEst(t *testing.T) {
+	withLocal(t, "Europe/Minsk")
+	db := openTestDB(t)
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.Local)
+	today := StartOfDay(now)
+	insertReadinessWorkout(t, db, "hash-rd-est-power", today.AddDate(0, 0, -1).Add(time.Hour),
+		10, time.Hour, 40, 0, 0)
+	est := insertReadinessWorkout(t, db, "hash-rd-est-hr", today.AddDate(0, 0, -2).Add(time.Hour),
+		10, time.Hour, 0, 0, 0)
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 25 WHERE id = ?`, est); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := Readiness(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !near(r.Rolling7.TSS, 65) || r.Rolling7.Rides != 2 {
+		t.Errorf("rolling7 = %+v, хочу 65 TSS (40 + 25 оценка) / 2 поездки", r.Rolling7)
+	}
+	if !near(r.Rolling28.TSS, 65) {
+		t.Errorf("rolling28 = %+v, хочу 65 TSS", r.Rolling28)
+	}
+}
+
 // TestReadinessIgnoresFutureWorkout — будущая тренировка не участвует ни в
 // longestEver/centuryCount, ни в скользящих окнах.
 func TestReadinessIgnoresFutureWorkout(t *testing.T) {

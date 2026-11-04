@@ -25,6 +25,8 @@
   .heroes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0 4px; }
   .heroes .u { font-size: 14px; color: var(--text-2); font-weight: 400; }
   .heroes .verdict { font-size: 12px; color: var(--text-2); }
+  .heroes .note { font-size: 12px; color: var(--text-3); }
+  .heroes .note--warn { color: var(--warn-strong); }
 
   .details { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 20px; margin: 4px 0 0; }
   .d-item .v { font-size: 17px; font-weight: 600; font-feature-settings: "tnum"; }
@@ -188,6 +190,10 @@
   {{ end }}
   {{ if .W.HasTSS }}
   <div class="metric-card"><div class="v">{{ trimFloat .W.TSS }}</div><div class="k">TSS — нагрузка</div><div class="verdict">{{ tssVerdict .W.TSS }}</div></div>
+  {{ else if .W.HasTSSEst }}
+  <div class="metric-card"><div class="v">≈{{ trimFloat .W.TSSEst }}</div><div class="k">TSS — нагрузка</div><div class="verdict">{{ tssVerdict .W.TSSEst }}</div>{{ if .W.TSSEstLow }}<div class="note note--warn">оценка по пульсу, менее надёжная</div>{{ else }}<div class="note">оценка по пульсу</div>{{ end }}</div>
+  {{ else if .W.AvgHR }}
+  <div class="metric-card"><div class="v">—</div><div class="k">TSS — нагрузка</div><div class="note">TSS не оценён: мало данных для модели</div></div>
   {{ end }}
 </div>
 

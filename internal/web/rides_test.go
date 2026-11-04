@@ -493,6 +493,57 @@ func TestRidesCalories(t *testing.T) {
 	}
 }
 
+// TestRidesTSSEst — тренировка без поверметра с оценкой по пульсу: в строке
+// «≈N TSS», оценка входит в спарк объёма и в сумму TSS месяца.
+func TestRidesTSSEst(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Date(2026, 10, 29, 8, 0, 0, 0, time.Local),
+		Duration:  time.Hour, TSS: 100, HasTSS: true, AvgPower: 200, HasPower: true,
+	}, "hash-rides-est-power", filepath.Join(t.TempDir(), "p.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	estID, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Date(2026, 10, 30, 8, 0, 0, 0, time.Local),
+		Duration:  time.Hour, AvgHR: 140,
+	}, "hash-rides-est-hr", filepath.Join(t.TempDir(), "h.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 44 WHERE id = ?`, estID); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rides", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /rides: код %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<b>≈44 TSS</b>`) {
+		t.Error("нет строки с оценкой «≈44 TSS»")
+	}
+	if !strings.Contains(body, `<b>100 TSS</b>`) {
+		t.Error("точный TSS по мощности не должен получать «≈»")
+	}
+	// заголовок месяца: 100 по мощности + 44 оценка
+	if !strings.Contains(body, "144 TSS") {
+		t.Error("в заголовке месяца нет суммы с учётом оценки (144 TSS)")
+	}
+	// спарк объёма месяца учитывает оценённую поездку: закрашены дни обеих
+	if n := strings.Count(body, `fill="var(--brand)"`); n != 2 {
+		t.Errorf("закрашенных баров спарка = %d, хочу 2 (поездка с мощностью + оценка)", n)
+	}
+}
+
 // TestMonthExtras — пороги геймификации месяца: пиццы от 0.3 (<720 ккал
 // пицц нет), жир от 0.05 кг; пустые части не дают «0.0».
 func TestMonthExtras(t *testing.T) {

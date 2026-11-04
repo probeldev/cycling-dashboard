@@ -498,6 +498,32 @@ func TestZ2Minutes(t *testing.T) {
 	}
 }
 
+// TestStatusWeekTSSEst — недельный TSS («осталось N TSS» на главной)
+// включает оценённые по пульсу тренировки.
+func TestStatusWeekTSSEst(t *testing.T) {
+	db := openStatusDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.Local)
+	if _, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, -1), Duration: time.Hour, TSS: 60,
+	}, "hash-week-est-power", filepath.Join(t.TempDir(), "p.fit"), 1); err != nil {
+		t.Fatal(err)
+	}
+	est, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: now.AddDate(0, 0, -2), Duration: time.Hour, AvgHR: 140,
+	}, "hash-week-est-hr", filepath.Join(t.TempDir(), "h.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE workouts SET tss_est = 45 WHERE id = ?`, est); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildStatus(db, now, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	almostEqual(t, "week.tss", got.Week.TSS, 105)
+}
+
 func openStatusDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
