@@ -594,7 +594,7 @@ func TestWorkoutZonesHTMLMatchesZoneDistribution(t *testing.T) {
 		if e.Secs == 0 {
 			continue // пустые зоны в стрип не попадают
 		}
-		want := fmt.Sprintf("title=\"%s — %s (%s%%)\"", e.Label, zoneTimeLabel(e.Secs), trimFloat(e.Pct))
+		want := fmt.Sprintf("data-tip=\"%s — %s (%s%%)\"", e.Label, zoneTimeLabel(e.Secs), trimFloat(e.Pct))
 		if !strings.Contains(rows, want) {
 			t.Errorf("нет бара зоны %q (в zoneDistribution: %+v)", want, e)
 		}
@@ -638,9 +638,9 @@ func TestWorkoutDistStripsHTML(t *testing.T) {
 		`aria-label="распределение времени: Скорость"`,
 		"Пульс", "Каденс", "Скорость", "Средний", "Макс", "Средняя",
 		"dist-hr", "dist-cadence", "dist-speed",
-		`title="140–150 уд/мин — 10 с (100.0%)"`,
-		`title="80–90 об/мин — 10 с (100.0%)"`,
-		`title="25–30 км/ч — 10 с (100.0%)"`,
+		`data-tip="140–150 уд/мин — 10 с (100.0%)"`,
+		`data-tip="80–90 об/мин — 10 с (100.0%)"`,
+		`data-tip="25–30 км/ч — 10 с (100.0%)"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на сводке нет %q", want)
