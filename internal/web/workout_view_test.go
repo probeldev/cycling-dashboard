@@ -113,6 +113,31 @@ func TestZoneEdgesW(t *testing.T) {
 	}
 }
 
+// TestStripSegmentsLegend — сегменты распределений несут класс оттенка из
+// бакета (а при ручной сборке полоски — класс полоски) и короткую подпись
+// диапазона для легенды; у зон мощности легенда — «ZN».
+func TestStripSegmentsLegend(t *testing.T) {
+	segs := stripSegments(metricStrip{Label: "Пульс", Unit: "уд/мин", Class: "dist-hr",
+		Entries: []metricStripEntry{
+			{Label: "100–120", Class: "dist-hr-2", Time: "10 с", Pct: "50", PctNum: 50},
+			{Label: "150–160", Time: "10 с", Pct: "50", PctNum: 50}, // класса нет — fallback на полоску
+		}})
+	if len(segs) != 2 {
+		t.Fatalf("сегментов %d, хочу 2", len(segs))
+	}
+	if segs[0].Class != "dist-hr-2" || segs[0].Legend != "100–120" {
+		t.Errorf("сегмент 0 = %+v, хочу класс оттенка dist-hr-2 и легенду «100–120»", segs[0])
+	}
+	if segs[1].Class != "dist-hr" || segs[1].Legend != "150–160" {
+		t.Errorf("сегмент 1 = %+v, хочу fallback-класс dist-hr и легенду «150–160»", segs[1])
+	}
+
+	zsegs := zoneSegments([]workoutZoneRow{{N: 2, Label: "Z2 · 112–152", Time: "30 с", Pct: "50.0", PctNum: 50}})
+	if len(zsegs) != 1 || zsegs[0].Legend != "Z2" || zsegs[0].Class != "z2" {
+		t.Errorf("сегмент зоны = %+v, хочу класс z2 и легенду «Z2»", zsegs)
+	}
+}
+
 // TestWorkoutMetricRows — сборка строк сводки «значения слева, полоска
 // справа»: порядок мощность/пульс/каденс/скорость; у станка строки скорости
 // нет, без метрик строк нет.

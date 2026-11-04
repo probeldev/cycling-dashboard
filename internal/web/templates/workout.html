@@ -53,7 +53,7 @@
      фиксированной доли ширины — все полоски одной ширины, друг под другом */
   .metric-rows { display: flex; flex-direction: column; gap: 14px; margin: 16px 0 4px; }
   .metric-row { display: grid; grid-template-columns: minmax(220px, 1fr) 55%; gap: 6px 16px; align-items: center; }
-  .metric-row .zone-bars { width: 100%; min-width: 0; }
+  .metric-row .metric-strip { width: 100%; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .metric-row .name { font-size: 12px; color: var(--text-2); }
   .metric-pair { display: flex; gap: 4px 18px; flex-wrap: wrap; align-items: baseline; }
   .metric-pair .k { font-size: 12px; color: var(--text-2); }
@@ -64,9 +64,23 @@
     .metric-row { grid-template-columns: 1fr; }
   }
 
-  .dist-hr { background: var(--danger); }
-  .dist-cadence { background: var(--text-2); }
-  .dist-speed { background: var(--outdoor); }
+  /* оттенки dist-полосок: светлый → тёмный по возрастанию диапазона;
+     цвет через --zone-color — его же подхватывают точки легенды */
+  .dist-hr-1 { --zone-color: #F5C8C8; } .dist-hr-2 { --zone-color: #EE9C9C; }
+  .dist-hr-3 { --zone-color: #E57373; } .dist-hr-4 { --zone-color: #DB5C5C; }
+  .dist-hr-5 { --zone-color: #D64545; }
+  .dist-cadence-1 { --zone-color: #E4E6E8; } .dist-cadence-2 { --zone-color: #C9CDD1; }
+  .dist-cadence-3 { --zone-color: #AEB3B9; } .dist-cadence-4 { --zone-color: #868D94; }
+  .dist-cadence-5 { --zone-color: #5F6368; }
+  .dist-speed-1 { --zone-color: #CDEDDA; } .dist-speed-2 { --zone-color: #9BDFB8; }
+  .dist-speed-3 { --zone-color: #6BCF96; } .dist-speed-4 { --zone-color: #45B877; }
+  .dist-speed-5 { --zone-color: #2E9E5B; }
+  /* легенда под полоской: одна строка, на узком экране — горизонтальный скролл */
+  .metric-legend { display: flex; flex-wrap: nowrap; gap: 4px 12px; align-items: center;
+    overflow-x: auto; font-size: 12px; color: var(--text-2); }
+  .metric-legend .li { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .metric-legend .zdot { flex: none; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--zone-color, var(--text-3)); }
 
   /* «Больше данных»: спрятанные параметры деталки */
   .more-data { margin-top: 16px; }
@@ -174,8 +188,11 @@
       </div>
       {{ if .Footer }}<div class="metric-foot">{{ .Footer }}</div>{{ end }}
     </div>
-    <div class="zone-bars" role="img" aria-label="{{ .StripAria }}">
-      {{ range .Strip }}{{ if gt .PctNum 0.0 }}<span class="zone-bar {{ .Class }}" style="width:{{ .Pct }}%" title="{{ .Title }}"></span>{{ end }}{{ end }}
+    <div class="metric-strip">
+      <div class="zone-bars" role="img" aria-label="{{ .StripAria }}">
+        {{ range .Strip }}{{ if gt .PctNum 0.0 }}<span class="zone-bar {{ .Class }}" style="width:{{ .Pct }}%" title="{{ .Title }}"></span>{{ end }}{{ end }}
+      </div>
+      {{ if .Strip }}<div class="metric-legend">{{ range .Strip }}{{ if gt .PctNum 0.0 }}<span class="li"><i class="zdot {{ .Class }}"></i>{{ .Legend }} {{ .Pct }}%</span>{{ end }}{{ end }}</div>{{ end }}
     </div>
   </div>
   {{ end }}

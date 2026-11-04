@@ -211,20 +211,36 @@ var metricStripDefs = []struct{ Kind, Label, Unit, Class string }{
 	{"speed", "Скорость", "км/ч", "dist-speed"},
 }
 
-// metricStrip — строка полоски распределения времени: без легенды, детализация
-// в title каждого сегмента.
+// metricStrip — строка полоски распределения времени; легенда под полоской,
+// детализация — в title каждого сегмента.
 type metricStrip struct {
 	Label   string
 	Unit    string
-	Class   string
+	Class   string // базовый класс оттенков: dist-hr / dist-cadence / dist-speed
 	Entries []metricStripEntry
 }
 
 type metricStripEntry struct {
 	Label  string
+	Class  string // класс оттенка сегмента (dist-hr-1..5): по позиции бакета
 	Time   string
 	Pct    string
 	PctNum float64
+}
+
+// distShadeLevels — число оттенков градации dist-полосок.
+const distShadeLevels = 5
+
+// distShadeClass — класс оттенка сегмента распределения: градация
+// светлый→тёмный по позиции бакета (низкий диапазон — светлее, высокий —
+// темнее). Индекс считается по исходному срезу бакетов, а не по отфильтрованным
+// непустым: оттенок отражает диапазон, а не порядок среди непустых.
+func distShadeClass(base string, i, n int) string {
+	shade := distShadeLevels
+	if n > 1 {
+		shade = 1 + i*(distShadeLevels-1)/(n-1)
+	}
+	return fmt.Sprintf("%s-%d", base, shade)
 }
 
 // metricStrips собирает полоски пульса, каденса и скорости. Пустые метрики и
@@ -236,12 +252,14 @@ func metricStrips(distributions map[string][]distEntry, trainer bool) []metricSt
 			continue
 		}
 		var rows []metricStripEntry
-		for _, e := range distributions[def.Kind] {
+		entries := distributions[def.Kind]
+		for j, e := range entries {
 			if e.Secs <= 0 {
 				continue
 			}
 			rows = append(rows, metricStripEntry{
 				Label:  e.Label,
+				Class:  distShadeClass(def.Class, j, len(entries)),
 				Time:   zoneTimeLabel(e.Secs),
 				Pct:    trimFloat(e.Pct),
 				PctNum: e.Pct,

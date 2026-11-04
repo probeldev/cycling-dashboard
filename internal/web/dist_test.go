@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -367,7 +368,145 @@ func TestMetricStrips(t *testing.T) {
 	}
 }
 
-// TestZoneTimeMatchesZoneDistribution — zoneDistribution и ridedata.PowerTime
+// TestDistShadeClass — оттенок сегмента растёт от позиции бакета: первый
+// бакет — самый светлый, последний — самый тёмный; единственный бакет
+// получает максимальный оттенок.
+func TestDistShadeClass(t *testing.T) {
+	cases := []struct {
+		i, n int
+		want string
+	}{
+		{0, 8, "dist-hr-1"},
+		{1, 8, "dist-hr-1"},
+		{2, 8, "dist-hr-2"},
+		{4, 8, "dist-hr-3"},
+		{6, 8, "dist-hr-4"},
+		{7, 8, "dist-hr-5"},
+		{0, 1, "dist-hr-5"},
+	}
+	for _, tt := range cases {
+		if got := distShadeClass("dist-hr", tt.i, tt.n); got != tt.want {
+			t.Errorf("distShadeClass(dist-hr, %d, %d) = %q, хочу %q", tt.i, tt.n, got, tt.want)
+		}
+	}
+	// градация монотонно не убывает по позициям
+	prev := 0
+	for i := 0; i < 8; i++ {
+		shade := distShadeClass("dist-cadence", i, 8)
+		n, err := strconv.Atoi(strings.TrimPrefix(shade, "dist-cadence-"))
+		if err != nil {
+			t.Fatalf("класс %q не парсится: %v", shade, err)
+		}
+		if n < prev {
+			t.Errorf("оттенок на позиции %d (%d) светлее предыдущего (%d)", i, n, prev)
+		}
+		prev = n
+	}
+}
+
+// TestMetricStripShadeClasses — класс оттенка сегмента считается по позиции
+// бакета в исходном срезе, а не среди непустых: одиночный высокий бакет
+// получает тёмный оттенок.
+func TestMetricStripShadeClasses(t *testing.T) {
+	d := map[string][]distEntry{
+		"hr": {
+			{Label: "0–100", Secs: 0, Pct: 0},
+			{Label: "100–120", Secs: 0, Pct: 0},
+			{Label: "170+", Secs: 10, Pct: 100},
+		},
+	}
+	strips := metricStrips(d, false)
+	if len(strips) != 1 {
+		t.Fatalf("полосок %d, хочу 1", len(strips))
+	}
+	if got := strips[0].Entries[0].Class; got != "dist-hr-5" {
+		t.Errorf("класс одиночного высокого бакета = %q, хочу dist-hr-5 (тёмный)", got)
+	}
+}
+
+// TestWorkoutMetricLegend — под каждой полоской строк сводки рендерится
+// легенда в одну строку: цветная точка + подпись диапазона + %; у мощности
+// подписи Z1–Z7, у пульса/каденса/скорости — диапазоны; сегменты dist-полосок
+// получают разные оттенки по позиции бакета; пустые сегменты (Pct 0) в легенду
+// не попадают.
+func TestWorkoutMetricLegend(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now().Add(-time.Hour), Duration: 60 * time.Second,
+		HasPower: true, AvgPower: 150, FTP: 200, FTPKind: "trainer",
+		AvgHR: 130, MaxHR: 150, AvgCadence: 90, MaxCadence: 95,
+		AvgSpeedKmh: 36, MaxSpeedKmh: 43.2,
+	}, "hash-legend", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := seq(
+		rep(30, store.Sample{Power: 100, HasPwr: true, HR: 110, Cadence: 85, HasCad: true, SpeedMs: 8}),
+		rep(30, store.Sample{Power: 200, HasPwr: true, HR: 150, Cadence: 95, HasCad: true, SpeedMs: 12}),
+	)
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /workout/%d: код %d", id, rec.Code)
+	}
+	// html/template экранирует "+" в тексте как &#43; — для сверки возвращаем
+	body := strings.ReplaceAll(rec.Body.String(), "&#43;", "+")
+
+	if n := strings.Count(body, `class="metric-legend"`); n != 4 {
+		t.Errorf("легенд %d, хочу 4 (по одной под каждой полоской)", n)
+	}
+
+	// легенда мощности: только непустые зоны, подписи Z с %
+	entries, ok := zoneDistribution(samples, 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	for _, zr := range workoutZoneRows(entries) {
+		if zr.PctNum <= 0 {
+			continue
+		}
+		want := fmt.Sprintf(`<i class="zdot z%d"></i>Z%d %s%%`, zr.N, zr.N, zr.Pct)
+		if !strings.Contains(body, want) {
+			t.Errorf("нет пункта легенды мощности %q", want)
+		}
+	}
+
+	// легенды распределений: точка того же оттенка + диапазон + %
+	for _, want := range []string{
+		`<i class="zdot dist-hr-1"></i>100–120 50.0%`,
+		`<i class="zdot dist-hr-3"></i>150–160 50.0%`,
+		`<i class="zdot dist-cadence-3"></i>80–90 50.0%`,
+		`<i class="zdot dist-cadence-4"></i>90–100 50.0%`,
+		`<i class="zdot dist-speed-3"></i>25–30 50.0%`,
+		`<i class="zdot dist-speed-5"></i>40+ 50.0%`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("нет пункта легенды %q", want)
+		}
+	}
+
+	// пустые бакеты в легенду не попадают (ни одного «пустого» пункта)
+	if n := strings.Count(body, `class="zdot `); n != 8 {
+		t.Errorf("пунктов легенды %d, хочу 8 (только непустые сегменты)", n)
+	}
+	for _, bad := range []string{`</i>0–100 `, `</i>0–40 `, `</i>0–10 `} {
+		if strings.Contains(body, bad) {
+			t.Errorf("в легенде остался пустой бакет %q", bad)
+		}
+	}
+}
+
 // (он же импорт и /api/weeks) считают зоны одинаково.
 func TestZoneTimeMatchesZoneDistribution(t *testing.T) {
 	var samples []store.Sample

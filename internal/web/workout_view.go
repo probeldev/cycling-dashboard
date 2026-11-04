@@ -123,10 +123,11 @@ func zoneEdgesW(ftp int) []float64 {
 }
 
 // metricSegment — сегмент полоски в строке сводки: единый вид для зон
-// мощности и распределений пульса/каденса/скорости. Детализация при
-// наведении — в Title.
+// мощности и распределений пульса/каденса/скорости. Legend — короткая
+// подпись для легенды под полоской, детализация при наведении — в Title.
 type metricSegment struct {
-	Class  string  // цвет сегмента: .zN у зон, .dist-* у распределений
+	Class  string  // цвет сегмента: .zN у зон, .dist-*-N у распределений
+	Legend string  // «Z2», «140–150» — подпись в легенде
 	Pct    string
 	PctNum float64 // тот же процент числом — для ширины бара
 	Title  string
@@ -248,6 +249,7 @@ func zoneSegments(zones []workoutZoneRow) []metricSegment {
 	for _, z := range zones {
 		out = append(out, metricSegment{
 			Class:  fmt.Sprintf("z%d", z.N),
+			Legend: fmt.Sprintf("Z%d", z.N),
 			Pct:    z.Pct,
 			PctNum: z.PctNum,
 			Title:  fmt.Sprintf("%s — %s (%s%%)", z.Label, z.Time, z.Pct),
@@ -257,11 +259,18 @@ func zoneSegments(zones []workoutZoneRow) []metricSegment {
 }
 
 // stripSegments переводит распределение времени в сегменты полоски.
+// Оттенок сегмента уже посчитан в metricStrips по позиции бакета; у полосок,
+// собранных вручную (тесты), класс сегмента берётся от полоски.
 func stripSegments(s metricStrip) []metricSegment {
 	out := make([]metricSegment, 0, len(s.Entries))
 	for _, e := range s.Entries {
+		class := e.Class
+		if class == "" {
+			class = s.Class
+		}
 		out = append(out, metricSegment{
-			Class:  s.Class,
+			Class:  class,
+			Legend: e.Label,
 			Pct:    e.Pct,
 			PctNum: e.PctNum,
 			Title:  fmt.Sprintf("%s %s — %s (%s%%)", e.Label, s.Unit, e.Time, e.Pct),
