@@ -212,7 +212,7 @@ func TestSamplesHandler(t *testing.T) {
 			rec.Code, len(raw), n)
 	}
 
-	// неизвестная тренировка — 404, как у /dist
+	// неизвестная тренировка — 404
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/workout/99999/samples", nil))
 	if rec.Code != http.StatusNotFound {

@@ -59,6 +59,14 @@
   .zone-legend { display: flex; gap: 4px 14px; flex-wrap: wrap; margin-top: 6px; }
   .zdot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--zone-color, var(--text-3)); margin-right: 4px; }
 
+  .dist-strips { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+  .dist-row { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 4px 12px; align-items: center; }
+  .dist-row .name { font-size: 13px; color: var(--text-2); }
+  .dist-row .zone-bars { min-width: 0; }
+  .dist-hr { background: var(--danger); }
+  .dist-cadence { background: var(--text-2); }
+  .dist-speed { background: var(--outdoor); }
+
   .w-settings { margin-top: 20px; }
   .w-settings > summary { color: var(--text-2); }
   .ws-body { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
@@ -176,8 +184,9 @@
   {{ end }}
 </div>
 
-{{ if .PowerZones }}
+{{ if or .PowerZones .DistStrips }}
 <section class="blk">
+  {{ if .PowerZones }}
   <div class="section-label">Зоны мощности</div>
   <div class="zone-strip">
     <div class="zone-bars" role="img" aria-label="распределение времени по зонам мощности">
@@ -190,6 +199,21 @@
   <p class="coverage" style="margin:6px 0 0">
     FTP {{ .W.FTP }} Вт —{{ if .W.FTPFallback }} станок, уличный не задан{{ else if eq .W.FTPKind "outdoor" }} улица{{ else }} станок{{ end }}; % — от времени педалирования.
   </p>
+  {{ end }}
+  {{ if .DistStrips }}
+  <div class="section-label"{{ if .PowerZones }} style="margin-top:18px"{{ end }}>Распределение времени</div>
+  <div class="dist-strips">
+    {{ range .DistStrips }}
+    {{ $s := . }}
+    <div class="dist-row">
+      <span class="name">{{ $s.Label }}</span>
+      <div class="zone-bars" role="img" aria-label="распределение времени: {{ $s.Label }}">
+        {{ range .Entries }}<span class="zone-bar {{ $s.Class }}" style="width:{{ .Pct }}%" title="{{ .Label }} {{ $s.Unit }} — {{ .Time }} ({{ .Pct }}%)"></span>{{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
+  {{ end }}
 </section>
 {{ end }}
 

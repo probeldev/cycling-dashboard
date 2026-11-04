@@ -20,14 +20,6 @@
     <span id="axisBtns" class="axis-toggles"></span>
   </div>
   <canvas id="chart"></canvas>
-
-  <h3>Распределения</h3>
-  <div class="dist-grid" id="distGrid">
-    <div class="dist" data-kind="cadence"><h3>Каденс, мин</h3><canvas></canvas></div>
-    {{ if not .W.Trainer }}<div class="dist" data-kind="speed"><h3>Скорость, км/ч</h3><canvas></canvas></div>{{ end }}
-    <div class="dist" data-kind="power"><h3>Мощность, Вт</h3><canvas></canvas><div class="dist-note" hidden></div></div>
-    <div class="dist" data-kind="hr"><h3>Пульс, уд/мин</h3><canvas></canvas></div>
-  </div>
 </section>
 
 </div>
@@ -194,67 +186,6 @@ if (metrics.length) {
   document.getElementById("chart").style.display = "none";
   document.getElementById("chartCtl").style.display = "none";
 }
-
-const dist = await (await fetch(`/api/workout/${id}/dist`)).json();
-const titles = { cadence: "Каденс, об/мин", speed: "Скорость, км/ч",
-  power: ftp ? `Зоны мощности (FTP ${ftp} Вт)` : "Мощность, Вт", hr: "Пульс, уд/мин" };
-
-// подпись времени на конце бара: короткие отрезки — в секундах
-const barLabels = {
-  id: "barLabels",
-  afterDatasetsDraw(c) {
-    const { ctx, chartArea } = c;
-    const meta = c.getDatasetMeta(0);
-    ctx.save();
-    ctx.fillStyle = cssVar("--text-2");
-    ctx.font = "11px Inter, sans-serif";
-    ctx.textBaseline = "middle";
-    meta.data.forEach((bar, i) => {
-      const v = c.data.datasets[0].data[i];
-      if (!v) return;
-      const txt = v < 1 ? `${Math.round(v * 60)} с` : `${v} мин`;
-      ctx.fillText(txt, Math.min(bar.x + 4, chartArea.right - 34), bar.y);
-    });
-    ctx.restore();
-  },
-};
-
-document.querySelectorAll("#distGrid .dist").forEach(el => {
-  const kind = el.dataset.kind;
-  const entries = dist[kind];
-  if (!entries) { el.style.display = "none"; return; }
-  el.querySelector("h3").textContent = titles[kind] + (kind === "power" && ftp ? " — время в зоне" : " — время в диапазоне");
-  // бары мощности — цветом зоны бакета (первый бакет — накат, нейтральный)
-  const colors = entries.map((_, i) => {
-    if (kind === "power" && ftp) return i === 0 ? cssVar("--text-3") : zoneColors[i - 1];
-    return cssVar("--text-2");
-  });
-  new Chart(el.querySelector("canvas"), {
-    type: "bar",
-    data: {
-      labels: entries.map(e => e.label),
-      datasets: [{ data: entries.map(e => +(e.secs/60).toFixed(1)), backgroundColor: colors }],
-    },
-    options: {
-      indexAxis: "y",
-      animation: false,
-      layout: { padding: { right: 40 } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + " мин" } } },
-      scales: { x: { title: { display: true, text: "минут" } } },
-    },
-    plugins: [barLabels],
-  });
-  // накат — отдельный бакет: подписываем обе базы времени
-  if (kind === "power" && dist.powerBase) {
-    const b = dist.powerBase;
-    // короткие отрезки показываем в секундах, чтобы «0 мин наката» не врало
-    const dur = s => s < 60 ? `${s} с` : `${Math.round(s / 60)} мин`;
-    const note = el.querySelector(".dist-note");
-    note.hidden = false;
-    note.textContent = `${dur(b.pedalSecs)} педалирования + ${dur(b.coastSecs)} наката = ${dur(b.totalSecs)}`;
-  }
-});
-if (!Object.keys(dist).length) document.getElementById("distGrid").style.display = "none";
 })();
 </script>
 {{ template "foot" . }}

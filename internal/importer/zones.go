@@ -12,8 +12,8 @@ import (
 // бэкфилл пересчитает workout_zones.
 const zonesVersion = 1
 
-// zonesOf — секунды по зонам Z1–Z7 из общего расчёта ridedata.PowerTime
-// (тот же, что у /dist): не плодим вторую формулу.
+// zonesOf — секунды по зонам Z1–Z7 из общего расчёта ridedata.PowerTime:
+// не плодим вторую формулу.
 func zonesOf(samples []store.Sample, ftp int) [7]int {
 	var out [7]int
 	if ftp <= 0 {

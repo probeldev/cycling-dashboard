@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -52,9 +51,9 @@ func secsOf(entries []distEntry, label string) int {
 	return -1
 }
 
-func totalSecs(entries []distEntry) int {
+func totalSecs(entries []distEntry, from int) int {
 	total := 0
-	for _, e := range entries {
+	for _, e := range entries[from:] {
 		total += e.Secs
 	}
 	return total
@@ -70,158 +69,168 @@ func mixed() []store.Sample {
 	)
 }
 
-func TestDistributionsCoastBucket(t *testing.T) {
-	d := distributions(mixed(), 0)
-	power, ok := d.Buckets["power"]
+func TestZoneDistributionCoastBucket(t *testing.T) {
+	entries, ok := zoneDistribution(mixed(), 200)
 	if !ok {
 		t.Fatal("нет распределения мощности")
 	}
-	if power[0].Label != coastLabel {
-		t.Errorf("первый бакет = %q, хочу %q", power[0].Label, coastLabel)
+	if entries[0].Label != coastLabel {
+		t.Errorf("первый бакет = %q, хочу %q", entries[0].Label, coastLabel)
 	}
-	if got := power[0].Secs; got != 10 {
+	if got := entries[0].Secs; got != 10 {
 		t.Errorf("накат = %d с, хочу 10", got)
 	}
-	if got := secsOf(power, "100–150"); got != 20 {
-		t.Errorf("100–150 Вт = %d с, хочу 20", got)
-	}
-	if got := secsOf(power, "250–300"); got != 10 {
-		t.Errorf("250–300 Вт = %d с, хочу 10", got)
-	}
-}
-
-func TestDistributionsDropoutsNotCounted(t *testing.T) {
-	d := distributions(mixed(), 0)
-	power := d.Buckets["power"]
-	// 45 сэмплов, из них 5 — дропауты: учтены только 40
-	if got := totalSecs(power); got != 40 {
-		t.Errorf("учтено %d с, хочу 40 (дропауты должны выпадать)", got)
-	}
-	if got := d.PowerBase; got.CoastSecs != 10 || got.PedalSecs != 30 || got.TotalSecs != 40 {
-		t.Errorf("базы = %+v, хочу coast=10 pedal=30 total=40", got)
-	}
-
-	// все сэмплы — дропауты: распределения мощности нет вовсе
-	all := distributions(rep(5, pwr(0, false)), 0)
-	if _, ok := all.Buckets["power"]; ok {
-		t.Error("дропауты дали распределение мощности, хочу его отсутствие")
-	}
-	if _, ok := all.Buckets["cadence"]; ok {
-		t.Error("пустой сэмпл дал распределение каденса")
-	}
-}
-
-func TestDistributionsCoastWithZones(t *testing.T) {
-	// при FTP=200 зона Z1 начинается с нуля — накат не должен в неё провалиться
-	d := distributions(mixed(), 200)
-	power := d.Buckets["power"]
-	if power[0].Label != coastLabel {
-		t.Errorf("первый бакет = %q, хочу %q", power[0].Label, coastLabel)
-	}
-	if got := secsOf(power, "Z1 · 0–112"); got != 0 {
-		t.Errorf("в Z1 попало %d с наката, хочу 0", got)
-	}
-	if got := secsOf(power, "Z2 · 112–152"); got != 20 {
+	if got := secsOf(entries, "Z2 · 112–152"); got != 20 {
 		t.Errorf("Z2 = %d с, хочу 20 (120 Вт)", got)
 	}
-	if got := secsOf(power, "Z6 · 242–302"); got != 10 {
+	if got := secsOf(entries, "Z6 · 242–302"); got != 10 {
 		t.Errorf("Z6 = %d с, хочу 10 (250 Вт)", got)
 	}
 }
 
-// TestDistributionsDuplicateOffsets — запись 2 Гц: две записи на секунду делят
+func TestZoneDistributionDropoutsNotCounted(t *testing.T) {
+	entries, ok := zoneDistribution(mixed(), 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	// 45 сэмплов, из них 5 — дропауты: учтены только 40
+	if got := totalSecs(entries, 0); got != 40 {
+		t.Errorf("учтено %d с, хочу 40 (дропауты должны выпадать)", got)
+	}
+
+	// все сэмплы — дропауты: распределения мощности нет вовсе
+	if _, ok := zoneDistribution(rep(5, pwr(0, false)), 200); ok {
+		t.Error("дропауты дали распределение мощности, хочу его отсутствие")
+	}
+	if _, ok := metricDistributions(rep(5, pwr(0, false)))["cadence"]; ok {
+		t.Error("пустой сэмпл дал распределение каденса")
+	}
+}
+
+func TestZoneDistributionCoastWithZones(t *testing.T) {
+	// при FTP=200 зона Z1 начинается с нуля — накат не должен в неё провалиться
+	entries, ok := zoneDistribution(mixed(), 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	if got := secsOf(entries, "Z1 · 0–112"); got != 0 {
+		t.Errorf("в Z1 попало %d с наката, хочу 0", got)
+	}
+	if got := secsOf(entries, "Z2 · 112–152"); got != 20 {
+		t.Errorf("Z2 = %d с, хочу 20 (120 Вт)", got)
+	}
+	if got := secsOf(entries, "Z6 · 242–302"); got != 10 {
+		t.Errorf("Z6 = %d с, хочу 10 (250 Вт)", got)
+	}
+}
+
+// TestZoneDistributionDuplicateOffsets — запись 2 Гц: две записи на секунду делят
 // время поровну, и нулевая мощность не растворяется в усреднении.
-func TestDistributionsDuplicateOffsets(t *testing.T) {
+func TestZoneDistributionDuplicateOffsets(t *testing.T) {
 	var samples []store.Sample
 	for sec := 0; sec < 10; sec++ {
 		samples = append(samples,
 			store.Sample{Offset: int64(sec), Power: 0, HasPwr: true},
 			store.Sample{Offset: int64(sec), Power: 200, HasPwr: true})
 	}
-	d := distributions(samples, 0)
-	if got := d.PowerBase; got.CoastSecs != 5 || got.PedalSecs != 5 || got.TotalSecs != 10 {
-		t.Errorf("2 Гц: %+v, хочу coast=5 pedal=5 total=10", got)
+	entries, ok := zoneDistribution(samples, 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	if got := entries[0].Secs; got != 5 {
+		t.Errorf("накат = %d с, хочу 5", got)
+	}
+	if got := totalSecs(entries, 0); got != 10 {
+		t.Errorf("total = %d с, хочу 10", got)
 	}
 }
 
-// TestDistributionsSparseOffsets — прореженная запись (0, 3, 10, 11) при движении:
-// каждая запись получает интервал до следующей, накат не теряется.
-func TestDistributionsSparseOffsets(t *testing.T) {
+// TestZoneDistributionSparseOffsets — прореженная запись (0, 3, 10, 11) при
+// движении: каждая запись получает интервал до следующей, накат не теряется.
+func TestZoneDistributionSparseOffsets(t *testing.T) {
 	samples := []store.Sample{
 		{Offset: 0, Power: 0, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 0, HasDist: true},
 		{Offset: 3, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 12.5, HasDist: true},
 		{Offset: 10, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 41.7, HasDist: true},
 		{Offset: 11, Power: 200, HasPwr: true, SpeedMs: 15 / 3.6, DistanceM: 45.8, HasDist: true},
 	}
-	d := distributions(samples, 0)
-	if got := d.PowerBase.CoastSecs; got != 3 {
+	entries, ok := zoneDistribution(samples, 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	if got := entries[0].Secs; got != 3 {
 		t.Errorf("накат = %d с, хочу 3 (интервал 0→3)", got)
 	}
 	// 3→10 — 7 с педалирования, 10→11 — 1 с, последняя запись — 1 с
-	if got := d.PowerBase.PedalSecs; got != 9 {
+	if got := totalSecs(entries, 1); got != 9 {
 		t.Errorf("педалирование = %d с, хочу 9", got)
 	}
 }
 
-// TestDistributionsEdgeCases — пустой вход, одна запись, весь накат, все дропауты.
-func TestDistributionsEdgeCases(t *testing.T) {
-	empty := distributions(nil, 0)
-	if len(empty.Buckets) != 0 || empty.PowerBase.TotalSecs != 0 {
-		t.Errorf("пустой вход: бакеты %+v, база %+v", empty.Buckets, empty.PowerBase)
+// TestZoneDistributionEdgeCases — пустой вход, одна запись, весь накат,
+// все дропауты.
+func TestZoneDistributionEdgeCases(t *testing.T) {
+	if _, ok := zoneDistribution(nil, 200); ok {
+		t.Error("пустой вход дал распределение мощности")
 	}
 
-	single := distributions([]store.Sample{{Power: 200, HasPwr: true}}, 0)
-	if got := single.PowerBase.TotalSecs; got != 1 {
+	single, ok := zoneDistribution([]store.Sample{{Power: 200, HasPwr: true}}, 200)
+	if !ok {
+		t.Fatal("одна запись не дала распределения мощности")
+	}
+	if got := totalSecs(single, 0); got != 1 {
 		t.Errorf("одна запись: total = %d, хочу 1", got)
 	}
 
-	coast := distributions(seq(rep(5, pwr(0, true))), 0)
-	if got := coast.PowerBase; got.CoastSecs != 5 || got.PedalSecs != 0 || got.TotalSecs != 5 {
-		t.Errorf("весь накат: %+v, хочу coast=5 pedal=0 total=5", got)
+	coast, ok := zoneDistribution(seq(rep(5, pwr(0, true))), 200)
+	if !ok {
+		t.Fatal("весь накат не дал распределения мощности")
+	}
+	if got := totalSecs(coast, 0); got != 5 {
+		t.Errorf("весь накат: total = %d, хочу 5", got)
+	}
+	if got := totalSecs(coast, 1); got != 0 {
+		t.Errorf("весь накат: педалирование = %d, хочу 0", got)
 	}
 
-	dropouts := distributions(seq(rep(5, pwr(0, false))), 0)
-	if len(dropouts.Buckets) != 0 {
-		t.Errorf("все дропауты дали бакеты: %+v", dropouts.Buckets)
+	if _, ok := zoneDistribution(seq(rep(5, pwr(0, false))), 200); ok {
+		t.Error("все дропауты дали распределение мощности")
 	}
 
-	// проценты должны быть в JSON у всех бакетов, иначе клиент получит undefined
-	withCad := distributions(seq(rep(3, store.Sample{Cadence: 85, HasCad: true})), 0)
-	raw, err := json.Marshal(withCad)
-	if err != nil {
-		t.Fatal(err)
+	// пустые диапазоны остаются в срезе, чтобы индексы зон не съезжали
+	withCad := metricDistributions(seq(rep(3, store.Sample{Cadence: 85, HasCad: true})))
+	entries, ok := withCad["cadence"]
+	if !ok {
+		t.Fatal("нет распределения каденса")
 	}
-	var top map[string][]map[string]any
-	if err := json.Unmarshal(raw, &top); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"pct", "pctTotal"} {
-		if _, ok := top["cadence"][0][key]; !ok {
-			t.Errorf("у cadence нет поля %q — клиент получит undefined", key)
-		}
+	if len(entries) != len(distDefs["cadence"]) {
+		t.Errorf("бакетов каденса %d, хочу %d", len(entries), len(distDefs["cadence"]))
 	}
 }
 
-// TestDistributionsPauseAppliesToZones — правило паузы общее для всех power-бакетов:
-// 30 с стоянки (дистанция не выросла) не попадают в зону, где была мощность
-// перед остановкой.
-func TestDistributionsPauseAppliesToZones(t *testing.T) {
+// TestZoneDistributionPauseAppliesToZones — правило паузы общее для всех
+// power-бакетов: 30 с стоянки (дистанция не выросла) не попадают в зону, где
+// была мощность перед остановкой.
+func TestZoneDistributionPauseAppliesToZones(t *testing.T) {
 	samples := []store.Sample{
 		{Offset: 0, Power: 120, HasPwr: true, DistanceM: 500, HasDist: true},
 		{Offset: 30, Power: 120, HasPwr: true, DistanceM: 500, HasDist: true},
 	}
-	d := distributions(samples, 200)
-	if got := secsOf(d.Buckets["power"], "Z2 · 112–152"); got != 2 {
+	entries, ok := zoneDistribution(samples, 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	if got := secsOf(entries, "Z2 · 112–152"); got != 2 {
 		t.Errorf("Z2 = %d с, хочу 2 (по секунде за запись, без 30 с стоянки)", got)
 	}
-	if got := d.PowerBase.TotalSecs; got != 2 {
-		t.Errorf("totalSecs = %d, хочу 2", got)
+	if got := totalSecs(entries, 0); got != 2 {
+		t.Errorf("total = %d, хочу 2", got)
 	}
 }
 
-// TestDistributionsCoastExcludesPauses — разрыв на авто-паузе после наката
+// TestZoneDistributionCoastExcludesPauses — разрыв на авто-паузе после наката
 // означает остановку: эти секунды не должны попадать в бакет наката.
-func TestDistributionsCoastExcludesPauses(t *testing.T) {
+func TestZoneDistributionCoastExcludesPauses(t *testing.T) {
 	coast := func(offset int64) store.Sample {
 		return store.Sample{Offset: offset, Power: 0, HasPwr: true}
 	}
@@ -230,30 +239,36 @@ func TestDistributionsCoastExcludesPauses(t *testing.T) {
 	}
 
 	// короткий разрыв (3 с) — ещё качение, накат продолжается
-	short := distributions([]store.Sample{coast(0), coast(1), pedal(4), pedal(5)}, 0)
-	if got := short.Buckets["power"][0].Secs; got != 4 {
+	short, ok := zoneDistribution([]store.Sample{coast(0), coast(1), pedal(4), pedal(5)}, 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	if got := short[0].Secs; got != 4 {
 		t.Errorf("накат с коротким разрывом = %d с, хочу 4", got)
 	}
 
 	// разрыв 30 с — авто-пауза: засчитываем только секунды самих сэмплов
-	long := distributions([]store.Sample{coast(0), coast(1), pedal(31), pedal(32)}, 0)
-	power := long.Buckets["power"]
-	if got := power[0].Secs; got != 2 {
+	long, ok := zoneDistribution([]store.Sample{coast(0), coast(1), pedal(31), pedal(32)}, 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
+	if got := long[0].Secs; got != 2 {
 		t.Errorf("накат перед авто-паузой = %d с, хочу 2", got)
 	}
-	if got := long.PowerBase; got.CoastSecs != 2 || got.PedalSecs != 2 || got.TotalSecs != 4 {
-		t.Errorf("базы = %+v, хочу coast=2 pedal=2 total=4", got)
+	if got := totalSecs(long, 0); got != 4 {
+		t.Errorf("total = %d, хочу 4", got)
 	}
 }
 
-func TestDistributionsPercentsConsistent(t *testing.T) {
-	d := distributions(mixed(), 0)
-	power := d.Buckets["power"]
+func TestZoneDistributionPercentsConsistent(t *testing.T) {
+	entries, ok := zoneDistribution(mixed(), 200)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
 
-	var pct, pctTotal float64
-	for i, e := range power {
+	var pct float64
+	for i, e := range entries {
 		pct += e.Pct
-		pctTotal += e.PctTotal
 		if i == 0 && e.Pct != 0 {
 			t.Errorf("у бакета наката pct = %v, хочу 0 (накат не педалирование)", e.Pct)
 		}
@@ -262,15 +277,8 @@ func TestDistributionsPercentsConsistent(t *testing.T) {
 	if math.Abs(pct-100) > 0.5 {
 		t.Errorf("сумма pct = %v, хочу 100", pct)
 	}
-	if math.Abs(pctTotal-100) > 0.5 {
-		t.Errorf("сумма pctTotal = %v, хочу 100", pctTotal)
-	}
-	// накат: 10 с из 40 общих, но 0 из 30 педалирования
-	if got := power[0].PctTotal; got != 25 {
-		t.Errorf("pctTotal наката = %v, хочу 25", got)
-	}
-	if got := secsPct(power, "100–150"); got != 66.7 {
-		t.Errorf("pct для 100–150 Вт = %v, хочу 66.7 (20 из 30 с педалирования)", got)
+	if got := secsPct(entries, "Z2 · 112–152"); got != 66.7 {
+		t.Errorf("pct для Z2 = %v, хочу 66.7 (20 из 30 с педалирования)", got)
 	}
 }
 
@@ -283,13 +291,13 @@ func secsPct(entries []distEntry, label string) float64 {
 	return -1
 }
 
-func TestDistributionsOtherMetricsUnchanged(t *testing.T) {
+func TestMetricDistributionsExcludeZeros(t *testing.T) {
 	// нули по каденсу/скорости/пульсу по-прежнему не учитываются
 	samples := seq(
 		rep(10, store.Sample{}),
 		rep(10, store.Sample{Cadence: 85, HasCad: true, HR: 140, SpeedMs: 8}),
 	)
-	d := distributions(samples, 0)
+	d := metricDistributions(samples)
 
 	for kind, want := range map[string]struct {
 		label string
@@ -299,70 +307,69 @@ func TestDistributionsOtherMetricsUnchanged(t *testing.T) {
 		"speed":   {"25–30", 10},
 		"hr":      {"140–150", 10},
 	} {
-		entries, ok := d.Buckets[kind]
+		entries, ok := d[kind]
 		if !ok {
 			t.Fatalf("нет распределения %s", kind)
 		}
 		if got := secsOf(entries, want.label); got != want.secs {
 			t.Errorf("%s: бакет %s = %d с, хочу %d", kind, want.label, got, want.secs)
 		}
-		if got := totalSecs(entries); got != want.secs {
+		if got := totalSecs(entries, 0); got != want.secs {
 			t.Errorf("%s: учтено %d с, хочу %d (нули должны выпадать)", kind, got, want.secs)
 		}
 		if entries[0].Label == coastLabel {
 			t.Errorf("%s: появился бакет наката, его быть не должно", kind)
 		}
-		for _, e := range entries {
-			if e.Pct != 0 || e.PctTotal != 0 {
-				t.Errorf("%s: проценты %v/%v, хочу 0 (считаются только для мощности)",
-					kind, e.Pct, e.PctTotal)
-			}
+		if got := secsPct(entries, want.label); got != 100 {
+			t.Errorf("%s: pct бакета %s = %v, хочу 100", kind, want.label, got)
 		}
 	}
-	if _, ok := d.Buckets["power"]; ok {
-		t.Error("без данных мощности появилось распределение мощности")
+	if _, ok := d["power"]; ok {
+		t.Error("мощность попала в распределения по диапазонам")
 	}
 }
 
-// TestDistJSONContract — поля можно добавлять, удалять и переименовывать нельзя.
-func TestDistJSONContract(t *testing.T) {
-	raw, err := json.Marshal(distributions(mixed(), 200))
-	if err != nil {
-		t.Fatal(err)
+func TestMetricStrips(t *testing.T) {
+	d := map[string][]distEntry{
+		"hr": {
+			{Label: "140–150", Secs: 10, Pct: 100},
+		},
+		"cadence": {
+			{Label: "80–90", Secs: 5, Pct: 50},
+			{Label: "90–100", Secs: 5, Pct: 50},
+			{Label: "100+", Secs: 0, Pct: 0},
+		},
+		"speed": {
+			{Label: "25–30", Secs: 10, Pct: 100},
+		},
 	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &top); err != nil {
-		t.Fatal(err)
+	strips := metricStrips(d, false)
+	if len(strips) != 3 {
+		t.Fatalf("полосок %d, хочу 3", len(strips))
 	}
-	var entries []map[string]any
-	if err := json.Unmarshal(top["power"], &entries); err != nil {
-		t.Fatalf("power должен остаться массивом бакетов: %v", err)
-	}
-	if len(entries) == 0 {
-		t.Fatal("пустой массив бакетов мощности")
-	}
-	for _, key := range []string{"label", "secs", "pctTotal"} {
-		if _, ok := entries[0][key]; !ok {
-			t.Errorf("в бакете мощности нет поля %q", key)
+	for i, want := range []string{"Пульс", "Каденс", "Скорость"} {
+		if strips[i].Label != want {
+			t.Errorf("полоска %d = %q, хочу %q", i, strips[i].Label, want)
 		}
 	}
-	var base map[string]int
-	if err := json.Unmarshal(top["powerBase"], &base); err != nil {
-		t.Fatalf("powerBase должен быть объектом: %v", err)
+	if got := len(strips[1].Entries); got != 2 {
+		t.Errorf("сегментов каденса %d, хочу 2 (пустые скрыты)", got)
 	}
-	for _, key := range []string{"coastSecs", "pedalSecs", "totalSecs"} {
-		if _, ok := base[key]; !ok {
-			t.Errorf("в powerBase нет поля %q", key)
-		}
+	if strips[0].Class != "dist-hr" || strips[1].Class != "dist-cadence" || strips[2].Class != "dist-speed" {
+		t.Errorf("классы полосок = %q/%q/%q", strips[0].Class, strips[1].Class, strips[2].Class)
 	}
-	if base["coastSecs"] != 10 || base["pedalSecs"] != 30 || base["totalSecs"] != 40 {
-		t.Errorf("powerBase = %v, хочу coast=10 pedal=30 total=40", base)
+
+	if got := metricStrips(d, true); len(got) != 2 {
+		t.Errorf("у станка полосок %d, хочу 2 (скорость скрыта)", len(got))
+	}
+	if got := metricStrips(nil, false); len(got) != 0 {
+		t.Errorf("без данных полосок %d, хочу 0", len(got))
 	}
 }
 
-// TestZoneTimeMatchesDist — /dist и ridedata.PowerTime (он же импорт и
-// /api/weeks) считают зоны одинаково.
-func TestZoneTimeMatchesDist(t *testing.T) {
+// TestZoneTimeMatchesZoneDistribution — zoneDistribution и ridedata.PowerTime
+// (он же импорт и /api/weeks) считают зоны одинаково.
+func TestZoneTimeMatchesZoneDistribution(t *testing.T) {
 	var samples []store.Sample
 	for i := 0; i < 60; i++ {
 		samples = append(samples, store.Sample{
@@ -370,22 +377,24 @@ func TestZoneTimeMatchesDist(t *testing.T) {
 		})
 	}
 	const ftp = 200
-	d := distributions(samples, ftp)
+	entries, ok := zoneDistribution(samples, ftp)
+	if !ok {
+		t.Fatal("нет распределения мощности")
+	}
 	zones, coast := ridedata.PowerTime(samples, ftp)
-	power := d.Buckets["power"]
-	if got := power[0].Secs; got != int(math.Round(coast)) {
-		t.Errorf("накат: /dist %d, PowerTime %d", got, int(math.Round(coast)))
+	if got := entries[0].Secs; got != int(math.Round(coast)) {
+		t.Errorf("накат: zoneDistribution %d, PowerTime %d", got, int(math.Round(coast)))
 	}
 	for j, z := range zones {
-		if got := power[j+1].Secs; got != int(math.Round(z)) {
-			t.Errorf("Z%d: /dist %d, PowerTime %d", j+1, got, int(math.Round(z)))
+		if got := entries[j+1].Secs; got != int(math.Round(z)) {
+			t.Errorf("Z%d: zoneDistribution %d, PowerTime %d", j+1, got, int(math.Round(z)))
 		}
 	}
 }
 
-// TestWorkoutZonesHTMLMatchDist — мини-таблица зон на деталке строится из
-// того же /dist: метки, время и % от педалирования совпадают построчно.
-func TestWorkoutZonesHTMLMatchDist(t *testing.T) {
+// TestWorkoutZonesHTMLMatchesZoneDistribution — стрип зон на деталке строится
+// из того же zoneDistribution: метки, время и % от педалирования совпадают.
+func TestWorkoutZonesHTMLMatchesZoneDistribution(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -432,29 +441,111 @@ func TestWorkoutZonesHTMLMatchDist(t *testing.T) {
 		}
 	}
 
-	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/workout/%d/dist", id), nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /dist: код %d", rec.Code)
+	entries, ok := zoneDistribution(samples, 156)
+	if !ok {
+		t.Fatal("нет распределения мощности")
 	}
-	var d struct {
-		Power []distEntry `json:"power"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
-		t.Fatal(err)
-	}
-	if len(d.Power) != 8 {
-		t.Fatalf("бакетов мощности %d, хочу 8 (накат + Z1–Z7)", len(d.Power))
+	if len(entries) != 8 {
+		t.Fatalf("бакетов мощности %d, хочу 8 (накат + Z1–Z7)", len(entries))
 	}
 	// html/template экранирует "+" в тексте как &#43; — для сверки возвращаем.
 	rows := strings.ReplaceAll(body, "&#43;", "+")
-	for _, e := range d.Power[1:] {
+	for _, e := range entries[1:] {
 		if e.Secs == 0 {
 			continue // пустые зоны в стрип не попадают
 		}
 		want := fmt.Sprintf("title=\"%s — %s (%s%%)\"", e.Label, zoneTimeLabel(e.Secs), trimFloat(e.Pct))
 		if !strings.Contains(rows, want) {
-			t.Errorf("нет бара зоны %q (в /dist: %+v)", want, e)
+			t.Errorf("нет бара зоны %q (в zoneDistribution: %+v)", want, e)
 		}
+	}
+}
+
+// TestWorkoutDistStripsHTML — на сводке полоски пульса, каденса и скорости;
+// подсказка сегмента содержит диапазон, время и долю. У станка скорости нет.
+func TestWorkoutDistStripsHTML(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now().Add(-time.Hour), Duration: 10 * time.Second,
+		AvgHR: 140, MaxHR: 140, AvgCadence: 85, MaxCadence: 85, AvgSpeedKmh: 28.8,
+	}, "hash-strips-html", filepath.Join(t.TempDir(), "x.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := seq(rep(10, store.Sample{Cadence: 85, HasCad: true, HR: 140, SpeedMs: 8}))
+	if err := store.InsertSamples(db, id, samples); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /workout/%d: код %d", id, rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Распределение времени", "Пульс", "Каденс", "Скорость",
+		"dist-hr", "dist-cadence", "dist-speed",
+		`title="140–150 уд/мин — 10 с (100.0%)"`,
+		`title="80–90 об/мин — 10 с (100.0%)"`,
+		`title="25–30 км/ч — 10 с (100.0%)"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на сводке нет %q", want)
+		}
+	}
+
+	// станок: полоски скорости нет, остальные остаются
+	if err := store.SetTrainerOverride(db, id, true); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /workout/%d (станок): код %d", id, rec.Code)
+	}
+	body = rec.Body.String()
+	for _, want := range []string{"Пульс", "Каденс", "dist-hr", "dist-cadence"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("на станке нет %q", want)
+		}
+	}
+	for _, bad := range []string{
+		`class="zone-bar dist-speed"`,
+		`aria-label="распределение времени: Скорость"`,
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("на станке осталось %q", bad)
+		}
+	}
+	if strings.Contains(body, "км/ч —") {
+		t.Error("на станке осталась подсказка полоски скорости")
+	}
+
+	// на странице графиков раздела «Распределения» больше нет, endpoint удалён
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d/charts", id), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /workout/%d/charts: код %d", id, rec.Code)
+	}
+	body = rec.Body.String()
+	for _, bad := range []string{"Распределения", "distGrid", "dist-grid"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("на графиках осталось %q", bad)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/workout/%d/dist", id), nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("GET /api/workout/%d/dist: код %d, хочу 404", id, rec.Code)
 	}
 }

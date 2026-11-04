@@ -204,23 +204,30 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 		attachRecordTrends(mmpC, prev30)
 		// связный вывод (§6): тот же контекст, что у инсайтов, + рекорды
 		advCtx.Records = recordFacts(mmpC)
-		// зоны — из того же расчёта, что /api/workout/{id}/dist; второй
-		// формулы на странице нет
+		// Стрипы зон и распределений — из сырых сэмплов: бакет-усреднение
+		// смешало бы нули мощности с педалированием на записи 2 Гц.
 		var powerZones []workoutZoneRow
-		if wo.FTP > 0 && wo.HasPower {
+		var distStrips []metricStrip
+		needSamples := (wo.FTP > 0 && wo.HasPower) || wo.AvgHR > 0 || wo.AvgCadence > 0 ||
+			(!wo.Trainer && wo.AvgSpeedKmh > 0)
+		if needSamples {
 			samples, err := store.RawSamples(db, id)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			if entries, _, ok := zoneDistribution(samples, wo.FTP); ok {
-				powerZones = workoutZoneRows(entries)
+			if wo.FTP > 0 && wo.HasPower {
+				if entries, ok := zoneDistribution(samples, wo.FTP); ok {
+					powerZones = workoutZoneRows(entries)
+				}
 			}
+			distStrips = metricStrips(metricDistributions(samples), wo.Trainer)
 		}
 		render(w, "workout.html", map[string]any{
 			"W": wo, "MMP": mmpC, "Bikes": bikes,
 			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx), "PowerZones": powerZones,
-			"Summary": advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "summary",
+			"DistStrips": distStrips,
+			"Summary":    advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "summary",
 			"HasMap": hasMap,
 		})
 	})
@@ -369,7 +376,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// как и /dist: неизвестная тренировка — 404, а не 200 null
+		// неизвестная тренировка — 404, а не 200 null
 		if _, err := store.GetWorkout(db, id); err != nil {
 			notFoundOr500(w, req, err)
 			return
@@ -520,23 +527,6 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		writeJSON(w, weeks)
-	})
-
-	r.Get("/api/workout/{id}/dist", func(w http.ResponseWriter, req *http.Request) {
-		id, _ := strconv.ParseInt(chi.URLParam(req, "id"), 10, 64)
-		wo, err := store.GetWorkout(db, id)
-		if err != nil {
-			notFoundOr500(w, req, err)
-			return
-		}
-		// распределение считаем по сырым сэмплам: бакет-усреднение смешало бы
-		// нули мощности с педалированием на записи 2 Гц и убило бы накат
-		samples, err := store.RawSamples(db, id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, distributions(samples, wo.FTP))
 	})
 
 	return r, nil

@@ -190,7 +190,7 @@ func TestMetrics418Golden(t *testing.T) {
 	}
 	checkFinite(t, w.IF, w.TSS, w.VI, w.WorkKJ)
 
-	// зоны должны совпадать с /dist этой тренировки (те же сэмплы и FTP)
+	// зоны должны совпадать с zoneDistribution этой тренировки (те же сэмплы и FTP)
 	if got, want := zonesOf(samples, w.FTP), [7]int{232, 548, 1197, 1374, 595, 331, 102}; got != want {
 		t.Errorf("зоны = %v, хочу %v", got, want)
 	}

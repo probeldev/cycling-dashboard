@@ -122,7 +122,7 @@ func attachRecordTrends(cards []mmpCard, prev []store.Record) {
 }
 
 // zoneEdgesW — границы зон в ваттах для фоновых полос графика мощности.
-// Те же доли FTP, что в подписях бакетов /dist (ridedata.ZoneBounds).
+// Те же доли FTP, что в подписях зон (ridedata.ZoneBounds).
 func zoneEdgesW(ftp int) []float64 {
 	if ftp <= 0 {
 		return nil

@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -11,54 +10,22 @@ import (
 )
 
 type bucket struct {
-	Label string `json:"label"`
+	Label string
 	From  float64
 }
 
-// distEntry — бакет распределения. Проценты ненулевые только для мощности:
-// Pct — от времени педалирования (прежняя база, существующий UI не ломаем),
-// PctTotal — от общего времени вместе с накатом. Поля есть у всех бакетов
-// (у cadence/speed/hr — нули), чтобы клиент мог суммировать без проверок на nil.
+// distEntry — бакет распределения времени по диапазону.
 type distEntry struct {
-	Label    string  `json:"label"`
-	Secs     int     `json:"secs"`
-	Pct      float64 `json:"pct"`
-	PctTotal float64 `json:"pctTotal"`
-}
-
-// powerBase — две базы времени распределения мощности. Раньше нулевая мощность
-// молча выбрасывалась и зоны считались только «по времени педалирования»,
-// из-за чего было непонятно, откуда база.
-type powerBase struct {
-	CoastSecs int `json:"coastSecs"` // power == 0 при живом поверметре — накат
-	PedalSecs int `json:"pedalSecs"` // power > 0 — педалирование
-	TotalSecs int `json:"totalSecs"` // pedal + coast
-}
-
-// dist — результат распределений. В JSON раскладывается плоско
-// ({"power": [...], "cadence": [...], ..., "powerBase": {...}}), чтобы
-// dist.power остался массивом и контракт API не сломался.
-type dist struct {
-	Buckets   map[string][]distEntry
-	PowerBase powerBase
-}
-
-func (d dist) MarshalJSON() ([]byte, error) {
-	m := make(map[string]any, len(d.Buckets)+1)
-	for k, v := range d.Buckets {
-		m[k] = v
-	}
-	if _, ok := d.Buckets["power"]; ok {
-		m["powerBase"] = d.PowerBase
-	}
-	return json.Marshal(m)
+	Label string
+	Secs  int
+	Pct   float64
 }
 
 // coastLabel — бакет наката: нулевая мощность при работающем поверметре.
 const coastLabel = "0 Вт · накат"
 
 // distDefs — типичные бакеты для шоссейника; последний бакет «и выше».
-// Для мощности при заданном FTP вместо них берутся зоны Коггана (zoneBuckets).
+// Мощность сюда не входит: она считается зонами Коггана (zoneBuckets).
 var distDefs = map[string][]bucket{
 	"cadence": {
 		{Label: "0–40", From: 0},
@@ -80,16 +47,6 @@ var distDefs = map[string][]bucket{
 		{Label: "35–40", From: 35},
 		{Label: "40+", From: 40},
 	},
-	"power": {
-		{Label: "0–50", From: 0},
-		{Label: "50–100", From: 50},
-		{Label: "100–150", From: 100},
-		{Label: "150–200", From: 150},
-		{Label: "200–250", From: 200},
-		{Label: "250–300", From: 250},
-		{Label: "300–400", From: 300},
-		{Label: "400+", From: 400},
-	},
 	"hr": {
 		{Label: "0–100", From: 0},
 		{Label: "100–120", From: 100},
@@ -103,7 +60,7 @@ var distDefs = map[string][]bucket{
 }
 
 // zoneBuckets — зоны Коггана в ваттах. Границы берутся из ridedata, чтобы UI и
-// расчёт зон (импорт, /dist) не разъезжались. Не округляем до целых:
+// расчёт зон (импорт, workout_zones) не разъезжались. Не округляем до целых:
 // 0.56*156 = 87.36, и подпись «87» врала бы; целые пороги печатаем как целые,
 // дробные — с одним знаком. Правая граница зоны не включается.
 func zoneBuckets(ftp int) []bucket {
@@ -128,18 +85,6 @@ func watts(v float64) string {
 		return strconv.Itoa(int(r))
 	}
 	return strconv.FormatFloat(v, 'f', 1, 64)
-}
-
-// powerBuckets — диапазоны мощности (зоны Коггана при заданном FTP, иначе
-// фиксированные) с добавленным первым бакетом «0 Вт · накат».
-func powerBuckets(ftp int) []bucket {
-	base := distDefs["power"]
-	if ftp > 0 {
-		base = zoneBuckets(ftp)
-	}
-	out := make([]bucket, 0, len(base)+1)
-	out = append(out, bucket{Label: coastLabel, From: 0})
-	return append(out, base...)
 }
 
 func value(s store.Sample, kind string) float64 {
@@ -181,34 +126,28 @@ func bucketIndex(kind string, buckets []bucket, s store.Sample) int {
 }
 
 // zoneDistribution — бакеты мощности по зонам Коггана через ridedata.PowerTime
-// (единый расчёт с импортом). Первый бакет — накат.
-func zoneDistribution(samples []store.Sample, ftp int) ([]distEntry, powerBase, bool) {
+// (единый расчёт с импортом). Первый бакет — накат, дальше Z1–Z7.
+func zoneDistribution(samples []store.Sample, ftp int) ([]distEntry, bool) {
 	zones, coast := ridedata.PowerTime(samples, ftp)
 	total := coast
 	for _, z := range zones {
 		total += z
 	}
 	if total == 0 {
-		return nil, powerBase{}, false
+		return nil, false
 	}
-	buckets := powerBuckets(ftp) // [накат] + Z1..Z7
-	entries := make([]distEntry, len(buckets))
+	buckets := zoneBuckets(ftp)
+	entries := make([]distEntry, len(buckets)+1) // [накат] + Z1..Z7
 	entries[0] = distEntry{Label: coastLabel, Secs: int(math.Round(coast))}
 	for j, z := range zones {
-		entries[j+1] = distEntry{Label: buckets[j+1].Label, Secs: int(math.Round(z))}
+		entries[j+1] = distEntry{Label: buckets[j].Label, Secs: int(math.Round(z))}
 	}
-	pedal := 0
-	for _, e := range entries[1:] {
-		pedal += e.Secs
-	}
-	base := powerBase{CoastSecs: entries[0].Secs, PedalSecs: pedal}
-	base.TotalSecs = base.CoastSecs + base.PedalSecs
-	fillPercents(entries, base)
-	return entries, base, true
+	// проценты зон — от времени педалирования, накат в базу не входит
+	fillPercents(entries, 1, sumSecs(entries, 1))
+	return entries, true
 }
 
-// workoutZoneRow — строка мини-таблицы/стрипа зон на деталке. Строится из
-// тех же entries, что отдаёт /dist, поэтому второй формулы зон нет.
+// workoutZoneRow — строка стрипа зон на деталке.
 type workoutZoneRow struct {
 	N      int // номер зоны 1..7 — для цвета из шкалы
 	Label  string
@@ -217,7 +156,7 @@ type workoutZoneRow struct {
 	PctNum float64 // тот же процент числом — для ширины бара
 }
 
-// workoutZoneRows отбрасывает бакет наката: таблица — только Z1–Z7.
+// workoutZoneRows отбрасывает бакет наката: стрип — только Z1–Z7.
 func workoutZoneRows(entries []distEntry) []workoutZoneRow {
 	if len(entries) <= 1 {
 		return nil
@@ -235,25 +174,13 @@ func workoutZoneRows(entries []distEntry) []workoutZoneRow {
 	return rows
 }
 
-// distributions считает время в каждом диапазоне. Если задан FTP (штамп
-// тренировки), мощность режется на зоны Коггана, иначе — по фиксированным
-// диапазонам. Нулевая мощность попадает в отдельный бакет наката, плюс
-// считаются обе базы времени — педалирование и педалирование вместе с накатом.
-func distributions(samples []store.Sample, ftp int) dist {
-	out := dist{Buckets: map[string][]distEntry{}}
+// metricDistributions — время по диапазонам каденса, скорости и пульса. Мощность
+// сюда не входит: её бакеты — зоны Коггана (zoneDistribution). Проценты
+// считаются от времени самой метрики, чтобы полоска и подсказка сходились.
+func metricDistributions(samples []store.Sample) map[string][]distEntry {
+	out := make(map[string][]distEntry, len(distDefs))
 	times := ridedata.Timings(samples)
 	for kind, buckets := range distDefs {
-		// зоны мощности считаем тем же кодом, что импорт и /api/weeks
-		if kind == "power" && ftp > 0 {
-			if entries, base, ok := zoneDistribution(samples, ftp); ok {
-				out.PowerBase = base
-				out.Buckets[kind] = entries
-			}
-			continue
-		}
-		if kind == "power" {
-			buckets = powerBuckets(ftp)
-		}
 		secs := make([]float64, len(buckets))
 		var hasData bool
 		for i, s := range samples {
@@ -271,33 +198,81 @@ func distributions(samples []store.Sample, ftp int) dist {
 		for j, b := range buckets {
 			entries[j] = distEntry{Label: b.Label, Secs: int(math.Round(secs[j]))}
 		}
-		if kind == "power" {
-			pedal := 0
-			for _, e := range entries[1:] {
-				pedal += e.Secs
-			}
-			out.PowerBase = powerBase{CoastSecs: entries[0].Secs, PedalSecs: pedal}
-			out.PowerBase.TotalSecs = out.PowerBase.CoastSecs + out.PowerBase.PedalSecs
-			fillPercents(entries, out.PowerBase)
-		}
-		out.Buckets[kind] = entries
+		fillPercents(entries, 0, sumSecs(entries, 0))
+		out[kind] = entries
 	}
 	return out
 }
 
-// fillPercents проставляет доли бакетов мощности: Pct — от времени
-// педалирования (бакет наката не педалирование, у него Pct=0),
-// PctTotal — от общего времени. Сумма PctTotal по всем бакетам ≈ 100.
-func fillPercents(entries []distEntry, base powerBase) {
-	pedal, total := float64(base.PedalSecs), float64(base.TotalSecs)
-	for j := range entries {
-		if j > 0 && pedal > 0 {
-			entries[j].Pct = round1(float64(entries[j].Secs) / pedal * 100)
+// metricStripDefs — порядок и подписи полосок на деталке.
+var metricStripDefs = []struct{ Kind, Label, Unit, Class string }{
+	{"hr", "Пульс", "уд/мин", "dist-hr"},
+	{"cadence", "Каденс", "об/мин", "dist-cadence"},
+	{"speed", "Скорость", "км/ч", "dist-speed"},
+}
+
+// metricStrip — строка полоски распределения времени: без легенды, детализация
+// в title каждого сегмента.
+type metricStrip struct {
+	Label   string
+	Unit    string
+	Class   string
+	Entries []metricStripEntry
+}
+
+type metricStripEntry struct {
+	Label  string
+	Time   string
+	Pct    string
+	PctNum float64
+}
+
+// metricStrips собирает полоски пульса, каденса и скорости. Пустые метрики и
+// скорость у станка не показываются.
+func metricStrips(distributions map[string][]distEntry, trainer bool) []metricStrip {
+	var out []metricStrip
+	for _, def := range metricStripDefs {
+		if def.Kind == "speed" && trainer {
+			continue
 		}
-		if total > 0 {
-			entries[j].PctTotal = round1(float64(entries[j].Secs) / total * 100)
+		var rows []metricStripEntry
+		for _, e := range distributions[def.Kind] {
+			if e.Secs <= 0 {
+				continue
+			}
+			rows = append(rows, metricStripEntry{
+				Label:  e.Label,
+				Time:   zoneTimeLabel(e.Secs),
+				Pct:    trimFloat(e.Pct),
+				PctNum: e.Pct,
+			})
 		}
+		if len(rows) == 0 {
+			continue
+		}
+		out = append(out, metricStrip{
+			Label: def.Label, Unit: def.Unit, Class: def.Class, Entries: rows,
+		})
 	}
+	return out
+}
+
+// fillPercents считает долю каждого бакета от total начиная с индекса from.
+func fillPercents(entries []distEntry, from, total int) {
+	if total <= 0 {
+		return
+	}
+	for j := from; j < len(entries); j++ {
+		entries[j].Pct = round1(float64(entries[j].Secs) / float64(total) * 100)
+	}
+}
+
+func sumSecs(entries []distEntry, from int) int {
+	total := 0
+	for _, e := range entries[from:] {
+		total += e.Secs
+	}
+	return total
 }
 
 func round1(v float64) float64 {
