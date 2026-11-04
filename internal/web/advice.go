@@ -8,7 +8,7 @@ import (
 )
 
 // workoutAdvice собирает контекст дня и зон для правил advice и применяет
-// их. Контекст отдельно нужен деталке: из него же строится сводка Summary.
+// их к тренировке.
 func workoutAdvice(db *sql.DB, w *store.Workout) ([]advice.Card, error) {
 	ctx, err := workoutAdviceContext(db, w)
 	if err != nil {

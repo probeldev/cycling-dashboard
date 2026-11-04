@@ -80,23 +80,6 @@ func insightLevel(level string) string {
 	}
 }
 
-// recordFacts — рекордные отрезки тренировки для движка сводки §6. Берёт
-// готовые PR-флаги из карточек MMP: новых расчётов не появляется.
-func recordFacts(cards []mmpCard) []advice.RecordFact {
-	var out []advice.RecordFact
-	for _, c := range cards {
-		if c.PRPeriod == "" {
-			continue
-		}
-		out = append(out, advice.RecordFact{
-			Window: c.Label,
-			Period: c.PRPeriod,
-			Watts:  int(math.Round(c.Watts)),
-		})
-	}
-	return out
-}
-
 // attachRecordTrends проставляет карточкам тренд: разницу между значением
 // ЭТОЙ тренировки (cards[i].Watts) и лучшим значением того же окна за
 // предыдущий период до даты тренировки (запрос тот же, что у

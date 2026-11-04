@@ -56,9 +56,6 @@ type Context struct {
 	TSB          float64
 	WeekGrayPct  float64
 	Decoupling   *float64
-	// Records — рекордные отрезки тренировки (PR-флаги уже посчитаны
-	// web-слоем); нужны сводке Summary, на карточки не влияют.
-	Records []RecordFact
 }
 
 // For применяет все правила и возвращает не больше MaxCards карточек,

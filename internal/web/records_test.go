@@ -245,9 +245,14 @@ func TestWorkoutPageMMP(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{"Лучшие усилия", "5 с", ">300.0<", "рекорд за всё время", "1 мин", ">200.0<",
-		`class="w-summary"`, "Рекордные отрезки: 5 с и 1 мин (за всё время)", `class="chip chip--record"`} {
+		`class="chip chip--record"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)
+		}
+	}
+	for _, bad := range []string{`class="w-summary"`, "Рекордные отрезки:"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("саммари удалено, но остался %q", bad)
 		}
 	}
 }

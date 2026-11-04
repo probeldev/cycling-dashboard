@@ -22,8 +22,8 @@ func hasAdviceCard(cards []advice.Card, title string) bool {
 	return false
 }
 
-// TestWorkoutAdviceBlock — на деталке есть блок «Что говорят данные» и карточки
-// по фактическим данным тренировки, не больше пяти.
+// TestWorkoutAdviceBlock — на деталке карточки инсайтов идут сразу после шапки
+// без отдельного заголовка, по фактическим данным тренировки, не больше пяти.
 func TestWorkoutAdviceBlock(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -47,10 +47,13 @@ func TestWorkoutAdviceBlock(t *testing.T) {
 		t.Fatalf("код %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Инсайты", "Низкий каденс", "Пульса нет"} {
+	for _, want := range []string{"Низкий каденс", "Пульса нет"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("на деталке нет %q", want)
 		}
+	}
+	if strings.Contains(body, "Инсайты") {
+		t.Error("заголовок «Инсайты» убран, карточки идут сразу после шапки")
 	}
 	if n := strings.Count(body, `class="insight insight--`); n > 5 {
 		t.Errorf("карточек %d, хочу не больше 5", n)

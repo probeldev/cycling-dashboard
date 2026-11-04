@@ -21,7 +21,6 @@
     padding: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.10); }
   .w-type-pop[hidden] { display: none; }
   .w-type-pop .sub { font-size: 13px; padding: 0 4px; }
-  .w-summary { font-size: 16px; line-height: 1.55; margin: 12px 0 2px; background: var(--surface); border: none; border-radius: var(--radius); padding: 12px 16px; }
 
   .heroes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 14px 0 4px; }
   .heroes .u { font-size: 14px; color: var(--text-2); font-weight: 400; }
@@ -122,8 +121,24 @@
   </div>
 </header>
 
-{{ if .Summary }}
-<p class="w-summary">{{ range .Summary }}{{ . }} {{ end }}</p>
+{{ if .Advice }}
+<section class="blk">
+  <div class="insight-list">
+    {{ range $i, $c := .Advice }}{{ if lt $i 3 }}
+    <div class="insight insight--{{ insightLevel $c.Level }}"><span class="t">{{ $c.Title }}</span><span class="x"> — {{ $c.Text }}</span></div>
+    {{ end }}{{ end }}
+  </div>
+  {{ if gt (len .Advice) 3 }}
+  <details class="insights-more">
+    <summary>ещё {{ sub (len .Advice) 3 }}</summary>
+    <div class="insight-list">
+      {{ range $i, $c := .Advice }}{{ if ge $i 3 }}
+      <div class="insight insight--{{ insightLevel $c.Level }}"><span class="t">{{ $c.Title }}</span><span class="x"> — {{ $c.Text }}</span></div>
+      {{ end }}{{ end }}
+    </div>
+  </details>
+  {{ end }}
+</section>
 {{ end }}
 
 {{ if .FTPHint }}
@@ -204,27 +219,6 @@
     </div>
     {{ end }}
   </div>
-</section>
-{{ end }}
-
-{{ if .Advice }}
-<section class="blk">
-  <div class="section-label">Инсайты</div>
-  <div class="insight-list">
-    {{ range $i, $c := .Advice }}{{ if lt $i 3 }}
-    <div class="insight insight--{{ insightLevel $c.Level }}"><span class="t">{{ $c.Title }}</span><span class="x"> — {{ $c.Text }}</span></div>
-    {{ end }}{{ end }}
-  </div>
-  {{ if gt (len .Advice) 3 }}
-  <details class="insights-more">
-    <summary>ещё {{ sub (len .Advice) 3 }}</summary>
-    <div class="insight-list">
-      {{ range $i, $c := .Advice }}{{ if ge $i 3 }}
-      <div class="insight insight--{{ insightLevel $c.Level }}"><span class="t">{{ $c.Title }}</span><span class="x"> — {{ $c.Text }}</span></div>
-      {{ end }}{{ end }}
-    </div>
-  </details>
-  {{ end }}
 </section>
 {{ end }}
 

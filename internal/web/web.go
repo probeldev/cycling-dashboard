@@ -232,8 +232,6 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			return
 		}
 		attachRecordTrends(mmpC, prev30)
-		// связный вывод (§6): тот же контекст, что у инсайтов, + рекорды
-		advCtx.Records = recordFacts(mmpC)
 		// Стрипы зон и распределений — из сырых сэмплов: бакет-усреднение
 		// смешало бы нули мощности с педалированием на записи 2 Гц.
 		var powerZones []workoutZoneRow
@@ -257,7 +255,7 @@ func Handler(db *sql.DB, sync *SyncManager, syncDir string, afterSync func()) (h
 			"W": wo, "MMP": mmpC, "Bikes": bikes,
 			"FTPHint": ftpHint, "Advice": advice.For(*wo, advCtx),
 			"MetricRows": workoutMetricRows(wo, powerZones, distStrips),
-			"Summary":    advice.Summary(*wo, advCtx), "ZoneEdges": zoneEdgesW(wo.FTP), "Tab": "summary",
+			"ZoneEdges":  zoneEdgesW(wo.FTP), "Tab": "summary",
 			"HasMap": hasMap,
 		})
 	})

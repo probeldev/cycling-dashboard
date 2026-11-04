@@ -74,24 +74,6 @@ func TestInsightLevelMapping(t *testing.T) {
 	}
 }
 
-func TestRecordFacts(t *testing.T) {
-	cards := []mmpCard{
-		{Secs: 5, Label: "5 с", Watts: 640.4, PR: "рекорд за месяц", PRPeriod: "за месяц"},
-		{Secs: 60, Label: "1 мин", Watts: 400}, // не рекорд — пропускаем
-		{Secs: 300, Label: "5 мин", Watts: 312.6, PR: "рекорд за год", PRPeriod: "за год"},
-	}
-	facts := recordFacts(cards)
-	if len(facts) != 2 {
-		t.Fatalf("фактов %d, хочу 2", len(facts))
-	}
-	if facts[0] != (advice.RecordFact{Window: "5 с", Period: "за месяц", Watts: 640}) {
-		t.Errorf("факт[0] = %+v", facts[0])
-	}
-	if facts[1] != (advice.RecordFact{Window: "5 мин", Period: "за год", Watts: 313}) {
-		t.Errorf("факт[1] = %+v", facts[1])
-	}
-}
-
 // TestAttachRecordTrends — тренд сравнивает значение ЭТОЙ тренировки
 // (Watts карточки) с лучшим значением того же окна за прошлый период до её
 // даты; карточки без данных и окна без прошлого периода тренда не получают.
@@ -260,6 +242,20 @@ func TestWorkoutPageInsightsCollapsed(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("нет %q", want)
 		}
+	}
+	// саммари убрано (TODO-NEXT): текстового абзаца больше нет
+	if strings.Contains(body, "w-summary") {
+		t.Error("саммари удалено, но остался w-summary")
+	}
+	// заголовка «Инсайты» нет: карточки идут сразу после шапки
+	if strings.Contains(body, ">Инсайты<") {
+		t.Error("остался заголовок «Инсайты»")
+	}
+	headIdx := strings.Index(body, `</header>`)
+	listIdx := strings.Index(body, `class="insight-list"`)
+	heroesIdx := strings.Index(body, `<div class="heroes">`)
+	if headIdx < 0 || listIdx < 0 || heroesIdx < 0 || !(headIdx < listIdx && listIdx < heroesIdx) {
+		t.Errorf("инсайты не между шапкой и плитками: header=%d list=%d heroes=%d", headIdx, listIdx, heroesIdx)
 	}
 	// у каждой аббревиатуры — микро-вывод смысла (§8.5)
 	for _, want := range []string{"почти гоночная", "рвано", "средняя с весом пиков", "ровность"} {
