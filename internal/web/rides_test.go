@@ -334,26 +334,14 @@ func TestRidesYearSelection(t *testing.T) {
 	}
 }
 
-// openMonthSeg — фрагмент единственного раскрытого месяца на странице.
-func openMonthSeg(t *testing.T, body string) string {
-	t.Helper()
-	if n := strings.Count(body, `<details class="month" open>`); n != 1 {
-		t.Fatalf("раскрытых месяцев = %d, хочу 1", n)
-	}
-	idx := strings.Index(body, `<details class="month" open>`)
-	return body[idx : idx+400]
-}
-
-// TestRidesOpenMonths — раскрытие месяца по умолчанию: в текущем году это
-// текущий календарный месяц (если в нём есть поездки); если в нём пусто —
-// самый поздний непустой; в прошлых годах — самый поздний непустой.
-func TestRidesOpenMonths(t *testing.T) {
+// TestRidesMonthsRendered — месяцы — обычные карточки: никаких details/summary,
+// заголовок и список поездок видны сразу, без раскрытия.
+func TestRidesMonthsRendered(t *testing.T) {
 	now := time.Now()
 	curYear, curMonth := now.Year(), now.Month()
 	cur := time.Date(curYear, curMonth, 1, 8, 0, 0, 0, time.Local)
 	prevMonth := time.Date(curYear, curMonth-1, 10, 8, 0, 0, 0, time.Local)
 
-	// база 1: текущий месяц и прошлый месяц этого же года — раскрыт текущий
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -361,7 +349,6 @@ func TestRidesOpenMonths(t *testing.T) {
 	defer db.Close()
 	for i, start := range []time.Time{cur, prevMonth,
 		time.Date(curYear-1, time.March, 8, 8, 0, 0, 0, time.Local),
-		time.Date(curYear-1, time.September, 6, 8, 0, 0, 0, time.Local),
 	} {
 		if _, err := store.InsertWorkout(db, &store.Workout{
 			StartTime: start, Duration: time.Hour,
@@ -383,52 +370,28 @@ func TestRidesOpenMonths(t *testing.T) {
 		return rec.Body.String()
 	}
 
-	seg := openMonthSeg(t, get("/rides"))
-	if !strings.Contains(seg, `data-search="`+cur.Format("02.01.2006")) {
-		t.Errorf("раскрыт не текущий месяц: %s", seg)
+	body := get("/rides")
+	if strings.Contains(body, `<details class="month"`) {
+		t.Error("месяц отрендерился как details")
 	}
-	if strings.Contains(seg, `data-search="`+prevMonth.Format("02.01.2006")) {
-		t.Errorf("прошлый месяц попал в раскрытый: %s", seg)
+	if strings.Contains(body, `<summary>`) {
+		t.Error("остался summary у месяца")
+	}
+	// заголовок месяца и строки поездок видны сразу, раскрывать нечего
+	for _, start := range []time.Time{cur, prevMonth} {
+		want := `data-search="` + start.Format("02.01.2006")
+		if !strings.Contains(body, want) {
+			t.Errorf("не найдена поездка %s (месяц должен быть виден сразу)", want)
+		}
 	}
 
-	// прошлый год — раскрыт самый поздний месяц с поездками (сентябрь, не март)
-	seg = openMonthSeg(t, get(fmt.Sprintf("/rides?year=%d", curYear-1)))
-	if !strings.Contains(seg, `data-search="`+"06.09."+fmt.Sprint(curYear-1)) {
-		t.Errorf("в прошлом году раскрыл не самый поздний месяц: %s", seg)
+	// прошлый год рендерится так же
+	body = get(fmt.Sprintf("/rides?year=%d", curYear-1))
+	if strings.Contains(body, `<details class="month"`) {
+		t.Error("месяц прошлого года отрендерился как details")
 	}
-	if strings.Contains(seg, `data-search="08.03.`+fmt.Sprint(curYear-1)) {
-		t.Errorf("в прошлом году раскрыл ранний месяц: %s", seg)
-	}
-}
-
-// TestRidesOpenMonthFallback — текущего месяца пуст: раскрыт самый поздний
-// непустой месяц, а не текущий (пустые месяцы не открываем).
-func TestRidesOpenMonthFallback(t *testing.T) {
-	now := time.Now()
-	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := store.InsertWorkout(db, &store.Workout{
-		StartTime: time.Date(now.Year(), now.Month()-1, 10, 8, 0, 0, 0, time.Local),
-		Duration:  time.Hour,
-	}, "hash-rides-fallback", filepath.Join(t.TempDir(), "x.fit"), 1); err != nil {
-		t.Fatal(err)
-	}
-	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/rides", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /rides: код %d: %s", rec.Code, rec.Body.String())
-	}
-	seg := openMonthSeg(t, rec.Body.String())
-	want := time.Date(now.Year(), now.Month()-1, 10, 8, 0, 0, 0, time.Local).Format("02.01.2006")
-	if !strings.Contains(seg, `data-search="`+want) {
-		t.Errorf("раскрыт не последний непустой месяц: %s", seg)
+	if !strings.Contains(body, `<div class="month">`) {
+		t.Error("карточки месяцев не отрендерились для прошлого года")
 	}
 }
 

@@ -52,8 +52,8 @@
     <h2 class="rides-year">{{ .Year }} <span class="sub">{{ if .Outdoor.Hours }}{{ km .Outdoor.DistanceKm }} км улица{{ end }}{{ if and .Outdoor.Hours .Trainer.Hours }} · {{ end }}{{ if .Trainer.Hours }}{{ hours .Trainer.Hours }} ч станок{{ end }}</span></h2>
     <div class="months">
     {{ range .Months }}
-      <details class="month"{{ if .Open }} open{{ end }}>
-        <summary>
+      <div class="month">
+        <div class="month-head">
           <span class="month-name">{{ monthName .Month }}</span>
           {{ .VolumeSpark | safeHTML }}
           <span class="month-stats">
@@ -62,7 +62,7 @@
             {{ if .Trainer.Hours }}станок {{ formatHours .Trainer.Hours }}{{ end }}
             {{ if .TSS }}· {{ intFloat .TSS }} TSS{{ end }}
           </span>
-        </summary>
+        </div>
         <div class="ride-list">
         {{ range .Rides }}
           <a href="/workout/{{ .ID }}" class="ride" data-search="{{ .Search }}">
@@ -93,7 +93,7 @@
           </a>
         {{ end }}
         </div>
-      </details>
+      </div>
     {{ end }}
     </div>
     {{ end }}
@@ -109,10 +109,9 @@ function filterRides(q) {
   document.querySelectorAll(".ride").forEach(r => {
     r.style.display = !q || r.dataset.search.toLowerCase().includes(q) ? "" : "none";
   });
-  document.querySelectorAll("details.month").forEach(m => {
+  document.querySelectorAll(".month").forEach(m => {
     const visible = [...m.querySelectorAll(".ride")].some(r => r.style.display !== "none");
     m.style.display = visible ? "" : "none";
-    if (visible) m.open = true;
   });
 }
 </script>
@@ -135,8 +134,8 @@ function filterRides(q) {
 
 /* месяц — отдельная карточка: фон отделяет месяцы друг от друга */
 .rides-content .months { margin: 0; display: flex; flex-direction: column; gap: 10px; }
-.rides-content .month { margin: 0; border-radius: var(--radius); overflow: hidden; }
-.month > summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; }
+.rides-content .month { margin: 0; border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.month-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; font-weight: 600; }
 .month-name { min-width: 90px; }
 .month-stats { margin-left: auto; color: var(--text-2); font-size: 13px; font-weight: 500; }
 .rides-empty { margin: 20px 0; }

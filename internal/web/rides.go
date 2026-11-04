@@ -35,7 +35,6 @@ type rideMonth struct {
 	AvgIF         float64
 	Rides         []rideRow
 	VolumeSpark   string // inline-SVG bars: TSS по дням месяца
-	Open          bool   // раскрыт при загрузке страницы
 }
 
 type rideRow struct {
@@ -131,35 +130,8 @@ func buildRidesView(db *sql.DB, wantYear int) (*rideView, error) {
 		rm.VolumeSpark = monthVolumeSpark(rm.Rides)
 		selYear.Months = append(selYear.Months, rm)
 	}
-	// какой месяц раскрыт по умолчанию — решает Go, не шаблон
-	if i := openMonthIndex(*selYear, time.Now()); i >= 0 {
-		selYear.Months[i].Open = true
-	}
 	out.Selected = selYear
 	return out, nil
-}
-
-// openMonthIndex — месяц, раскрытый при загрузке: в текущем году это текущий
-// календарный месяц, если в нём есть поездки; в любом другом случае самый
-// поздний месяц года с поездками (пустые месяцы не открываем).
-func openMonthIndex(ry rideYear, now time.Time) int {
-	latest := -1
-	for i, m := range ry.Months {
-		if len(m.Rides) == 0 {
-			continue
-		}
-		if latest < 0 || m.Month > ry.Months[latest].Month {
-			latest = i
-		}
-	}
-	if ry.Year == now.Year() {
-		for i, m := range ry.Months {
-			if m.Month == now.Month() && len(m.Rides) > 0 {
-				return i
-			}
-		}
-	}
-	return latest
 }
 
 // rideWorkoutMeta — только те поля тренировки, которые нужны строке списка:
