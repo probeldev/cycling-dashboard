@@ -482,15 +482,12 @@ func humanMin(minutes int) string {
 	return fmt.Sprintf("%d ч %d мин", minutes/60, minutes%60)
 }
 
-// formatDurationShort — "1:30" или "45:00" для времени в секундах.
+// formatDurationShort — всегда "H:MM" для времени в секундах: "1:30", "0:45".
 func formatDurationShort(sec int64) string {
 	if sec <= 0 {
 		return ""
 	}
 	h := sec / 3600
 	m := (sec % 3600) / 60
-	if h > 0 {
-		return fmt.Sprintf("%d:%02d", h, m)
-	}
-	return fmt.Sprintf("%d мин", m)
+	return fmt.Sprintf("%d:%02d", h, m)
 }
