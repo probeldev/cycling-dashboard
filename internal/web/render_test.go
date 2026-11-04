@@ -85,6 +85,10 @@ func TestRenderPages(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(body, "Сводка") || !strings.Contains(body, "</html>") {
 		t.Errorf("GET /workout: код %d, тело %d байт", code, len(body))
 	}
+	// заголовок секции «Сводка» убрали с деталки, nav-ссылка остаётся
+	if strings.Contains(body, `<h2 class="sec-h">Сводка</h2>`) {
+		t.Error("GET /workout: остался заголовок секции «Сводка»")
+	}
 	// плитки: Дистанция (улица), Время, Калории, TSS; IF и NP — не плитки
 	for _, want := range []string{">Дистанция<", ">Время<", ">Калории<", "TSS — нагрузка"} {
 		if !strings.Contains(body, want) {
