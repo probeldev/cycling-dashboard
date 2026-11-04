@@ -575,3 +575,86 @@ func TestWorkoutPageTypeToggle(t *testing.T) {
 		t.Error("после ручного переключения в шапке нет метки «выбран вручную»")
 	}
 }
+
+// TestWorkoutPageBikePicker — велосипед выбирается из шапки: карандаш у чипа
+// открывает поповер со списком велосипедов и «не указан»; без велосипеда —
+// красный чип «не выбран велосипед»; дублирующая строка из «Параметров» убрана.
+func TestWorkoutPageBikePicker(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	id, err := store.InsertWorkout(db, &store.Workout{
+		StartTime: time.Now(), Duration: time.Hour,
+	}, "hash-bike-picker", filepath.Join(t.TempDir(), "t.fit"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := Handler(db, NewSyncManager(), t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bikes, err := store.Bikes(db)
+	if err != nil || len(bikes) == 0 {
+		t.Fatalf("велосипеды: %v, %v", bikes, err)
+	}
+	get := func() string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/workout/%d", id), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("код %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// велосипед не выбран: красный чип + карандаш + поповер со всеми вариантами
+	body := get()
+	for _, want := range []string{`id="wBikeBtn"`, `id="wBikePop"`, `chip chip--warn`, "не выбран велосипед", `data-value="">не указан`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в шапке нет контрола велосипеда %q", want)
+		}
+	}
+	for _, b := range bikes {
+		if !strings.Contains(body, fmt.Sprintf(`data-value="%d">%s</button>`, b.ID, b.Name)) {
+			t.Errorf("в поповере нет варианта велосипеда %q", b.Name)
+		}
+	}
+	if strings.Contains(body, "Параметры") || strings.Contains(body, `id="bike"`) {
+		t.Error("строка выбора велосипеда из «Параметров» не убрана")
+	}
+
+	// назначаем велосипед: чип с именем, вариант активен в поповере
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/workout/%d/bike", id),
+		strings.NewReader(fmt.Sprintf("bike_id=%d", bikes[0].ID)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST bike: код %d", rec.Code)
+	}
+	body = get()
+	if !strings.Contains(body, `<span class="chip chip--muted">`+bikes[0].Name+`</span>`) {
+		t.Error("после назначения чип с именем велосипеда не отрендерился")
+	}
+	if strings.Contains(body, "не выбран велосипед") {
+		t.Error("после назначения остался чип «не выбран велосипед»")
+	}
+	if !strings.Contains(body, fmt.Sprintf(`class="tab active" data-value="%d"`, bikes[0].ID)) {
+		t.Error("назначенный велосипед не помечен активным в поповере")
+	}
+
+	// сброс: пустой bike_id → снова красный чип
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/workout/%d/bike", id), strings.NewReader("bike_id="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST bike (сброс): код %d", rec.Code)
+	}
+	body = get()
+	if !strings.Contains(body, "не выбран велосипед") {
+		t.Error("после сброса нет чипа «не выбран велосипед»")
+	}
+}

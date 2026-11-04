@@ -34,11 +34,6 @@
   section.blk { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; }
   section.blk:first-of-type { border-top: none; }
 
-  .w-settings input, .w-settings select {
-    font: inherit; font-size: 14px; padding: 6px 10px;
-    border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); color: var(--text);
-  }
-
   .insight-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
   .insight .x { color: var(--text-2); }
   .insights-more { margin-top: 6px; background: transparent; }
@@ -72,12 +67,6 @@
   .dist-hr { background: var(--danger); }
   .dist-cadence { background: var(--text-2); }
   .dist-speed { background: var(--outdoor); }
-
-  .w-settings { margin-top: 20px; }
-  .w-settings > summary { color: var(--text-2); }
-  .ws-body { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 12px; }
-  .ws-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 14px; }
-  .ws-row .lbl { color: var(--text-2); min-width: 150px; }
 
   /* «Больше данных»: спрятанные параметры деталки */
   .more-data { margin-top: 16px; }
@@ -116,7 +105,15 @@
       </span>
     </span>
     {{ if .W.Override }}<span class="chip chip--muted">выбран вручную</span>{{ end }}
-    {{ if .W.Bike }}<span class="chip chip--muted">{{ .W.Bike }}</span>{{ end }}
+    <span class="w-type">
+      {{ if .W.Bike }}<span class="chip chip--muted">{{ .W.Bike }}</span>{{ else }}<span class="chip chip--warn">не выбран велосипед</span>{{ end }}
+      <button id="wBikeBtn" class="w-name-btn" title="Изменить велосипед" aria-label="Изменить велосипед"><svg class="ic" aria-hidden="true"><use href="/static/icons.svg#pencil"/></svg></button>
+      <span id="wBikePop" class="w-type-pop" hidden>
+        <button type="button" class="tab{{ if not .W.BikeID }} active{{ end }}" data-value="">не указан</button>
+        {{ range .Bikes }}<button type="button" class="tab{{ if eq .ID $.W.BikeID }} active{{ end }}" data-value="{{ .ID }}">{{ .Name }}</button>{{ end }}
+        <span id="wBikeHint" class="sub" hidden>не сохранилось, попробуй ещё раз</span>
+      </span>
+    </span>
     {{ if .W.HasDataGaps }}<span class="tag warn" title="без данных поверметра {{ .W.NoPowerSec }} с, подозрительных (0 Вт при каденсе) {{ .W.SuspectDropoutSec }} с">данные с пропусками</span>{{ end }}
   </div>
 </header>
@@ -221,20 +218,6 @@
   </div>
 </section>
 {{ end }}
-
-<details class="w-settings">
-  <summary>Параметры</summary>
-  <div class="ws-body">
-    <div class="ws-row">
-      <span class="lbl">Велосипед</span>
-      <select id="bike">
-        <option value="">не указан</option>
-        {{ range .Bikes }}<option value="{{ .ID }}"{{ if eq .ID $.W.BikeID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
-      </select>
-      <button hx-post="/workout/{{ .W.ID }}/bike" hx-vals="js:{bike_id: document.getElementById('bike').value}" hx-swap="none">Сохранить</button>
-    </div>
-  </div>
-</details>
 </section>
 
 </div>
@@ -312,6 +295,38 @@ if (typeBtn && typePop) {
       .catch(() => {
         b.disabled = false;
         typeHint.hidden = false;
+      });
+  });
+}
+
+// выбор велосипеда: карандаш у чипа → поповер → POST /workout/{id}/bike
+// (роут ждёт form-поле bike_id, пустая строка = «не указан»);
+// после сохранения — перезагрузка страницы
+const bikeBtn = document.getElementById("wBikeBtn");
+const bikePop = document.getElementById("wBikePop");
+if (bikeBtn && bikePop) {
+  const bikeHint = document.getElementById("wBikeHint");
+  bikeBtn.onclick = e => {
+    e.stopPropagation();
+    bikePop.hidden = !bikePop.hidden;
+    bikeHint.hidden = true;
+  };
+  // клик мимо поповера или Escape — закрыть
+  document.addEventListener("click", e => { if (!bikePop.contains(e.target)) bikePop.hidden = true; });
+  bikePop.addEventListener("keydown", e => { if (e.key === "Escape") bikePop.hidden = true; });
+  bikePop.querySelectorAll("button").forEach(b => b.onclick = () => {
+    // защита от повторного нажатия, пока запрос в полёте
+    b.disabled = true;
+    bikeHint.hidden = true;
+    fetch(`/workout/${id}/bike`, { method: "POST", body: new URLSearchParams({ bike_id: b.dataset.value }) })
+      .then(r => {
+        if (r.ok) { location.reload(); return; }
+        b.disabled = false;
+        bikeHint.hidden = false;
+      })
+      .catch(() => {
+        b.disabled = false;
+        bikeHint.hidden = false;
       });
   });
 }

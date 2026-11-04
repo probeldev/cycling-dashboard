@@ -120,9 +120,9 @@ func TestWorkoutPageInactiveBike(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, bikes[1].Name) {
-		t.Errorf("назначенного неактивного велосипеда %q нет в селекте", bikes[1].Name)
+		t.Errorf("назначенного неактивного велосипеда %q нет в поповере", bikes[1].Name)
 	}
-	if !strings.Contains(body, fmt.Sprintf(`value="%d" selected`, bike)) {
+	if !strings.Contains(body, fmt.Sprintf(`class="tab active" data-value="%d"`, bike)) {
 		t.Errorf("назначенный неактивный велосипед не выбран")
 	}
 }
@@ -162,7 +162,7 @@ func TestWorkoutPageBike(t *testing.T) {
 			t.Errorf("в выборе нет %q", name)
 		}
 	}
-	if !strings.Contains(body, fmt.Sprintf(`value="%d" selected`, bikes[0].ID)) {
+	if !strings.Contains(body, fmt.Sprintf(`class="tab active" data-value="%d"`, bikes[0].ID)) {
 		t.Errorf("текущий велосипед не выбран")
 	}
 }
