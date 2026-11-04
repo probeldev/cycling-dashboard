@@ -14,7 +14,6 @@
 </header>
 
 <section id="map-section">
-  <h2 class="sec-h">Карта</h2>
   {{ if .HasMap }}<div id="map"></div>{{ end }}
   <p id="mapEmpty" class="sub"{{ if .HasMap }} hidden{{ end }}>{{ if .W.Trainer }}Карта недоступна для тренировок на станке.{{ else }}У этой тренировки нет GPS-трека.{{ end }}</p>
 </section>
