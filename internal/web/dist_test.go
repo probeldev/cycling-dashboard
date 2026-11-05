@@ -368,45 +368,46 @@ func TestMetricStrips(t *testing.T) {
 	}
 }
 
-// TestDistShadeClass — оттенок сегмента растёт от позиции бакета: первый
-// бакет — самый светлый, последний — самый тёмный; единственный бакет
-// получает максимальный оттенок.
+// TestDistShadeClass — каждый бакет метрики получает класс по своей позиции
+// в исходном срезе бакетов: первый бакет — dist-*-1, последний — dist-*-N.
 func TestDistShadeClass(t *testing.T) {
 	cases := []struct {
-		i, n int
+		i    int
 		want string
 	}{
-		{0, 8, "dist-hr-1"},
-		{1, 8, "dist-hr-1"},
-		{2, 8, "dist-hr-2"},
-		{4, 8, "dist-hr-3"},
-		{6, 8, "dist-hr-4"},
-		{7, 8, "dist-hr-5"},
-		{0, 1, "dist-hr-5"},
+		{0, "dist-hr-1"},
+		{1, "dist-hr-2"},
+		{2, "dist-hr-3"},
+		{4, "dist-hr-5"},
+		{6, "dist-hr-7"},
+		{7, "dist-hr-8"},
 	}
 	for _, tt := range cases {
-		if got := distShadeClass("dist-hr", tt.i, tt.n); got != tt.want {
-			t.Errorf("distShadeClass(dist-hr, %d, %d) = %q, хочу %q", tt.i, tt.n, got, tt.want)
+		if got := distShadeClass("dist-hr", tt.i); got != tt.want {
+			t.Errorf("distShadeClass(dist-hr, %d) = %q, хочу %q", tt.i, got, tt.want)
 		}
 	}
-	// градация монотонно не убывает по позициям
-	prev := 0
+	// для полного набора бакетов все классы разные
+	seen := make(map[string]bool)
 	for i := 0; i < 8; i++ {
-		shade := distShadeClass("dist-cadence", i, 8)
-		n, err := strconv.Atoi(strings.TrimPrefix(shade, "dist-cadence-"))
+		class := distShadeClass("dist-cadence", i)
+		if seen[class] {
+			t.Errorf("класс %q повторяется для разных позиций", class)
+		}
+		seen[class] = true
+		n, err := strconv.Atoi(strings.TrimPrefix(class, "dist-cadence-"))
 		if err != nil {
-			t.Fatalf("класс %q не парсится: %v", shade, err)
+			t.Fatalf("класс %q не парсится: %v", class, err)
 		}
-		if n < prev {
-			t.Errorf("оттенок на позиции %d (%d) светлее предыдущего (%d)", i, n, prev)
+		if want := i + 1; n != want {
+			t.Errorf("класс на позиции %d = %d, хочу %d", i, n, want)
 		}
-		prev = n
 	}
 }
 
-// TestMetricStripShadeClasses — класс оттенка сегмента считается по позиции
-// бакета в исходном срезе, а не среди непустых: одиночный высокий бакет
-// получает тёмный оттенок.
+// TestMetricStripShadeClasses — класс сегмента считается по позиции бакета в
+// исходном срезе, а не среди непустых: высокий бакет на позиции 2 получает
+// dist-hr-3.
 func TestMetricStripShadeClasses(t *testing.T) {
 	d := map[string][]distEntry{
 		"hr": {
@@ -419,15 +420,15 @@ func TestMetricStripShadeClasses(t *testing.T) {
 	if len(strips) != 1 {
 		t.Fatalf("полосок %d, хочу 1", len(strips))
 	}
-	if got := strips[0].Entries[0].Class; got != "dist-hr-5" {
-		t.Errorf("класс одиночного высокого бакета = %q, хочу dist-hr-5 (тёмный)", got)
+	if got := strips[0].Entries[0].Class; got != "dist-hr-3" {
+		t.Errorf("класс высокого бакета = %q, хочу dist-hr-3 (по позиции в срезе)", got)
 	}
 }
 
 // TestWorkoutMetricLegend — под каждой полоской строк сводки рендерится
 // легенда в одну строку: цветная точка + подпись диапазона + %; у мощности
 // подписи Z1–Z7, у пульса/каденса/скорости — диапазоны; сегменты dist-полосок
-// получают разные оттенки по позиции бакета; пустые сегменты (Pct 0) в легенду
+// получают разные цветовые классы по позиции бакета; пустые сегменты (Pct 0) в легенду
 // не попадают.
 func TestWorkoutMetricLegend(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -482,14 +483,14 @@ func TestWorkoutMetricLegend(t *testing.T) {
 		}
 	}
 
-	// легенды распределений: точка того же оттенка + диапазон + %
+	// легенды распределений: точка того же цвета + диапазон + %
 	for _, want := range []string{
-		`<i class="zdot dist-hr-1"></i>100–120 50.0%`,
-		`<i class="zdot dist-hr-3"></i>150–160 50.0%`,
-		`<i class="zdot dist-cadence-3"></i>80–90 50.0%`,
-		`<i class="zdot dist-cadence-4"></i>90–100 50.0%`,
-		`<i class="zdot dist-speed-3"></i>25–30 50.0%`,
-		`<i class="zdot dist-speed-5"></i>40+ 50.0%`,
+		`<i class="zdot dist-hr-2"></i>100–120 50.0%`,
+		`<i class="zdot dist-hr-6"></i>150–160 50.0%`,
+		`<i class="zdot dist-cadence-6"></i>80–90 50.0%`,
+		`<i class="zdot dist-cadence-7"></i>90–100 50.0%`,
+		`<i class="zdot dist-speed-5"></i>25–30 50.0%`,
+		`<i class="zdot dist-speed-8"></i>40+ 50.0%`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("нет пункта легенды %q", want)

@@ -70,23 +70,43 @@
     .metric-row { grid-template-columns: 1fr; }
   }
 
-  /* оттенки dist-полосок: светлый → тёмный по возрастанию диапазона;
-     цвет через --zone-color — его же подхватывают точки легенды */
-  .dist-hr-1 { --zone-color: #F5C8C8; } .dist-hr-2 { --zone-color: #EE9C9C; }
-  .dist-hr-3 { --zone-color: #E57373; } .dist-hr-4 { --zone-color: #DB5C5C; }
-  .dist-hr-5 { --zone-color: #D64545; }
-  .dist-cadence-1 { --zone-color: #E4E6E8; } .dist-cadence-2 { --zone-color: #C9CDD1; }
-  .dist-cadence-3 { --zone-color: #AEB3B9; } .dist-cadence-4 { --zone-color: #868D94; }
-  .dist-cadence-5 { --zone-color: #5F6368; }
-  .dist-speed-1 { --zone-color: #CDEDDA; } .dist-speed-2 { --zone-color: #9BDFB8; }
-  .dist-speed-3 { --zone-color: #6BCF96; } .dist-speed-4 { --zone-color: #45B877; }
-  .dist-speed-5 { --zone-color: #2E9E5B; }
-  /* легенда под полоской: одна строка, на узком экране — горизонтальный скролл */
-  .metric-legend { display: flex; flex-wrap: nowrap; gap: 4px 12px; align-items: center;
-    overflow-x: auto; font-size: 12px; color: var(--text-2); }
-  .metric-legend .li { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
-  .metric-legend .zdot { flex: none; width: 8px; height: 8px; border-radius: 50%;
+  /* палитры dist-полосок: каждый бакет — свой заметно различимый цвет;
+     цвет через --zone-color — его же подхватывают точки легенды и JS-тултип */
+  :root {
+    --dist-hr-1: #E3F2FD; --dist-hr-2: #BBDEFB; --dist-hr-3: #4FC3F7;
+    --dist-hr-4: #4DD0E1; --dist-hr-5: #FFF176; --dist-hr-6: #FFB74D;
+    --dist-hr-7: #FF7043; --dist-hr-8: #F44336;
+    --dist-cadence-1: #ECEFF1; --dist-cadence-2: #4FC3F7; --dist-cadence-3: #1E88E5;
+    --dist-cadence-4: #7E57C2; --dist-cadence-5: #43A047; --dist-cadence-6: #FFEB3B;
+    --dist-cadence-7: #FF9800; --dist-cadence-8: #E53935;
+    --dist-speed-1: #C8E6C9; --dist-speed-2: #D4E157; --dist-speed-3: #66BB6A;
+    --dist-speed-4: #2E7D32; --dist-speed-5: #FFEB3B; --dist-speed-6: #FF9800;
+    --dist-speed-7: #F4511E; --dist-speed-8: #C62828;
+  }
+  .dist-hr-1 { --zone-color: var(--dist-hr-1); } .dist-hr-2 { --zone-color: var(--dist-hr-2); }
+  .dist-hr-3 { --zone-color: var(--dist-hr-3); } .dist-hr-4 { --zone-color: var(--dist-hr-4); }
+  .dist-hr-5 { --zone-color: var(--dist-hr-5); } .dist-hr-6 { --zone-color: var(--dist-hr-6); }
+  .dist-hr-7 { --zone-color: var(--dist-hr-7); } .dist-hr-8 { --zone-color: var(--dist-hr-8); }
+  .dist-cadence-1 { --zone-color: var(--dist-cadence-1); } .dist-cadence-2 { --zone-color: var(--dist-cadence-2); }
+  .dist-cadence-3 { --zone-color: var(--dist-cadence-3); } .dist-cadence-4 { --zone-color: var(--dist-cadence-4); }
+  .dist-cadence-5 { --zone-color: var(--dist-cadence-5); } .dist-cadence-6 { --zone-color: var(--dist-cadence-6); }
+  .dist-cadence-7 { --zone-color: var(--dist-cadence-7); } .dist-cadence-8 { --zone-color: var(--dist-cadence-8); }
+  .dist-speed-1 { --zone-color: var(--dist-speed-1); } .dist-speed-2 { --zone-color: var(--dist-speed-2); }
+  .dist-speed-3 { --zone-color: var(--dist-speed-3); } .dist-speed-4 { --zone-color: var(--dist-speed-4); }
+  .dist-speed-5 { --zone-color: var(--dist-speed-5); } .dist-speed-6 { --zone-color: var(--dist-speed-6); }
+  .dist-speed-7 { --zone-color: var(--dist-speed-7); } .dist-speed-8 { --zone-color: var(--dist-speed-8); }
+  /* легенда под полоской: сетка, максимум 3 элемента в строке, перенос на мобильном */
+  .metric-legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 16px;
+    font-size: 12px; color: var(--text-2); }
+  .metric-legend .li { display: inline-flex; align-items: center; gap: 8px; }
+  .metric-legend .zdot { flex: none; width: 10px; height: 10px; border-radius: 50%;
     background: var(--zone-color, var(--text-3)); }
+  @media (max-width: 700px) {
+    .metric-legend { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 420px) {
+    .metric-legend { grid-template-columns: 1fr; }
+  }
 
   /* «Больше данных»: спрятанные параметры деталки */
   .more-data { margin-top: 16px; }

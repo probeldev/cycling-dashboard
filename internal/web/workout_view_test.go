@@ -113,7 +113,7 @@ func TestZoneEdgesW(t *testing.T) {
 	}
 }
 
-// TestStripSegmentsLegend — сегменты распределений несут класс оттенка из
+// TestStripSegmentsLegend — сегменты распределений несут цветовой класс из
 // бакета (а при ручной сборке полоски — класс полоски) и короткую подпись
 // диапазона для легенды; у зон мощности легенда — «ZN».
 func TestStripSegmentsLegend(t *testing.T) {
@@ -126,7 +126,7 @@ func TestStripSegmentsLegend(t *testing.T) {
 		t.Fatalf("сегментов %d, хочу 2", len(segs))
 	}
 	if segs[0].Class != "dist-hr-2" || segs[0].Legend != "100–120" {
-		t.Errorf("сегмент 0 = %+v, хочу класс оттенка dist-hr-2 и легенду «100–120»", segs[0])
+		t.Errorf("сегмент 0 = %+v, хочу цветовой класс dist-hr-2 и легенду «100–120»", segs[0])
 	}
 	if segs[1].Class != "dist-hr" || segs[1].Legend != "150–160" {
 		t.Errorf("сегмент 1 = %+v, хочу fallback-класс dist-hr и легенду «150–160»", segs[1])
