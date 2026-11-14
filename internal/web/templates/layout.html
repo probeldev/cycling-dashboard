@@ -123,12 +123,38 @@
   .hm-legend { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--text-2); font-size: 13px; margin-top: 8px; }
   .hm-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 2px; }
 
-  .weeks { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-  .week-row { display: flex; gap: 10px; align-items: center; font-size: 14px; flex-wrap: wrap; }
-  .week-row .wk { width: 52px; color: var(--text-2); }
-  .week-row .wk-num { width: 72px; color: var(--text-2); }
-  .zbar { display: flex; flex: 1 1 160px; max-width: 220px; min-width: 120px; height: 10px; background: var(--track); border-radius: 4px; overflow: hidden; }
+  /* Зоны по неделям: сетка с фиксированными колонками — текст не налезает */
+  .weeks { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+  .week-row {
+    display: grid;
+    /* фиксированные колонки с запасом под контент: ровные треки во всех строках, без переполнения */
+    grid-template-columns: 92px 72px 72px 72px minmax(80px, 1fr) 64px;
+    grid-template-areas: "date rides hours tss bar low";
+    gap: 4px 12px; align-items: center;
+    font-size: 14px; padding: 5px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .week-row:last-child { border-bottom-color: transparent; }
+  .week-row:hover { background: color-mix(in srgb, var(--text) 5%, var(--bg)); }
+  .week-row .wk-date { grid-area: date; color: var(--text-2); white-space: nowrap; }
+  .week-row .wk-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+  .week-row .wk-rides { grid-area: rides; }
+  .week-row .wk-hours { grid-area: hours; }
+  .week-row .wk-tss { grid-area: tss; }
+  .week-row .zbar { grid-area: bar; }
+  .week-row .wk-low { grid-area: low; text-align: right; color: var(--text-2); white-space: nowrap; }
+  .zbar { display: flex; height: 12px; background: var(--track); border-radius: 4px; overflow: hidden; }
   .zbar i { display: block; height: 100%; }
+  @media (max-width: 640px) {
+    /* узкий экран: все колонки первой строки — max-content, единый gap; бар на всю строку под ними */
+    .week-row {
+      grid-template-columns: repeat(4, max-content) 1fr;
+      grid-template-areas:
+        "date rides hours tss ."
+        "bar bar bar bar low";
+      gap: 4px 10px; padding: 6px 8px; font-size: 13px;
+    }
+  }
 
   .chart-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin: 0 0 4px; padding: 0 4px; position: relative; z-index: 1; }
 

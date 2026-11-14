@@ -420,16 +420,16 @@ async function loadWeeks(n) {
     if (!total && !w.rides) return; // пустые недели скрываем
     shown++;
     const segs = total
-      ? w.zones.map((z, i) => z ? `<i class="z${i + 1}" style="width:${(z * 100 / total).toFixed(1)}%"></i>` : "").join("")
+      ? w.zones.map((z, i) => z ? `<i class="z${i + 1}" style="width:${(z * 100 / total).toFixed(1)}%" title="Z${i + 1} · ${(z * 100 / total).toFixed(0)}% времени"></i>` : "").join("")
       : "";
     const bar = `<span class="zbar">${segs}${total ? '<b class="ref80"></b>' : ""}</span>`;
     const row = document.createElement("div");
     row.className = "week-row";
-    row.innerHTML = `<span class="wk">${ddmmyyyy(w.start)}</span>
-      <span class="wk-num">${w.rides} тр.</span>
-      <span class="wk-num">${w.hours.toFixed(1)} ч</span>
-      <span class="wk-num">${w.tss.toFixed(0)} TSS</span>${bar}
-      <span class="wk-num">${total > 0 ? "низ " + w.lowPct.toFixed(0) + "%" : ""}</span>`;
+    row.innerHTML = `<span class="wk-date">${ddmmyyyy(w.start)}</span>
+      <span class="wk-num wk-rides">${w.rides} тр.</span>
+      <span class="wk-num wk-hours">${w.hours.toFixed(1)} ч</span>
+      <span class="wk-num wk-tss">${w.tss.toFixed(0)} TSS</span>${bar}
+      <span class="wk-low">${total > 0 ? "низ " + w.lowPct.toFixed(0) + "%" : ""}</span>`;
     root.appendChild(row);
   });
   const pol = document.getElementById("polarity");
