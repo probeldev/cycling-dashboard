@@ -11,6 +11,7 @@
   /* sticky-заголовки секций */
   .sec-h { position: sticky; top: 0; z-index: 6; background: var(--bg); margin: 14px 0 2px; padding: 10px 0 8px; font-size: 19px; }
   .progress-content h3 { font-size: 15px; margin: 20px 0 8px; }
+  .chart-title { margin: 14px 0 4px; font-size: 13px; color: var(--text-2); }
   .cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 8px 0; }
   .chart-canvas { width: 100%; background: var(--surface); border: none; border-radius: var(--radius); }
   .metric-card .empty-value { font-size: 15px; font-weight: 500; color: var(--text-2); }
@@ -93,14 +94,25 @@
 
 <section id="load">
   <h2 class="sec-h">Нагрузка</h2>
-  <h3>PMC · форма, усталость, свежесть</h3>
+  <h3>PMC · нагрузка и форма</h3>
   <div class="tabs" id="periodBtns">
     <button type="button" class="tab" data-days="30">30 дней</button>
     <button type="button" class="tab" data-days="90">90 дней</button>
     <button type="button" class="tab active" data-days="180">180 дней</button>
     <button type="button" class="tab" data-days="365">365 дней</button>
   </div>
-  <canvas id="pmc" class="chart-canvas" style="height:280px; margin-top:10px"></canvas>
+  <div class="pmc-stack">
+    <div class="chart-title">TSS · нагрузка</div>
+    <canvas id="tss" class="chart-canvas" style="height:170px"></canvas>
+  </div>
+  <div class="pmc-stack">
+    <div class="chart-title">CTL/ATL · форма и усталость</div>
+    <canvas id="ctl-atl" class="chart-canvas" style="height:170px"></canvas>
+  </div>
+  <div class="pmc-stack">
+    <div class="chart-title">TSB · свежесть</div>
+    <canvas id="tsb" class="chart-canvas" style="height:170px"></canvas>
+  </div>
   <p id="pmc-coverage" class="coverage" hidden></p>
   <p id="empty" hidden class="sub" style="color:var(--text-2)">Кривая PMC появится после 2–3 тренировок с нагрузкой в выбранном периоде.</p>
 
@@ -229,7 +241,6 @@ const tok = n => css.getPropertyValue(n).trim();
 const BRAND = tok("--brand");
 const DANGER = tok("--danger");
 const OK = tok("--ok");
-const TEXT3 = tok("--text-3");
 const SURFACE = tok("--surface");
 const hex2rgb = h => { h = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16)); };
 const mix = (a, b, t) => { const A = hex2rgb(a), B = hex2rgb(b); return "rgb(" + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(",") + ")"; };
@@ -240,57 +251,102 @@ const level = tss => tss <= 0 ? 0 : tss <= 30 ? 1 : tss <= 60 ? 2 : tss <= 100 ?
 const tssColors = [SURFACE, mix(SURFACE, BRAND, 0.35), mix(SURFACE, BRAND, 0.6), mix(SURFACE, BRAND, 0.8), BRAND];
 const gridColor = "rgba(0,0,0,.05)";
 
-const ctx = document.getElementById("pmc");
+// три стека графиков PMC: общий fetch и пустое состояние, отдельные оси
+const canvas = {
+  tss: document.getElementById("tss"),
+  ctlAtl: document.getElementById("ctl-atl"),
+  tsb: document.getElementById("tsb"),
+};
+const stacks = [...document.querySelectorAll(".pmc-stack")];
 const empty = document.getElementById("empty");
 const pmcCoverage = document.getElementById("pmc-coverage");
-let chart = null;
+const charts = { tss: null, ctlAtl: null, tsb: null };
 
-async function loadChart(days) {
+function updateChart(key, cfg) {
+  if (!charts[key]) {
+    charts[key] = new Chart(canvas[key], cfg);
+  } else {
+    charts[key].data.labels = cfg.data.labels;
+    charts[key].data.datasets = cfg.data.datasets;
+    // options пересобираем: tooltip-колбэки и оси замкнуты на данные периода
+    charts[key].options = cfg.options;
+    charts[key].update();
+  }
+}
+
+async function loadCharts(days) {
   const to = new Date(), from = new Date();
   from.setDate(from.getDate() - days + 1);
   const data = await (await fetch(`/api/timeline?from=${fmt(from)}&to=${fmt(to)}`)).json();
   const has = data.some(d => d.rides > 0 || d.ctl > 0 || d.atl > 0);
-  ctx.style.display = has ? "" : "none";
+  // скрываем/показываем wrapper'ы целиком — заголовки уходят вместе с canvas
+  stacks.forEach(el => el.style.display = has ? "" : "none");
   empty.hidden = has;
   pmcCoverage.hidden = !has;
   if (!has) {
-    if (chart) { chart.destroy(); chart = null; }
+    Object.keys(charts).forEach(k => { if (charts[k]) { charts[k].destroy(); charts[k] = null; } });
     return;
   }
   const activeDays = data.filter(d => d.tss > 0).length;
   pmcCoverage.textContent = `Дни с нагрузкой: ${activeDays} ${pluralDaysJS(activeDays)} из ${data.length}.`;
   const labels = data.map(d => ddmmyyyy(d.date));
-  const sets = [
-    { type: "bar", label: "TSS", data: data.map(d => d.tss),
-      backgroundColor: data.map(d => tssColors[level(d.tss)]), borderRadius: 2 },
-    { type: "line", label: "CTL · форма", data: data.map(d => d.ctl), borderColor: BRAND, pointRadius: 0, borderWidth: 2 },
-    { type: "line", label: "ATL · усталость", data: data.map(d => d.atl), borderColor: DANGER, pointRadius: 0, borderWidth: 2 },
-    { type: "line", label: "TSB · свежесть", data: data.map(d => d.tsb), yAxisID: "y1", pointRadius: 0, borderWidth: 1.5,
-      borderColor: OK,
+  const dateTitle = items => ddmmyyyy(data[items[0].dataIndex].date);
+
+  // общий layout и ось Y для трёх стеков: подписи оси Y скрыты (название — в .chart-title
+  // над canvas), фиксированный padding.left выравнивает области графиков друг под другом
+  const pmcLayout = { padding: { left: 44 } };
+  const pmcY = extra => Object.assign({ display: false }, extra);
+
+  updateChart("tss", {
+    type: "bar",
+    data: { labels, datasets: [{ label: "TSS", data: data.map(d => d.tss), backgroundColor: data.map(d => tssColors[level(d.tss)]), borderRadius: 2 }] },
+    options: {
+      animation: false,
+      layout: pmcLayout,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: dateTitle } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
+        y: pmcY({ beginAtZero: true }),
+      },
+    },
+  });
+
+  updateChart("ctlAtl", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "CTL · форма", data: data.map(d => d.ctl), borderColor: BRAND, pointRadius: 0, borderWidth: 2 },
+      { label: "ATL · усталость", data: data.map(d => d.atl), borderColor: DANGER, pointRadius: 0, borderWidth: 2, borderDash: [4, 4] },
+    ]},
+    options: {
+      animation: false,
+      layout: pmcLayout,
+      plugins: { legend: { position: "bottom" }, tooltip: { callbacks: { title: dateTitle } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
+        y: pmcY({ beginAtZero: true }),
+      },
+    },
+  });
+
+  const tsbValues = data.map(d => d.tsb);
+  const maxAbs = Math.max(1, ...tsbValues.map(v => Math.abs(v)));
+  updateChart("tsb", {
+    type: "line",
+    data: { labels, datasets: [{
+      label: "TSB · свежесть", data: tsbValues, borderColor: OK, pointRadius: 0, borderWidth: 1.5,
       segment: { borderColor: c => c.p1.parsed.y >= 0 ? OK : DANGER },
-      fill: { target: { value: 0 }, above: alpha(OK, 0.18), below: alpha(DANGER, 0.18) } },
-  ];
-  const options = {
-    animation: false,
-    plugins: {
-      legend: { position: "bottom" },
-      tooltip: { callbacks: { title: items => ddmmyyyy(data[items[0].dataIndex].date) } },
+      fill: { target: { value: 0 }, above: alpha(OK, 0.18), below: alpha(DANGER, 0.18) },
+    }]},
+    options: {
+      animation: false,
+      layout: pmcLayout,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: dateTitle } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
+        y: pmcY({ min: -maxAbs, max: maxAbs }),
+      },
     },
-    scales: {
-      x: { ticks: { maxTicksLimit: 8 }, grid: { display: false } },
-      y: { position: "left", title: { display: true, text: "TSS / CTL / ATL" }, grid: { color: gridColor } },
-      y1: { position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "TSB" } },
-    },
-  };
-  if (!chart) {
-    chart = new Chart(ctx, { type: "bar", data: { labels, datasets: sets }, options });
-  } else {
-    chart.data.labels = labels;
-    chart.data.datasets = sets;
-    // options пересобираем: tooltip-колбэки замкнуты на данные периода
-    chart.options = options;
-    chart.update();
-  }
+  });
 }
 
 async function loadHeatmap() {
@@ -353,7 +409,7 @@ async function loadMMP(days) {
     sets.push({
       label: "предыдущий период",
       data: recs.filter(r => r.previous).map(r => ({ x: r.secs, y: r.previous.watts })),
-      borderColor: TEXT3, backgroundColor: TEXT3, showLine: true, pointRadius: 2.5, borderWidth: 1.5, borderDash: [4, 4],
+      borderColor: tok("--text-3"), backgroundColor: tok("--text-3"), showLine: true, pointRadius: 2.5, borderWidth: 1.5, borderDash: [4, 4],
     });
   }
   const cur = {
@@ -369,7 +425,7 @@ async function loadMMP(days) {
     sets.push({
       label: `FTP ${Math.round(FTP)} Вт`,
       data: [{ x: recs[0].secs, y: FTP }, { x: recs[recs.length - 1].secs, y: FTP }],
-      borderColor: TEXT3, backgroundColor: TEXT3, showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [6, 4],
+      borderColor: tok("--text-3"), backgroundColor: tok("--text-3"), showLine: true, pointRadius: 0, borderWidth: 1.5, borderDash: [6, 4],
     });
   }
   const cfg = {
@@ -469,7 +525,7 @@ spy();
 
 document.querySelectorAll("#periodBtns .tab").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll("#periodBtns .tab").forEach(x => x.classList.toggle("active", x === b));
-  loadChart(+b.dataset.days);
+  loadCharts(+b.dataset.days);
 }));
 document.querySelectorAll("#weeksBtns .tab").forEach(b => b.addEventListener("click", () => {
   document.querySelectorAll("#weeksBtns .tab").forEach(x => x.classList.toggle("active", x === b));
@@ -479,7 +535,7 @@ document.querySelectorAll("#mmpBtns .tab").forEach(b => b.addEventListener("clic
   document.querySelectorAll("#mmpBtns .tab").forEach(x => x.classList.toggle("active", x === b));
   loadMMP(+b.dataset.n);
 }));
-loadChart(180);
+loadCharts(180);
 loadHeatmap();
 loadWeeks(12);
 loadMMP(90);
